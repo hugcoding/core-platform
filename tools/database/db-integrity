@@ -1,0 +1,115 @@
+#!/bin/bash
+set -e
+
+DB_CONTAINER="postgres"
+DB_USER="hugo"
+DB_NAME="nasdb_test"
+
+docker exec -i "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" <<'SQL'
+
+\echo '========== FILE INTEGRITY ENGINE v0.1 =========='
+
+DROP VIEW IF EXISTS v_file_integrity;
+
+CREATE VIEW v_file_integrity AS
+SELECT
+    f.id,
+    f.folder_id,
+    f.filename,
+    f.path,
+    f.size_bytes,
+    f.modified_at_fs,
+    f.hash_path,
+    f.hash_content,
+    f.mime_type,
+    f.deleted_at,
+    f.source,
+    f.created_at,
+    f.updated_at,
+
+    CASE
+        WHEN f.path IS NULL OR f.path = '' THEN 'LEGACY_MISSING_PATH'
+        WHEN f.folder_id IS NULL THEN 'INVALID_MISSING_FOLDER'
+        WHEN f.hash_path IS NULL OR f.hash_path = '' THEN 'INCOMPLETE_MISSING_HASH_PATH'
+        WHEN f.hash_content IS NULL OR f.hash_content = '' THEN 'INCOMPLETE_MISSING_HASH_CONTENT'
+        WHEN f.mime_type IS NULL OR f.mime_type = '' THEN 'INCOMPLETE_MISSING_MIME'
+        WHEN f.deleted_at IS NOT NULL THEN 'DELETED'
+        ELSE 'VALID'
+    END AS integrity_status,
+
+    ARRAY_REMOVE(ARRAY[
+        CASE WHEN f.path IS NULL OR f.path = '' THEN 'missing_path' END,
+        CASE WHEN f.folder_id IS NULL THEN 'missing_folder_id' END,
+        CASE WHEN f.hash_path IS NULL OR f.hash_path = '' THEN 'missing_hash_path' END,
+        CASE WHEN f.hash_content IS NULL OR f.hash_content = '' THEN 'missing_hash_content' END,
+        CASE WHEN f.mime_type IS NULL OR f.mime_type = '' THEN 'missing_mime_type' END,
+        CASE WHEN f.deleted_at IS NOT NULL THEN 'deleted' END
+    ], NULL) AS problems,
+
+    CASE
+        WHEN f.path IS NULL OR f.path = '' THEN 25
+        WHEN f.folder_id IS NULL THEN 20
+        WHEN f.hash_path IS NULL OR f.hash_path = '' THEN 60
+        WHEN f.hash_content IS NULL OR f.hash_content = '' THEN 70
+        WHEN f.mime_type IS NULL OR f.mime_type = '' THEN 80
+        WHEN f.deleted_at IS NOT NULL THEN 90
+        ELSE 100
+    END AS integrity_score
+
+FROM files f;
+
+\echo ''
+\echo '--- Integrity summary ---'
+SELECT
+    integrity_status,
+    COUNT(*) AS count
+FROM v_file_integrity
+GROUP BY integrity_status
+ORDER BY count DESC;
+
+\echo ''
+\echo '--- Integrity score ---'
+SELECT
+    ROUND(AVG(integrity_score), 2) AS average_integrity_score,
+    COUNT(*) AS total_files
+FROM v_file_integrity;
+
+\echo ''
+\echo '--- Legacy / incomplete examples ---'
+SELECT
+    id,
+    folder_id,
+    filename,
+    integrity_status,
+    problems,
+    created_at,
+    updated_at
+FROM v_file_integrity
+WHERE integrity_status <> 'VALID'
+ORDER BY created_at
+LIMIT 50;
+
+\echo ''
+\echo '--- Duplicate folder_id + filename classification ---'
+SELECT
+    folder_id,
+    filename,
+    COUNT(*) AS count,
+    COUNT(*) FILTER (WHERE path IS NULL OR path = '') AS legacy_count,
+    COUNT(*) FILTER (WHERE path IS NOT NULL AND path <> '') AS valid_path_count
+FROM files
+GROUP BY folder_id, filename
+HAVING COUNT(*) > 1
+ORDER BY count DESC, legacy_count DESC
+LIMIT 100;
+
+\echo ''
+\echo '--- Valid vs legacy totals ---'
+SELECT
+    COUNT(*) FILTER (WHERE path IS NOT NULL AND path <> '') AS has_path,
+    COUNT(*) FILTER (WHERE path IS NULL OR path = '') AS missing_path,
+    COUNT(*) FILTER (WHERE source IS NOT NULL) AS has_source,
+    COUNT(*) FILTER (WHERE source IS NULL) AS missing_source
+FROM files;
+
+SQL

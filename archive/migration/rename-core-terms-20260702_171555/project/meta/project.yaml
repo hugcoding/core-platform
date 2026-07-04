@@ -1,0 +1,249 @@
+project:
+  key: NAS
+  name: NAS Metadata Platform
+  owner: Hugo Hoogendoorn
+  methodology: CORE
+  source_of_truth: Markdown
+  jira_enabled: true
+
+current:
+  release: CORE 2.2
+  sprint: Sprint 2 - Governance & Project Engine
+
+roadmap:
+  - key: CORE-2.1
+    name: CORE 2.1 Foundation
+    status: Released
+    sprint: Sprint 1 - Historical Foundation
+    goal: Stable self-documenting metadata stack
+
+  - key: CORE-2.2
+    name: CORE 2.2 Governance
+    status: Active
+    sprint: Sprint 2 - Governance & Project Engine
+    goal: CORE understands its own architecture and project structure
+
+  - key: CORE-2.3
+    name: CORE 2.3 Stabilization
+    status: Planned
+    sprint: Sprint 3 - Legacy Assessment
+    goal: Analyze technical debt before cleanup
+
+  - key: CORE-2.4
+    name: CORE 2.4 Runtime Evolution
+    status: Planned
+    sprint: Sprint 5 - Runtime Platform
+    goal: Introduce dispatcher, queue abstraction and worker contracts
+
+  - key: CORE-2.5
+    name: CORE 2.5 Intelligence
+    status: Planned
+    sprint: Sprint 7 - Intelligence Platform
+    goal: Add statistics, dashboards, dependency graphs and project intelligence
+
+  - key: CORE-3.0
+    name: CORE 3.0 Platform
+    status: Vision
+    sprint: Sprint 10 - CORE 3.0 Platform
+    goal: Complete integrated platform
+
+sprints:
+  - key: SPRINT-1
+    name: Sprint 1 - Historical Foundation
+    status: Closed
+    release: CORE 2.1
+    goal: Capture historical work completed before Jira adoption
+
+  - key: SPRINT-2
+    name: Sprint 2 - Governance & Project Engine
+    status: Active
+    release: CORE 2.2
+    goal: Build governance, project engine and Jira export
+
+  - key: SPRINT-3
+    name: Sprint 3 - Legacy Assessment
+    status: Planned
+    release: CORE 2.3
+    goal: Analyze repository, database, Docker, Redis and config legacy without making changes
+
+  - key: SPRINT-4
+    name: Sprint 4 - Controlled Cleanup
+    status: Planned
+    release: CORE 2.3
+    goal: Controlled cleanup through analyze, dry-run and apply
+
+  - key: SPRINT-5
+    name: Sprint 5 - Runtime Platform
+    status: Planned
+    release: CORE 2.4
+    goal: Introduce dispatcher, event routing and worker contracts
+
+  - key: SPRINT-6
+    name: Sprint 6 - Job Engine
+    status: Planned
+    release: CORE 2.4
+    goal: Introduce generic jobs, retries, priorities and DLQ strategy
+
+  - key: SPRINT-7
+    name: Sprint 7 - Intelligence Platform
+    status: Planned
+    release: CORE 2.5
+    goal: Build statistics, project intelligence, dashboards and dependency graphs
+
+  - key: SPRINT-8
+    name: Sprint 8 - Database Evolution
+    status: Planned
+    release: CORE 2.5
+    goal: Build migration engine, hash strategy, duplicate detection and integrity automation
+
+  - key: SPRINT-9
+    name: Sprint 9 - Developer Experience
+    status: Planned
+    release: CORE 2.5
+    goal: Improve development workstation, MkDocs, Git workflow, templates and CLI tooling
+
+  - key: SPRINT-10
+    name: Sprint 10 - CORE 3.0 Platform
+    status: Future
+    release: CORE 3.0
+    goal: Deliver complete integrated CORE platform
+
+epics:
+  - key: EPIC-CORE-FOUNDATION
+    name: CORE Foundation
+    status: Done
+    release: CORE 2.1
+    sprint: Sprint 1 - Historical Foundation
+
+  - key: EPIC-GOVERNANCE
+    name: Governance Engine
+    status: Active
+    release: CORE 2.2
+    sprint: Sprint 2 - Governance & Project Engine
+
+  - key: EPIC-PROJECT
+    name: Project Engine
+    status: Active
+    release: CORE 2.2
+    sprint: Sprint 2 - Governance & Project Engine
+
+  - key: EPIC-DOCUMENTATION
+    name: Documentation Engine
+    status: Active
+    release: CORE 2.2
+    sprint: Sprint 2 - Governance & Project Engine
+
+  - key: EPIC-QUALITY
+    name: Quality Engine
+    status: Active
+    release: CORE 2.3
+    sprint: Sprint 3 - Legacy Assessment
+
+  - key: EPIC-CLEANUP
+    name: Cleanup Engine
+    status: Planned
+    release: CORE 2.3
+    sprint: Sprint 4 - Controlled Cleanup
+
+  - key: EPIC-RUNTIME
+    name: Runtime Platform
+    status: Planned
+    release: CORE 2.4
+    sprint: Sprint 5 - Runtime Platform
+
+  - key: EPIC-JOBS
+    name: Job Engine
+    status: Planned
+    release: CORE 2.4
+    sprint: Sprint 6 - Job Engine
+
+  - key: EPIC-INTELLIGENCE
+    name: Intelligence Platform
+    status: Planned
+    release: CORE 2.5
+    sprint: Sprint 7 - Intelligence Platform
+
+features:
+  - key: FEATURE-ADR
+    name: ADR Engine
+    epic: EPIC-GOVERNANCE
+    status: To Do
+
+  - key: FEATURE-GOV-SCORE
+    name: Governance Score
+    epic: EPIC-GOVERNANCE
+    status: To Do
+
+  - key: FEATURE-PROJECT-ANALYZER
+    name: Project Analyzer
+    epic: EPIC-PROJECT
+    status: To Do
+
+  - key: FEATURE-JIRA-EXPORT
+    name: Jira CSV Export
+    epic: EPIC-PROJECT
+    status: To Do
+
+  - key: FEATURE-PROJECT-DASHBOARD
+    name: Project Dashboard
+    epic: EPIC-PROJECT
+    status: To Do
+
+  - key: FEATURE-LEGACY-ASSESSMENT
+    name: Legacy Assessment
+    epic: EPIC-QUALITY
+    status: Planned
+
+  - key: FEATURE-CONTROLLED-CLEANUP
+    name: Controlled Cleanup
+    epic: EPIC-CLEANUP
+    status: Planned
+
+  - key: FEATURE-DISPATCHER
+    name: Dispatcher Foundation
+    epic: EPIC-RUNTIME
+    status: Planned
+
+  - key: FEATURE-JOB-ENGINE
+    name: Job Engine
+    epic: EPIC-JOBS
+    status: Planned
+
+components:
+  - Runtime
+  - Database
+  - Redis
+  - Docker
+  - Documentation
+  - Governance
+  - Project
+  - Quality
+  - Development
+  - Cleanup
+  - Intelligence
+
+labels:
+  - core
+  - historical
+  - governance
+  - documentation
+  - project-engine
+  - quality
+  - runtime
+  - database
+  - redis
+  - docker
+  - cleanup
+  - technical-debt
+  - enhancement
+  - bug
+
+definition_of_done:
+  - Code implemented
+  - Documentation updated
+  - ./gendocs successful
+  - Health checked where applicable
+  - Integrity checked where applicable
+  - ADR/RFC updated where applicable
+  - Changelog updated where applicable
+  - Jira issue updated

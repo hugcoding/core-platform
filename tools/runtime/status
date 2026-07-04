@@ -1,0 +1,45 @@
+#!/bin/bash
+cd /volume1/docker/nas-stack
+
+echo "========== CONTAINERS =========="
+docker compose ps
+
+echo
+echo "========== HEALTH =========="
+docker inspect nas-scanner-1 --format 'scanner: {{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' 2>/dev/null || true
+docker inspect nas-metadata_worker-1 --format 'metadata_worker: {{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' 2>/dev/null || true
+docker inspect nas-redis-1 --format 'redis: {{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' 2>/dev/null || true
+
+echo
+echo "========== HEARTBEATS =========="
+echo -n "scanner: "
+docker exec nas-redis-1 redis-cli GET scanner:heartbeat 2>/dev/null || true
+echo -n "metadata_worker: "
+docker exec nas-redis-1 redis-cli GET metadata_worker:heartbeat 2>/dev/null || true
+
+echo
+echo "========== LAST ACTIVITY =========="
+echo -n "scanner:last_scan = "
+docker exec nas-redis-1 redis-cli GET scanner:last_scan 2>/dev/null || true
+echo -n "metadata_worker:last_event = "
+docker exec nas-redis-1 redis-cli GET metadata_worker:last_event 2>/dev/null || true
+
+echo
+echo "========== LOCKS =========="
+docker exec nas-redis-1 redis-cli KEYS "*lock*" 2>/dev/null || true
+
+echo
+echo "========== STREAM =========="
+docker exec nas-redis-1 redis-cli XLEN scan_stream 2>/dev/null || true
+
+echo
+echo "========== GROUPS =========="
+docker exec nas-redis-1 redis-cli XINFO GROUPS scan_stream 2>/dev/null || true
+
+echo
+echo "========== DLQ =========="
+docker exec nas-redis-1 redis-cli XLEN scan_stream_dlq 2>/dev/null || true
+
+echo
+echo "========== DOCS =========="
+ls -lh docs/DOCUMENTATIE.md 2>/dev/null || echo "docs/DOCUMENTATIE.md ontbreekt"

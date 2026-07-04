@@ -1,0 +1,62 @@
+site_name: NAS Metadata Platform
+site_description: CORE Documentation Portal
+site_author: Hugo Hoogendoorn
+
+theme:
+  name: material
+  language: nl
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: blue grey
+      accent: blue
+      toggle:
+        icon: material/weather-night
+        name: Donkere modus
+    - scheme: slate
+      primary: blue grey
+      accent: blue
+      toggle:
+        icon: material/weather-sunny
+        name: Lichte modus
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.details
+  - pymdownx.emoji
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: wiki/index.md
+  - Architecture: wiki/architecture.md
+  - CORE: wiki/core.md
+  - Runtime:
+      - Scanner: wiki/scanner.md
+      - Metadata Worker: wiki/metadata-worker.md
+  - Governance:
+      - Standards: wiki/standards.md
+      - RFC: wiki/rfc.md
+  - Database:
+      - PostgreSQL: wiki/postgres.md
+      - Views: wiki/database-views.md
+  - Infrastructure:
+      - Docker: wiki/docker.md
+      - Redis: wiki/redis.md
+      - Scripts: wiki/scripts.md
+  - Documentation:
+      - Documentation Generator: wiki/documentation-generator.md
+      - Sources: wiki/sources.md
+  - Troubleshooting: wiki/troubleshooting.md

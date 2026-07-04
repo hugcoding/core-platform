@@ -1,0 +1,7 @@
+# Nooit in git — bevat wachtwoorden en secrets
+.env
+_env
+
+# Docker build cache
+*.pyc
+__pycache__/

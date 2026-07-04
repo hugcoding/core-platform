@@ -1,0 +1,6 @@
+#!/bin/bash
+cd /volume1/docker/nas-stack
+docker exec nas-redis-1 redis-cli DEL scanner:lock:event
+docker exec nas-redis-1 redis-cli DEL metadata_worker:lock
+docker exec nas-redis-1 redis-cli DEL metadata:lock
+echo "Locks cleared."

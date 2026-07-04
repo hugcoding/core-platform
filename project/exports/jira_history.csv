@@ -1,0 +1,25 @@
+Summary,Issue Type,Status,Description,Labels,Parent
+CORE projectstructuur,Story,Done,"Generated from historical CORE Markdown issue
+
+Issue Key: CORE-001
+File: project/issues/CORE-001.md
+
+CORE basisstructuur opgezet met core/, database/, docs/, tools/ en project/.","core,historical",
+CORE Manifest,Story,Done,"Generated from historical CORE Markdown issue
+
+Issue Key: CORE-002
+File: project/issues/CORE-002.md
+
+core/core.yaml toegevoegd als centrale manifestbasis.","core,historical",
+Documentation Engine v2,Story,Done,"Generated from historical CORE Markdown issue
+
+Issue Key: CORE-003
+File: project/issues/CORE-003.md
+
+Documentatiegenerator maakt wiki, JSON en DOCUMENTATIE.md.","documentation,historical",
+Standards Engine,Story,Done,"Generated from historical CORE Markdown issue
+
+Issue Key: CORE-004
+File: project/issues/CORE-004.md
+
+docs/standards wordt automatisch geanalyseerd en gedocumenteerd.","governance,historical",

@@ -1,0 +1,13 @@
+#!/bin/bash
+set -e
+cd /volume1/docker/nas-stack
+echo "========== DOCS =========="
+./gendocs || echo "Documentation generation failed, continuing build..."
+echo "========== BUILD ALL =========="
+docker compose build --no-cache
+echo "========== RESTART ALL =========="
+docker compose up -d --force-recreate --remove-orphans
+echo "========== HEALTH =========="
+./health || true
+echo "========== LOGS =========="
+docker compose logs -f --tail=50

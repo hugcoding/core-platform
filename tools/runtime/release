@@ -1,0 +1,19 @@
+#!/bin/bash
+set -e
+cd /volume1/docker/nas-stack
+NOW=$(date +"%Y-%m-%d %H:%M:%S")
+cat > version.json <<EOF
+{
+  "project": "NAS Metadata Platform",
+  "version": "0.7.0-sprint1.5",
+  "generated_at": "$NOW",
+  "components": {
+    "scanner": "polling scanner with heartbeat lock",
+    "metadata_worker": "redis consumer worker with postgres metadata upsert",
+    "docs": "documentation generator v2 sprint 1",
+    "automation": "sprint 1.5 scripts"
+  }
+}
+EOF
+echo "Release file written: version.json"
+cat version.json

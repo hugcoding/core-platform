@@ -1,0 +1,13 @@
+#!/bin/bash
+set -e
+cd /volume1/docker/nas-stack
+echo "========== DOCS =========="
+./gendocs || echo "Documentation generation failed, continuing build..."
+echo "========== BUILD scanner + metadata_worker =========="
+docker compose build --no-cache scanner metadata_worker
+echo "========== RESTART scanner + metadata_worker =========="
+docker compose up -d --force-recreate scanner metadata_worker
+echo "========== HEALTH =========="
+./health || true
+echo "========== LOGS =========="
+docker compose logs -f --tail=50 scanner metadata_worker

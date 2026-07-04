@@ -1,0 +1,40 @@
+# Default
+* text=auto
+
+# Linux / shell
+*.sh text eol=lf
+gendocs text eol=lf
+genproject text eol=lf
+redis text eol=lf
+
+tools/runtime/* text eol=lf
+tools/database/* text eol=lf
+tools/debug/* text eol=lf
+tools/migration/* text eol=lf
+
+# Python
+*.py text eol=lf
+
+# YAML
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# SQL
+*.sql text eol=lf
+
+# Markdown
+*.md text eol=lf
+
+# JSON
+*.json text eol=lf
+
+# Windows scripts
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+
+# Binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.zip binary
+*.pdf binary

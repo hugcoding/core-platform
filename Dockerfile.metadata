@@ -1,0 +1,4 @@
+FROM nas-base:v1
+WORKDIR /app
+COPY metadata_worker.py .
+CMD ["python3", "metadata_worker.py"]

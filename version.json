@@ -1,0 +1,11 @@
+{
+  "project": "NAS Metadata Platform",
+  "version": "0.7.0-sprint1.5",
+  "generated_at": "2026-06-27 17:14:58",
+  "components": {
+    "scanner": "polling scanner with heartbeat lock",
+    "metadata_worker": "redis consumer worker with postgres metadata upsert",
+    "docs": "documentation generator v2 sprint 1",
+    "automation": "sprint 1.5 scripts"
+  }
+}

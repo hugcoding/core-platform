@@ -1,0 +1,3 @@
+#!/bin/bash
+cd /volume1/docker/nas-stack
+watch -n 5 'docker compose ps; echo; docker exec nas-redis-1 redis-cli XLEN scan_stream; echo; docker exec nas-redis-1 redis-cli XINFO GROUPS scan_stream; echo; docker exec nas-redis-1 redis-cli XLEN scan_stream_dlq'

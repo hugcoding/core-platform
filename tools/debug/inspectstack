@@ -1,0 +1,10 @@
+#!/bin/bash
+cd /volume1/docker/nas-stack
+echo "========== NAS METADATA PLATFORM =========="
+[ -f version.json ] && cat version.json || echo "No version.json yet. Run ./release"
+echo
+echo "========== CONTAINERS =========="
+docker compose ps
+echo
+echo "========== DOCS =========="
+find docs -maxdepth 2 -type f | sort

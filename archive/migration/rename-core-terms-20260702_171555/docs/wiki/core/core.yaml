@@ -1,0 +1,49 @@
+platform:
+  name: NAS Metadata Platform
+  version: 2.1.0
+  release: CORE Foundation
+
+paths:
+  root: /volume1/docker/nas-stack
+  scan_root: /volume1
+
+redis:
+  host: redis
+  port: 6379
+  streams:
+    scan_stream: scan_stream
+    dlq_stream: scan_stream_dlq
+
+database:
+  container: postgres
+  name: nasdb_test
+  user: hugo
+  schema: public
+
+modules:
+  scanner:
+    type: scanner
+    enabled: true
+    heartbeat: scanner:heartbeat
+    lock: scanner:lock:event
+    last_activity: scanner:last_scan
+
+  metadata_worker:
+    type: worker
+    enabled: true
+    heartbeat: metadata_worker:heartbeat
+    lock: metadata_worker:lock
+    last_activity: metadata_worker:last_event
+
+engines:
+  documentation:
+    enabled: true
+    command: ./gendocs
+
+  integrity:
+    enabled: true
+    primary_view: v_file_integrity
+
+  health:
+    enabled: true
+    command: ./health

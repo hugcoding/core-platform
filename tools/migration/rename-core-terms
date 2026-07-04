@@ -1,0 +1,55 @@
+#!/bin/bash
+set -e
+
+ROOT="/volume1/docker/nas-stack"
+BACKUP_DIR="$ROOT/backup/rename-core-terms-$(date +%Y%m%d_%H%M%S)"
+
+cd "$ROOT"
+
+mkdir -p "$BACKUP_DIR"
+
+echo "Backup naar: $BACKUP_DIR"
+
+find . \
+  -type f \
+  ! -path "./.git/*" \
+  ! -path "./backup/*" \
+  ! -path "./docs/generated/*" \
+  ! -path "./__pycache__/*" \
+  ! -name "*.pyc" \
+  ! -name "*.zip" \
+  ! -name "*.png" \
+  ! -name "*.jpg" \
+  ! -name "*.jpeg" \
+  ! -name "*.docx" \
+  ! -name "*.db" \
+  ! -name "*.sqlite" \
+  -print > "$BACKUP_DIR/files.txt"
+
+while read -r file; do
+  mkdir -p "$BACKUP_DIR/$(dirname "$file")"
+  cp "$file" "$BACKUP_DIR/$file"
+done < "$BACKUP_DIR/files.txt"
+
+while read -r file; do
+  sed -i \
+    -e 's/Project Intelligence Engine/Project Intelligence Engine/g' \
+    -e 's/project intelligence engine/project intelligence engine/g' \
+    -e 's/PROJECT INTELLIGENCE ENGINE/PROJECT INTELLIGENCE ENGINE/g' \
+    -e 's/Runtime Engine/Runtime Engine/g' \
+    -e 's/runtime engine/runtime engine/g' \
+    -e 's/RUNTIME ENGINE/RUNTIME ENGINE/g' \
+    "$file"
+done < "$BACKUP_DIR/files.txt"
+
+echo
+echo "Controle resterende oude termen:"
+grep -RIn "Project Intelligence Engine\|Runtime Engine" . \
+  --exclude-dir=.git \
+  --exclude-dir=backup \
+  --exclude-dir=docs/generated \
+  --exclude-dir=__pycache__ || true
+
+echo
+echo "Klaar."
+echo "Backup staat in: $BACKUP_DIR"

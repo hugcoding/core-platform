@@ -1,0 +1,4 @@
+FROM nas-base:v1
+WORKDIR /app
+COPY scanner.py .
+CMD ["python3", "scanner.py"]

@@ -1,0 +1,94 @@
+#!/bin/bash
+set -e
+
+DB_CONTAINER="postgres"
+DB_USER="hugo"
+DB_NAME="nasdb_test"
+
+echo "========== DB AUDIT: files =========="
+
+docker exec -i "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" <<'SQL'
+
+\echo ''
+\echo '--- Total files ---'
+SELECT COUNT(*) AS total_files FROM files;
+
+\echo ''
+\echo '--- Files without path ---'
+SELECT COUNT(*) AS files_without_path
+FROM files
+WHERE path IS NULL OR path = '';
+
+\echo ''
+\echo '--- Files without hash/mime ---'
+SELECT
+  COUNT(*) FILTER (WHERE hash_path IS NULL) AS missing_hash_path,
+  COUNT(*) FILTER (WHERE hash_content IS NULL) AS missing_hash_content,
+  COUNT(*) FILTER (WHERE mime_type IS NULL) AS missing_mime_type
+FROM files;
+
+\echo ''
+\echo '--- Duplicate paths ---'
+SELECT path, COUNT(*) AS count
+FROM files
+WHERE path IS NOT NULL AND path <> ''
+GROUP BY path
+HAVING COUNT(*) > 1
+ORDER BY COUNT(*) DESC
+LIMIT 50;
+
+\echo ''
+\echo '--- Duplicate folder_id + filename ---'
+SELECT folder_id, filename, COUNT(*) AS count
+FROM files
+GROUP BY folder_id, filename
+HAVING COUNT(*) > 1
+ORDER BY COUNT(*) DESC
+LIMIT 50;
+
+\echo ''
+\echo '--- Suspicious incomplete duplicate candidates ---'
+SELECT
+  id,
+  folder_id,
+  filename,
+  path,
+  size_bytes,
+  modified_at_fs,
+  hash_path,
+  hash_content,
+  mime_type,
+  created_at,
+  updated_at
+FROM files
+WHERE
+  path IS NULL
+  OR path = ''
+  OR hash_path IS NULL
+  OR hash_content IS NULL
+  OR mime_type IS NULL
+ORDER BY filename
+LIMIT 100;
+
+\echo ''
+\echo '--- Files without metadata ---'
+SELECT COUNT(*) AS files_without_metadata
+FROM files f
+LEFT JOIN metadata m ON m.file_id = f.id
+WHERE m.file_id IS NULL;
+
+\echo ''
+\echo '--- Metadata without file / orphan metadata ---'
+SELECT COUNT(*) AS orphan_metadata
+FROM metadata m
+LEFT JOIN files f ON f.id = m.file_id
+WHERE f.id IS NULL;
+
+\echo ''
+\echo '--- Folders without files ---'
+SELECT COUNT(*) AS folders_without_files
+FROM folders fo
+LEFT JOIN files fi ON fi.folder_id = fo.id
+WHERE fi.id IS NULL;
+
+SQL

@@ -1,0 +1,41 @@
+name: nas
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes: [redis_data:/data]
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 10s, timeout: 5s, retries: 3 }
+
+  scanner:
+    build: { context: ., dockerfile: Dockerfile.scanner }
+    restart: unless-stopped
+    depends_on: { redis: { condition: service_healthy } }
+    volumes: ["/volume1:/volume1:ro"]
+    environment:
+      - DB_HOST=${DB_HOST}
+      - REDIS_HOST=redis
+      - SCAN_ROOT=${SCAN_ROOT:-/volume1}
+
+  metadata_worker:
+    build: { context: ., dockerfile: Dockerfile.metadata }
+    restart: unless-stopped
+    depends_on: { redis: { condition: service_healthy } }
+    volumes: ["/volume1:/volume1:ro"]
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - DB_NAME=${DB_NAME}
+      - REDIS_HOST=redis
+      - FORCE_FULL_METADATA=${FORCE_FULL_METADATA:-false}
+
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import redis; r=redis.Redis(host='redis', decode_responses=True); r.ping()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  redis_data:
