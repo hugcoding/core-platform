@@ -7,13 +7,35 @@ CORE gebruikt twee soorten instellingen:
 
 ## Configuratiebestanden
 
-`core/config/core.yaml` bevat applicatiegegevens en paden die de CORE CLI nodig heeft, zoals de Windows repository-locatie, de NAS-root en SSH-doelgegevens.
+`core/config/core.yaml` bevat applicatiegegevens en paden die de CORE CLI nodig heeft, zoals de Windows repository-locatie, de NAS-root, SSH-doelgegevens en de MkDocs-configuratie.
 
 `core/config/logging.yaml` bevat loggingniveau en loggingformat.
 
 `core/config/projects.yaml` bevat projectmetadata zoals project key, naam en repositorynaam.
 
 Deze bestanden beschrijven hoe CORE draait en waar onderdelen staan. Ze bevatten geen tokens of wachtwoorden.
+
+## Documentatiepad
+
+De CORE CLI leest de MkDocs-configuratie uit `paths.mkdocs` in `core/config/core.yaml`:
+
+```yaml
+paths:
+  docs: docs
+  mkdocs: mkdocs.yml
+```
+
+Gebruik MkDocs via CORE:
+
+```powershell
+core docs serve
+core docs build
+core docs open
+```
+
+`core docs serve` start MkDocs op `127.0.0.1:8000`, `core docs build` bouwt de site, en `core docs open` opent `http://127.0.0.1:8000` in de standaardbrowser.
+
+Als `mkdocs.yml` ontbreekt, geeft CORE een duidelijke foutmelding met het geconfigureerde pad.
 
 ## Secrets
 
@@ -50,4 +72,4 @@ Gebruik de CORE doctor om config en secrets te valideren:
 core doctor
 ```
 
-De doctor controleert of alle verplichte bestanden bestaan en of verplichte velden zoals `github.token`, `github.owner`, `jira.url`, `jira.email` en `jira.token` gevuld zijn.
+De doctor controleert of alle verplichte bestanden bestaan en of verplichte velden zoals `paths.mkdocs`, `github.token`, `github.owner`, `jira.url`, `jira.email` en `jira.token` gevuld zijn.

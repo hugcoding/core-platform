@@ -234,6 +234,8 @@ class ConfigLoader:
         required_fields = [
             ("app.name", self.app.name, "core/config/core.yaml"),
             ("app.version", self.app.version, "core/config/core.yaml"),
+            ("paths.docs", self.paths.docs, "core/config/core.yaml"),
+            ("paths.mkdocs", self.paths.mkdocs, "core/config/core.yaml"),
             ("paths.repository", self.paths.repository, "core/config/core.yaml"),
             ("paths.nas_root", self.paths.nas_root, "core/config/core.yaml"),
             ("paths.nas_host", self.paths.nas_host, "core/config/core.yaml"),

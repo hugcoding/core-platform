@@ -12,6 +12,9 @@ CORE CLI
 Usage:
   core doctor
   core docs generate
+  core docs serve
+  core docs build
+  core docs open
   core project analyze
   core project export
   core runtime status
@@ -38,9 +41,12 @@ case "$command_domain" in
             generate)
                 ./gendocs
                 ;;
+            serve|build|open)
+                python3 -m core.cli docs "$command_action"
+                ;;
             *)
                 echo "Unknown docs command."
-                echo "Use: core docs generate"
+                echo "Use: core docs generate | serve | build | open"
                 exit 1
                 ;;
         esac

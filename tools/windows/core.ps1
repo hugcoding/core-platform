@@ -23,6 +23,8 @@ function Show-Help {
     Write-Host "  core doctor"
     Write-Host "  core docs generate"
     Write-Host "  core docs serve"
+    Write-Host "  core docs build"
+    Write-Host "  core docs open"
     Write-Host "  core project analyze"
     Write-Host "  core project export"
     Write-Host "  core runtime status"
@@ -46,12 +48,22 @@ function Invoke-Docs {
         }
         "serve" {
             Set-Location $ProjectRoot
-            Start-Process "http://127.0.0.1:8000"
-            mkdocs serve
+            python -m core.cli docs serve
+            exit $LASTEXITCODE
+        }
+        "build" {
+            Set-Location $ProjectRoot
+            python -m core.cli docs build
+            exit $LASTEXITCODE
+        }
+        "open" {
+            Set-Location $ProjectRoot
+            python -m core.cli docs open
+            exit $LASTEXITCODE
         }
         default {
             Write-Host "Unknown docs command." -ForegroundColor Yellow
-            Write-Host "Use: core docs generate | serve"
+            Write-Host "Use: core docs generate | serve | build | open"
         }
     }
 }

@@ -10,6 +10,18 @@ A modular platform for runtime orchestration, project intelligence, governance a
 - Runtime Engine
 - Metadata Engine
 
+## CORE CLI
+
+Use the CORE CLI as the entry point for documentation commands. MkDocs is configured through `paths.mkdocs` in `core/config/core.yaml` and should be accessed through CORE:
+
+```bash
+core docs serve
+core docs build
+core docs open
+```
+
+`core docs open` opens `http://127.0.0.1:8000` in the default browser.
+
 ## Technology
 
 - Python
@@ -22,4 +34,4 @@ A modular platform for runtime orchestration, project intelligence, governance a
 
 ## Current Release
 
-CORE Platform v2.2 – Foundation
+CORE Platform v2.2 - Foundation
