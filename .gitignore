@@ -150,4 +150,5 @@ docs/generated/
 project/generated/
 
 core/secrets/credentials.yaml
-
+project/exports/exportsFromJira/
+project/exports/jira_sprint3.csv
