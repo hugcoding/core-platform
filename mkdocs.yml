@@ -43,6 +43,7 @@ nav:
   - Home: wiki/index.md
   - Architecture: wiki/architecture.md
   - CORE: wiki/core.md
+  - Configuration: wiki/configuration.md
   - Runtime:
       - Scanner: wiki/scanner.md
       - Metadata Worker: wiki/metadata-worker.md

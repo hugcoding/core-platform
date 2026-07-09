@@ -1,0 +1,115 @@
+#!/bin/sh
+set -eu
+
+PROJECT_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
+cd "$PROJECT_ROOT"
+
+show_help() {
+    cat <<'EOF'
+
+CORE CLI
+
+Usage:
+  core doctor
+  core docs generate
+  core project analyze
+  core project export
+  core runtime status
+  core runtime logs
+  core runtime start
+  core runtime stop
+  core runtime restart
+  core git status
+  core git push
+  core version
+
+EOF
+}
+
+command_domain="${1:-}"
+command_action="${2:-}"
+
+case "$command_domain" in
+    doctor)
+        python3 -m core.cli doctor
+        ;;
+    docs)
+        case "$command_action" in
+            generate)
+                ./gendocs
+                ;;
+            *)
+                echo "Unknown docs command."
+                echo "Use: core docs generate"
+                exit 1
+                ;;
+        esac
+        ;;
+    project)
+        case "$command_action" in
+            analyze)
+                ./genproject
+                ;;
+            export)
+                ./genproject
+                echo ""
+                echo "Exports generated in project/exports"
+                ;;
+            *)
+                echo "Unknown project command."
+                echo "Use: core project analyze | export"
+                exit 1
+                ;;
+        esac
+        ;;
+    runtime)
+        case "$command_action" in
+            status)
+                ./tools/runtime/status
+                ;;
+            logs)
+                ./tools/runtime/logs
+                ;;
+            start)
+                docker compose up -d
+                ;;
+            stop)
+                docker compose down
+                ;;
+            restart)
+                docker compose down && docker compose up -d
+                ;;
+            *)
+                echo "Unknown runtime command."
+                echo "Use: core runtime status | logs | start | stop | restart"
+                exit 1
+                ;;
+        esac
+        ;;
+    git)
+        case "$command_action" in
+            status)
+                git status
+                ;;
+            push)
+                git push
+                ;;
+            *)
+                echo "Unknown git command."
+                echo "Use: core git status | push"
+                exit 1
+                ;;
+        esac
+        ;;
+    version)
+        if [ -f version.json ]; then
+            cat version.json
+        else
+            echo "version.json not found"
+            exit 1
+        fi
+        ;;
+    *)
+        show_help
+        ;;
+esac

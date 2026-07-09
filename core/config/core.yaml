@@ -1,0 +1,12 @@
+app:
+  name: CORE Platform
+  version: 3.0
+  environment: development
+
+paths:
+  docs: docs
+  mkdocs: mkdocs.yml
+  repository: '\\NAS\docker\nas-stack'
+  nas_root: /volume1/docker/nas-stack
+  nas_host: NAS
+  nas_user: hugo
