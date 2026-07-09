@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Optional
 
 from core.config.loader import ConfigLoader
 
@@ -49,7 +50,7 @@ jira:
 
 
 class ConfigLoaderTest(unittest.TestCase):
-    def write_config(self, root: Path, credentials: str | None = CREDENTIALS_YAML) -> None:
+    def write_config(self, root: Path, credentials: Optional[str] = CREDENTIALS_YAML) -> None:
         config_dir = root / "core" / "config"
         secrets_dir = root / "core" / "secrets"
         config_dir.mkdir(parents=True)

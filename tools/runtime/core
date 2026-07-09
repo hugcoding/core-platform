@@ -1,32 +1,30 @@
 #!/bin/sh
 set -eu
 
-PROJECT_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
+PROJECT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$PROJECT_ROOT"
 
 show_help() {
-    cat <<'EOF'
-
-CORE CLI
-
-Usage:
-  core doctor
-  core docs generate
-  core docs serve
-  core docs build
-  core docs open
-  core project analyze
-  core project export
-  core runtime status
-  core runtime logs
-  core runtime start
-  core runtime stop
-  core runtime restart
-  core git status
-  core git push
-  core version
-
-EOF
+    printf '%s\n' ""
+    printf '%s\n' "CORE CLI"
+    printf '%s\n' ""
+    printf '%s\n' "Usage:"
+    printf '%s\n' "  core doctor"
+    printf '%s\n' "  core docs generate"
+    printf '%s\n' "  core docs serve"
+    printf '%s\n' "  core docs build"
+    printf '%s\n' "  core docs open"
+    printf '%s\n' "  core project analyze"
+    printf '%s\n' "  core project export"
+    printf '%s\n' "  core runtime status"
+    printf '%s\n' "  core runtime logs"
+    printf '%s\n' "  core runtime start"
+    printf '%s\n' "  core runtime stop"
+    printf '%s\n' "  core runtime restart"
+    printf '%s\n' "  core git status"
+    printf '%s\n' "  core git push"
+    printf '%s\n' "  core version"
+    printf '%s\n' ""
 }
 
 command_domain="${1:-}"

@@ -3,6 +3,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Optional
 
 from core.cli import main
 from tests.test_config_loader import (
@@ -14,7 +15,7 @@ from tests.test_config_loader import (
 )
 
 
-def write_config(root: Path, credentials: str | None = CREDENTIALS_YAML, mkdocs: bool = True) -> None:
+def write_config(root: Path, credentials: Optional[str] = CREDENTIALS_YAML, mkdocs: bool = True) -> None:
     config_dir = root / "core" / "config"
     secrets_dir = root / "core" / "secrets"
     config_dir.mkdir(parents=True)
