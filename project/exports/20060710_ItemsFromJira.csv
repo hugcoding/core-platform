@@ -1,0 +1,324 @@
+Samenvatting,Issuecode,Issue id,Issuetype,Status,Projectcode,Projectnaam,Projecttype,Projectleider,Projectleider-ID,Projectomschrijving,Prioriteit,Resolutie,Uitvoerder,Uitvoerder-ID,Melder,Auteur-ID,Ontwikkelaar,Ontwikkelaar-ID,Aangemaakt,Bijgewerkt,Laatst Bekeken,Opgelost,Einddatum,Stemmen,Labels,Beschrijving,Omgeving,Kijkers,Volger-ID,Oorspronkelijke schatting,Resterende Schatting,Tijd gespendeerd,Werkratio,Σ Oorspronkelijke schatting,Σ Resterende schatting,Σ Bestede tijd,Beveiligingsniveau,Aangepast veld (Kleur issue),Aangepast veld (Kwetsbaarheid),Aangepast veld (Rangschikking),Aangepast veld (Startdatum),Aangepast veld (Story point estimate),Aangepast veld (Team),Aangepast veld (development),Opmerking,Bovenliggende,Bovenliggende code,Parent summary,Statuscategorie,Statuscategorie gewijzigd
+DOC-009 - MkDocs navigation and link cleanup Scope,SCRUM-41,10200,Taak,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,09/jul/26 2:59 PM,10/jul/26 2:16 PM,10/jul/26 2:17 PM,,,0,,"*DOC-009 - MkDocs navigation and link cleanup*
+
+Scope:
+
+* {{DOCUMENTATIE.md}} links corrigeren naar {{wiki/...}}
+* beslissen of {{docs/adr}}, {{docs/rfc}}, {{docs/standards}} in {{mkdocs.yml nav}} moeten
+* eventueel generated/source docs bewust uitsluiten of opnemen
+* {{core docs build}} warning-arm maken
+
+Voor Jira bij de huidige ticket:
+
+{noformat}Docs build succeeds through CORE CLI.
+MkDocs reports pre-existing navigation/link warnings; follow-up DOC ticket recommended.{noformat}",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0008n:,,,,,,10039,SCRUM-8,Documentation Engine,Nog doen,09/jul/26 2:59 PM
+DOC-010 - Interactive Architecture,SCRUM-40,10167,Story,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,05/jul/26 6:40 PM,05/jul/26 6:40 PM,,,,0,"core,documentation,architecture",Generate interactive architecture diagrams and dependency visualizations.,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0008f:,,,,,,10039,SCRUM-8,Documentation Engine,Nog doen,05/jul/26 6:40 PM
+DOC-009 - Cross References,SCRUM-39,10166,Story,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,05/jul/26 6:40 PM,05/jul/26 6:40 PM,,,,0,"core,documentation","Implement automatic cross references between documentation, engines, ADRs, RFCs and project stories.",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i00087:,,,,,,10039,SCRUM-8,Documentation Engine,Nog doen,05/jul/26 6:40 PM
+DOC-008 - Documentation Portal v2,SCRUM-38,10165,Story,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,05/jul/26 6:40 PM,05/jul/26 6:40 PM,,,,0,"core,documentation,mkdocs","Enhance the MkDocs portal with navigation improvements, architecture overview and project metrics.",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0007z:,,,,,,10039,SCRUM-8,Documentation Engine,Nog doen,05/jul/26 6:40 PM
+RUNTIME-005 - Job Engine Foundation,SCRUM-37,10164,Story,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,05/jul/26 6:40 PM,05/jul/26 6:40 PM,,,,0,"core,runtime,jobs",Implement initial Job Engine architecture with queue management and worker execution.,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0007r:,,,,,,10043,SCRUM-12,Job Engine,Nog doen,05/jul/26 6:40 PM
+RUNTIME-004 - Dispatcher Foundation,SCRUM-36,10163,Story,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,05/jul/26 6:40 PM,05/jul/26 6:40 PM,,,,0,"core,runtime,dispatcher",Implement dispatcher foundation for future Job Engine.,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0007j:,,,,,,10043,SCRUM-12,Job Engine,Nog doen,05/jul/26 6:40 PM
+RUNTIME-003 - Runtime Health Dashboard,SCRUM-35,10162,Story,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,05/jul/26 6:40 PM,05/jul/26 6:40 PM,,,,0,"core,runtime,health","Create runtime dashboard showing Docker services, Scanner, Metadata Worker, PostgreSQL and Redis health.",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0007b:,,,,,,10042,SCRUM-11,Runtime Engine,Nog doen,05/jul/26 6:40 PM
+QUALITY-001 - Credential & Token Health Monitor,SCRUM-34,10161,Story,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,05/jul/26 6:40 PM,05/jul/26 6:40 PM,,,,0,"core,health,security","Monitor credentials and API token expiration as part of the CORE Health Engine. Support Jira, GitHub, OpenAI and future providers.",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i00073:,,,,,,10040,SCRUM-9,Quality Engine,Nog doen,05/jul/26 6:40 PM
+PROJECT-006 - Repository Assessment Engine,SCRUM-33,10160,Story,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,05/jul/26 6:40 PM,05/jul/26 6:40 PM,,,,0,"core,quality,analysis","Analyze repository structure, dependencies, duplicate code, technical debt and generate repository assessment reports.",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0006v:,,,,,,10040,SCRUM-9,Quality Engine,Nog doen,05/jul/26 6:40 PM
+PROJECT-005 - Jira Synchronization Engine,SCRUM-32,10159,Story,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,05/jul/26 6:40 PM,09/jul/26 8:03 AM,09/jul/26 8:03 AM,,,0,"core,jira,api","Implement Jira Cloud REST API synchronization. Support authentication, dry-run, epic synchronization, story synchronization and duplicate detection.
+
+
+
+Dat wordt de eerste ""echte"" engine bovenop de foundation.
+
+Planning:
+
+{noformat}CORE CLI
+      │
+      ▼
+Config Loader
+      │
+      ▼
+Jira REST Client
+      │
+      ▼
+Issue Mapper
+      │
+      ▼
+Synchronization Engine
+      │
+      ▼
+Local Cache{noformat}
+
+Functionaliteit:
+
+*  Jira authenticatie 
+*  ophalen epics 
+*  ophalen stories 
+*  status synchroniseren 
+*  labels 
+*  assignees 
+*  sprintinformatie 
+*  changelog 
+*  lokale cache 
+*  incremental sync 
+*  rate limiting 
+*  retry-mechanisme 
+
+Dit vormt vervolgens de basis voor de Project Intelligence Engine, die live Jira-data kan analyseren.
+
+Ik zou DX-001C bovendien als laatste stap van de configuratielaag aangrijpen om direct een centrale {{ConfigLoader}} met type-validatie (bijvoorbeeld via {{dataclasses}} of {{pydantic}}) te introduceren. Daarmee gebruiken alle toekomstige engines (GitHub, Jira, MkDocs en Governance) dezelfde configuratie-interface en hoeven er later geen refactors meer plaats te vinden wanneer PROJECT-005 wordt toegevoegd.",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0006n:,,,,,,10044,SCRUM-13,Intelligence Platform,Nog doen,05/jul/26 6:40 PM
+DX-002 - Configuration Manager,SCRUM-31,10158,Story,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,05/jul/26 6:40 PM,05/jul/26 6:40 PM,10/jul/26 2:17 PM,,,0,"core,dx,configuration","Implement centralized configuration management with separated configuration and secrets. Introduce config loader, validation and credentials support.",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0006f:,,,,,,10044,SCRUM-13,Intelligence Platform,Nog doen,05/jul/26 6:40 PM
+DX-001C - Configuration-driven CORE CLI,SCRUM-30,10157,Story,Gereed,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,Gereed,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,05/jul/26 6:40 PM,10/jul/26 2:14 PM,10/jul/26 1:51 PM,10/jul/26 2:14 PM,,0,"core,dx,config","Rep
+
+Doel:
+
+De CLI mag nergens meer hardcoded instellingen bevatten.
+
+Alle instellingen worden geladen via:
+
+{noformat}core/
+│
+├── config/
+│   ├── core.yaml
+│   ├── logging.yaml
+│   ├── projects.yaml
+│   └── credentials.example.yaml
+│
+└── secrets/
+    └── credentials.yaml{noformat}
+
+waarbij:
+
+{noformat}credentials.yaml{noformat}
+
+nooit in Git komt.
+
+----
+
+h2. Gewenste architectuur
+
+{noformat}core/
+    cli/
+        main.py
+
+    config/
+        loader.py
+        validator.py
+
+    config/
+        *.yaml
+
+    secrets/
+        credentials.yaml{noformat}
+
+De CLI doet straks alleen nog:
+
+{noformat}cfg = ConfigLoader()
+
+cfg.github_token
+cfg.jira_token
+cfg.docs_path
+cfg.repo_path
+cfg.log_level
+...{noformat}
+
+ace hardcoded configuration with Configuration Manager (core/config + core/secrets).
+
+
+
+h2. ConfigLoader
+
+De loader krijgt verantwoordelijkheden voor:
+
+* configuratie laden
+* secrets laden
+* defaults toepassen
+* validatie
+* typed access
+
+Bijvoorbeeld:
+
+{noformat}cfg = ConfigLoader()
+
+cfg.github.owner
+cfg.github.repository
+
+cfg.jira.url
+cfg.jira.project
+
+cfg.documentation.site_name
+
+cfg.logging.level{noformat}
+
+----
+
+h2. Configvalidatie
+
+Bij opstarten:
+
+{noformat}core doctor{noformat}
+
+controleert automatisch:
+
+✔ config aanwezig
+
+✔ credentials aanwezig
+
+✔ verplichte velden aanwezig
+
+✔ directories bestaan
+
+✔ Git repository geldig
+
+✔ Jira URL geldig
+
+✔ GitHub repository geldig
+
+----
+
+h2. CLI Flow
+
+{noformat}CLI
+
+↓
+
+ConfigLoader
+
+↓
+
+Modules
+
+↓
+
+GitHub
+Jira
+MkDocs
+Project Intelligence
+Governance{noformat}
+
+Alle modules gebruiken dus exact dezelfde configuratie.",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i00067:,,,,,,10044,SCRUM-13,Intelligence Platform,Gereed,10/jul/26 2:14 PM
+DX-001B - CORE CLI Subcommands,SCRUM-29,10156,Story,Gereed,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,Gereed,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,05/jul/26 6:40 PM,10/jul/26 2:13 PM,10/jul/26 2:11 PM,10/jul/26 2:13 PM,,0,"core,dx,cli","Implement domain/action based CLI commands (docs, project, runtime, git, version).",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0005z:,,,,,"10/jul/26 2:13 PM;5b9d4bd4b5df3d380ed07ea9;Implemented CORE docs subcommands:
+
+* core docs serve
+* core docs build
+* core docs open
+
+Uses ConfigLoader and paths.mkdocs from core/config/core.yaml.
+MkDocs is now accessed through CORE CLI.
+
+Validated:
+
+* core doctor OK
+* python -m unittest discover -s tests OK
+* .\tools\windows\core.ps1 docs build OK
+
+Notes:
+
+* Windows MkDocs build succeeds through CORE CLI.
+* NAS core wrapper works.
+* NAS docs build reaches CORE CLI, but MkDocs is not installed on NAS.
+* Existing MkDocs nav/link warnings are follow-up documentation cleanup.",10044,SCRUM-13,Intelligence Platform,Gereed,10/jul/26 2:13 PM
+DX-001A - CORE CLI Foundation,SCRUM-28,10155,Story,Gereed,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,Gereed,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,05/jul/26 6:40 PM,10/jul/26 2:14 PM,,10/jul/26 2:14 PM,,0,"core,dx,cli",Implement the initial CORE CLI foundation with Windows integration and command routing.,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0005r:,,,,,,10044,SCRUM-13,Intelligence Platform,Gereed,10/jul/26 2:14 PM
+PROJECT-005 — Jira Synchronization Engine,SCRUM-27,10122,Taak,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,04/jul/26 7:02 PM,04/jul/26 7:02 PM,,,,0,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0005j:,,,,,,10044,SCRUM-13,Intelligence Platform,Nog doen,04/jul/26 7:02 PM
+Standards Engine,SCRUM-26,10089,Story,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,03/jul/26 4:31 PM,03/jul/26 4:34 PM,,,,0,"governance,historical","Generated from historical CORE Markdown issue
+
+Issue Key: CORE-004
+File: project/issues/CORE-004.md
+
+docs/standards wordt automatisch geanalyseerd en gedocumenteerd.",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0005b:,,,,,,10037,SCRUM-6,Governance Engine,Nog doen,03/jul/26 4:31 PM
+Documentation Engine v2,SCRUM-25,10088,Story,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,03/jul/26 4:31 PM,03/jul/26 4:34 PM,,,,0,"documentation,historical","Generated from historical CORE Markdown issue
+
+Issue Key: CORE-003
+File: project/issues/CORE-003.md
+
+Documentatiegenerator maakt wiki, JSON en DOCUMENTATIE.md.",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i00053:,,,,,,10039,SCRUM-8,Documentation Engine,Nog doen,03/jul/26 4:31 PM
+CORE Manifest,SCRUM-24,10087,Story,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,03/jul/26 4:31 PM,03/jul/26 4:34 PM,,,,0,"core,historical","Generated from historical CORE Markdown issue
+
+Issue Key: CORE-002
+File: project/issues/CORE-002.md
+
+core/core.yaml toegevoegd als centrale manifestbasis.",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0004v:,,,,,,10036,SCRUM-5,CORE Foundation,Nog doen,03/jul/26 4:31 PM
+CORE projectstructuur,SCRUM-23,10086,Story,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,03/jul/26 4:31 PM,03/jul/26 4:34 PM,,,,0,"core,historical","Generated from historical CORE Markdown issue
+
+Issue Key: CORE-001
+File: project/issues/CORE-001.md
+
+CORE basisstructuur opgezet met core/, database/, docs/, tools/ en project/.",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0004n:,,,,,,10036,SCRUM-5,CORE Foundation,Nog doen,03/jul/26 4:31 PM
+Job Engine,SCRUM-22,10053,Story,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,02/jul/26 7:47 PM,03/jul/26 9:31 AM,,,,0,"core,generated,feature","Generated by CORE Project Intelligence Engine
+
+Feature Key: FEATURE-JOB-ENGINE
+Epic: EPIC-JOBS",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0004f:,,,,,,10043,SCRUM-12,Job Engine,Nog doen,02/jul/26 7:47 PM
+Dispatcher Foundation,SCRUM-21,10052,Story,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,02/jul/26 7:47 PM,03/jul/26 9:31 AM,,,,0,"core,generated,feature","Generated by CORE Project Intelligence Engine
+
+Feature Key: FEATURE-DISPATCHER
+Epic: EPIC-RUNTIME",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i00047:,,,,,,10042,SCRUM-11,Runtime Engine,Nog doen,02/jul/26 7:47 PM
+Controlled Cleanup,SCRUM-20,10051,Story,Actief,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,02/jul/26 7:47 PM,04/jul/26 11:43 AM,,,,0,"core,generated,feature","Generated by CORE Project Intelligence Engine
+
+Feature Key: FEATURE-CONTROLLED-CLEANUP
+Epic: EPIC-CLEANUP",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0003z:,,,,,,10041,SCRUM-10,Cleanup Engine,Actief,04/jul/26 11:43 AM
+Legacy Assessment,SCRUM-19,10050,Story,Actief,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,02/jul/26 7:47 PM,04/jul/26 11:43 AM,,,,0,"core,generated,feature","Generated by CORE Project Intelligence Engine
+
+Feature Key: FEATURE-LEGACY-ASSESSMENT
+Epic: EPIC-QUALITY",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0003r:,,,,,,10041,SCRUM-10,Cleanup Engine,Actief,04/jul/26 11:43 AM
+Project Dashboard,SCRUM-18,10049,Story,Gereed,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,Gereed,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,02/jul/26 7:47 PM,04/jul/26 11:42 AM,,04/jul/26 11:42 AM,,0,"core,generated,feature","Generated by CORE Project Intelligence Engine
+
+Feature Key: FEATURE-PROJECT-DASHBOARD
+Epic: EPIC-PROJECT",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0003j:,,,,,,10038,SCRUM-7,Project Intelligence Engine,Gereed,04/jul/26 11:42 AM
+Jira CSV Export,SCRUM-17,10048,Story,Gereed,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,Gereed,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,02/jul/26 7:47 PM,04/jul/26 11:42 AM,,04/jul/26 11:42 AM,,0,"core,generated,feature","Generated by CORE Project Intelligence Engine
+
+Feature Key: FEATURE-JIRA-EXPORT
+Epic: EPIC-PROJECT",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0003b:,,,,,,10038,SCRUM-7,Project Intelligence Engine,Gereed,04/jul/26 11:42 AM
+Project Analyzer,SCRUM-16,10047,Story,Gereed,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,Gereed,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,02/jul/26 7:47 PM,04/jul/26 11:42 AM,,04/jul/26 11:42 AM,,0,"core,generated,feature","Generated by CORE Project Intelligence Engine
+
+Feature Key: FEATURE-PROJECT-ANALYZER
+Epic: EPIC-PROJECT",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i00033:,,,,,,10038,SCRUM-7,Project Intelligence Engine,Gereed,04/jul/26 11:42 AM
+Governance Score,SCRUM-15,10046,Story,Gereed,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,Gereed,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,02/jul/26 7:47 PM,04/jul/26 11:42 AM,,04/jul/26 11:42 AM,,0,"core,generated,feature","Generated by CORE Project Intelligence Engine
+
+Feature Key: FEATURE-GOV-SCORE
+Epic: EPIC-GOVERNANCE",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0002v:,,,,,,10037,SCRUM-6,Governance Engine,Gereed,04/jul/26 11:42 AM
+ADR Engine,SCRUM-14,10045,Story,Gereed,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,Gereed,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,02/jul/26 7:47 PM,04/jul/26 11:42 AM,,04/jul/26 11:42 AM,,0,"core,generated,feature","Generated by CORE Project Intelligence Engine
+
+Feature Key: FEATURE-ADR
+Epic: EPIC-GOVERNANCE",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0002n:,,,,,,10037,SCRUM-6,Governance Engine,Gereed,04/jul/26 11:42 AM
+Intelligence Platform,SCRUM-13,10044,Epic,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,02/jul/26 7:41 PM,02/jul/26 7:41 PM,,,,0,"core,generated,epic","Generated by CORE Project Intelligence Engine
+
+Epic Key: EPIC-INTELLIGENCE
+Release: CORE 2.5
+Sprint: Sprint 7 - Intelligence Platform",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0002f:,,,,,,,,,Nog doen,02/jul/26 7:41 PM
+Job Engine,SCRUM-12,10043,Epic,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,02/jul/26 7:41 PM,02/jul/26 7:41 PM,,,,0,"core,generated,epic","Generated by CORE Project Intelligence Engine
+
+Epic Key: EPIC-JOBS
+Release: CORE 2.4
+Sprint: Sprint 6 - Job Engine",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i00027:,,,,,,,,,Nog doen,02/jul/26 7:41 PM
+Runtime Engine,SCRUM-11,10042,Epic,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,02/jul/26 7:41 PM,02/jul/26 7:41 PM,,,,0,"core,generated,epic","Generated by CORE Project Intelligence Engine
+
+Epic Key: EPIC-RUNTIME
+Release: CORE 2.4
+Sprint: Sprint 5 - Runtime Engine",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0001z:,,,,,,,,,Nog doen,02/jul/26 7:41 PM
+Cleanup Engine,SCRUM-10,10041,Epic,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,02/jul/26 7:41 PM,02/jul/26 7:41 PM,,,,0,"core,generated,epic","Generated by CORE Project Intelligence Engine
+
+Epic Key: EPIC-CLEANUP
+Release: CORE 2.3
+Sprint: Sprint 4 - Controlled Cleanup",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0001r:,,,,,,,,,Nog doen,02/jul/26 7:41 PM
+Quality Engine,SCRUM-9,10040,Epic,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,02/jul/26 7:41 PM,02/jul/26 7:41 PM,,,,0,"core,generated,epic","Generated by CORE Project Intelligence Engine
+
+Epic Key: EPIC-QUALITY
+Release: CORE 2.3
+Sprint: Sprint 3 - Legacy Assessment",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0001j:,,,,,,,,,Nog doen,02/jul/26 7:41 PM
+Documentation Engine,SCRUM-8,10039,Epic,Gereed,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,Gereed,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,02/jul/26 7:41 PM,04/jul/26 11:43 AM,,04/jul/26 11:43 AM,,0,"core,generated,epic","Generated by CORE Project Intelligence Engine
+
+Epic Key: EPIC-DOCUMENTATION
+Release: CORE 2.2
+Sprint: Sprint 2 - Governance & Project Intelligence Engine",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0001b:,,,,,,,,,Gereed,04/jul/26 11:43 AM
+Project Intelligence Engine,SCRUM-7,10038,Epic,Gereed,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,Gereed,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,02/jul/26 7:41 PM,04/jul/26 11:43 AM,,04/jul/26 11:43 AM,,0,"core,generated,epic","Generated by CORE Project Intelligence Engine
+
+Epic Key: EPIC-PROJECT
+Release: CORE 2.2
+Sprint: Sprint 2 - Governance & Project Intelligence Engine",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i00013:,,,,,,,,,Gereed,04/jul/26 11:43 AM
+Governance Engine,SCRUM-6,10037,Epic,Gereed,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,Gereed,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,02/jul/26 7:41 PM,04/jul/26 11:42 AM,,04/jul/26 11:42 AM,,0,"core,generated,epic","Generated by CORE Project Intelligence Engine
+
+Epic Key: EPIC-GOVERNANCE
+Release: CORE 2.2
+Sprint: Sprint 2 - Governance & Project Intelligence Engine",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0000v:,,,,,,,,,Gereed,04/jul/26 11:42 AM
+CORE Foundation,SCRUM-5,10036,Epic,Gereed,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,Medium,Gereed,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,02/jul/26 7:41 PM,04/jul/26 11:43 AM,,04/jul/26 11:43 AM,,0,"core,generated,epic","Generated by CORE Project Intelligence Engine
+
+Epic Key: EPIC-CORE-FOUNDATION
+Release: CORE 2.1
+Sprint: Sprint 1 - Historical Foundation",,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0000n:,,,,,,,,,Gereed,04/jul/26 11:43 AM
+ISSUE-002: ADR Engine,SCRUM-1,10000,Taak,Nog doen,SCRUM,NASa,software,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,30/jun/26 10:43 AM,04/jul/26 12:08 PM,30/jun/26 6:02 PM,,05/jul/26 12:00 AM,0,,,,Hugo Hoogendoorn,5b9d4bd4b5df3d380ed07ea9,,,,,,,,,,,0|i0003v:,,,,,,,,,Nog doen,30/jun/26 10:43 AM

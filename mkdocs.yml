@@ -2,6 +2,13 @@ site_name: NAS Metadata Platform
 site_description: CORE Documentation Portal
 site_author: Hugo Hoogendoorn
 
+validation:
+  nav:
+    omitted_files: ignore
+
+exclude_docs: |
+  generated/**
+
 theme:
   name: material
   language: nl
@@ -48,8 +55,20 @@ nav:
       - Scanner: wiki/scanner.md
       - Metadata Worker: wiki/metadata-worker.md
   - Governance:
-      - Standards: wiki/standards.md
-      - RFC: wiki/rfc.md
+      - Standards Overview: wiki/standards.md
+      - RFC Overview: wiki/rfc.md
+      - ADR:
+          - Polling vs Inotify: adr/ADR-0001-polling-vs-inotify.md
+      - Standards Sources:
+          - Database: standards/database.md
+          - Docker: standards/docker.md
+          - Documentation: standards/documentation.md
+          - Project: standards/project.md
+          - Redis: standards/redis.md
+          - Releases: standards/releases.md
+          - Workers: standards/workers.md
+      - RFC Sources:
+          - CORE Foundation: rfc/RFC-0001-core-foundation.md
   - Database:
       - PostgreSQL: wiki/postgres.md
       - Views: wiki/database-views.md
@@ -60,4 +79,5 @@ nav:
   - Documentation:
       - Documentation Generator: wiki/documentation-generator.md
       - Sources: wiki/sources.md
+      - Full Generated Documentation: DOCUMENTATIE.md
   - Troubleshooting: wiki/troubleshooting.md

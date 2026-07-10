@@ -11,16 +11,16 @@ Deze wiki wordt automatisch gegenereerd door de documentatiegenerator.
 
 ## Hoofdstukken
 
-- [Architectuur](architecture.md)
-- [Scanner](scanner.md)
-- [Metadata Worker](metadata-worker.md)
-- [Docker](docker.md)
-- [PostgreSQL](postgres.md)
-- [Redis](redis.md)
-- [Scripts](scripts.md)
-- [Troubleshooting](troubleshooting.md)
-- [Documentatiegenerator](documentation-generator.md)
-- [Bronbestanden](sources.md)
+- [Architectuur](wiki/architecture.md)
+- [Scanner](wiki/scanner.md)
+- [Metadata Worker](wiki/metadata-worker.md)
+- [Docker](wiki/docker.md)
+- [PostgreSQL](wiki/postgres.md)
+- [Redis](wiki/redis.md)
+- [Scripts](wiki/scripts.md)
+- [Troubleshooting](wiki/troubleshooting.md)
+- [Documentatiegenerator](wiki/documentation-generator.md)
+- [Bronbestanden](wiki/sources.md)
 
 ## Datastroom
 
@@ -3585,16 +3585,16 @@ Deze wiki wordt automatisch gegenereerd door de documentatiegenerator.
 
 ## Hoofdstukken
 
-- [Architectuur](architecture.md)
-- [Scanner](scanner.md)
-- [Metadata Worker](metadata-worker.md)
-- [Docker](docker.md)
-- [PostgreSQL](postgres.md)
-- [Redis](redis.md)
-- [Scripts](scripts.md)
-- [Troubleshooting](troubleshooting.md)
-- [Documentatiegenerator](documentation-generator.md)
-- [Bronbestanden](sources.md)
+- [Architectuur](wiki/architecture.md)
+- [Scanner](wiki/scanner.md)
+- [Metadata Worker](wiki/metadata-worker.md)
+- [Docker](wiki/docker.md)
+- [PostgreSQL](wiki/postgres.md)
+- [Redis](wiki/redis.md)
+- [Scripts](wiki/scripts.md)
+- [Troubleshooting](wiki/troubleshooting.md)
+- [Documentatiegenerator](wiki/documentation-generator.md)
+- [Bronbestanden](wiki/sources.md)
 
 ## Datastroom
 

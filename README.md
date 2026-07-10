@@ -22,6 +22,8 @@ core docs open
 
 `core docs open` opens `http://127.0.0.1:8000` in the default browser.
 
+`core docs build` has been validated through the CORE CLI on Windows. The remaining Material for MkDocs warning is upstream and not a project build failure.
+
 ## Technology
 
 - Python
