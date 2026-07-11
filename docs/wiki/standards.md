@@ -4,7 +4,7 @@ Aantal standaarden: `7`
 
 ## Database Standard
 
-- Bestand: `docs/standards/database.md`
+- Bestand: `docs\standards\database.md`
 - Regels: `10`
 
 ```markdown
@@ -22,7 +22,7 @@ Rules:
 
 ## Docker Standard
 
-- Bestand: `docs/standards/docker.md`
+- Bestand: `docs\standards\docker.md`
 - Regels: `9`
 
 ```markdown
@@ -39,7 +39,7 @@ Rules:
 
 ## Documentation Standard
 
-- Bestand: `docs/standards/documentation.md`
+- Bestand: `docs\standards\documentation.md`
 - Regels: `10`
 
 ```markdown
@@ -57,7 +57,7 @@ Rules:
 
 ## Project Standard
 
-- Bestand: `docs/standards/project.md`
+- Bestand: `docs\standards\project.md`
 - Regels: `14`
 
 ```markdown
@@ -79,7 +79,7 @@ Build a robust, observable and self-documenting NAS Metadata Platform.
 
 ## Redis Standard
 
-- Bestand: `docs/standards/redis.md`
+- Bestand: `docs\standards\redis.md`
 - Regels: `10`
 
 ```markdown
@@ -97,7 +97,7 @@ Rules:
 
 ## Release Standard
 
-- Bestand: `docs/standards/releases.md`
+- Bestand: `docs\standards\releases.md`
 - Regels: `12`
 
 ```markdown
@@ -117,7 +117,7 @@ Rules:
 
 ## Worker Standard
 
-- Bestand: `docs/standards/workers.md`
+- Bestand: `docs\standards\workers.md`
 - Regels: `12`
 
 ```markdown

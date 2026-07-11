@@ -17,7 +17,11 @@ show_help() {
     printf '%s\n' "  core project analyze"
     printf '%s\n' "  core project export"
     printf '%s\n' "  core runtime status"
+    printf '%s\n' "  core runtime health"
     printf '%s\n' "  core runtime logs"
+    printf '%s\n' "  core runtime dlq"
+    printf '%s\n' "  core runtime cleanlocks"
+    printf '%s\n' "  core runtime watch"
     printf '%s\n' "  core runtime start"
     printf '%s\n' "  core runtime stop"
     printf '%s\n' "  core runtime restart"
@@ -71,8 +75,20 @@ case "$command_domain" in
             status)
                 ./tools/runtime/status
                 ;;
+            health)
+                ./tools/runtime/health
+                ;;
             logs)
                 ./tools/runtime/logs
+                ;;
+            dlq)
+                sh ./tools/runtime/dlq
+                ;;
+            cleanlocks)
+                ./tools/runtime/cleanlocks
+                ;;
+            watch)
+                ./tools/runtime/watch
                 ;;
             start)
                 docker compose up -d
@@ -85,7 +101,7 @@ case "$command_domain" in
                 ;;
             *)
                 echo "Unknown runtime command."
-                echo "Use: core runtime status | logs | start | stop | restart"
+                echo "Use: core runtime status | health | logs | dlq | cleanlocks | watch | start | stop | restart"
                 exit 1
                 ;;
         esac

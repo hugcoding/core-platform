@@ -196,16 +196,29 @@ def page_scripts(script_analysis):
         "rebuildall": "Bouwt de volledige stack opnieuw.",
         "logs": "Toont live logs.",
         "status": "Toont status, locks, heartbeats en streaminfo.",
+        "health": "Toont runtime health, Redis en heartbeat status.",
         "dlq": "Toont DLQ-informatie.",
-        "redis": "Opent redis-cli.",
         "cleanlocks": "Verwijdert locks handmatig.",
         "watch": "Live monitor.",
-        "docs": "Genereert documentatie.",
+        "gendocs": "Genereert documentatie.",
+    }
+
+    core_commands = {
+        "logs": "core runtime logs",
+        "status": "core runtime status",
+        "health": "core runtime health",
+        "dlq": "core runtime dlq",
+        "cleanlocks": "core runtime cleanlocks",
+        "watch": "core runtime watch",
+        "gendocs": "core docs generate",
     }
 
     for name, info in script_analysis.items():
+        script_name = name.split("/")[-1]
         md.append("## `" + name + "`\n\n")
-        md.append(descriptions.get(name, "Script") + "\n\n")
+        md.append(descriptions.get(script_name, "Script") + "\n\n")
+        if script_name in core_commands:
+            md.append("- CORE command: `" + core_commands[script_name] + "`\n")
         md.append("- Bestaat: `" + str(info["exists"]) + "`\n")
         md.append("- Regels: `" + str(info["line_count"]) + "`\n")
         md.append("- Gebruikt docker compose: `" + str(info["uses_docker_compose"]) + "`\n")
@@ -220,7 +233,15 @@ def page_scripts(script_analysis):
 def page_troubleshooting():
     return """# Troubleshooting
 
+Alle runtime checks lopen via de CORE CLI. Run deze commands op de NAS in `/volume1/docker/nas-stack`, of via de Windows wrapper vanuit de repository.
+
 ## Worker is unhealthy
+
+```bash
+core runtime health
+```
+
+Voor detailinformatie:
 
 ```bash
 docker inspect nas-metadata_worker-1 --format '{{json .State.Health}}'
@@ -231,8 +252,8 @@ Controleer of de healthcheck `python3` gebruikt.
 ## Scanner doet niets
 
 ```bash
-./logs
-./status
+core runtime logs
+core runtime status
 ```
 
 ## Worker zegt dat er al een worker draait
@@ -240,19 +261,32 @@ Controleer of de healthcheck `python3` gebruikt.
 Controleer locks en heartbeats:
 
 ```bash
-./status
+core runtime status
 ```
 
 ## DLQ groeit
 
 ```bash
-./dlq
+core runtime dlq
 ```
 
 ## Noodoplossing locks
 
 ```bash
-./cleanlocks
+core runtime cleanlocks
+```
+
+## Live monitor
+
+```bash
+core runtime watch
+```
+
+## Windows wrapper
+
+```powershell
+.\\tools\\windows\\core.ps1 runtime status
+.\\tools\\windows\\core.ps1 runtime dlq
 ```
 """
 

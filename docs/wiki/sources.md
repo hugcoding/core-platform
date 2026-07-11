@@ -578,7 +578,7 @@ _Bestand ontbreekt of is leeg._
 ```python
 from pathlib import Path
 
-ROOT = Path("/volume1/docker/nas-stack")
+ROOT = Path(__file__).resolve().parents[2]
 DOCS_DIR = ROOT / "docs"
 WIKI_DIR = DOCS_DIR / "wiki"
 GENERATED_DIR = DOCS_DIR / "generated"
@@ -606,14 +606,14 @@ CONFIG_FILES = [
 ]
 
 SCRIPT_FILES = [
-    "rebuild",
-    "rebuildall",
-    "logs",
-    "status",
-    "dlq",
-    "redis",
-    "cleanlocks",
-    "watch",
+    "tools/runtime/rebuild",
+    "tools/runtime/rebuildall",
+    "tools/runtime/logs",
+    "tools/runtime/status",
+    "tools/runtime/health",
+    "tools/runtime/dlq",
+    "tools/runtime/cleanlocks",
+    "tools/runtime/watch",
     "gendocs",
 ]
 
@@ -810,6 +810,29 @@ from datetime import datetime
 from tools.docs.io_utils import write_text, read_text
 
 
+WIKI_LINKS = [
+    "architecture.md",
+    "core.md",
+    "rfc.md",
+    "database-views.md",
+    "scanner.md",
+    "metadata-worker.md",
+    "docker.md",
+    "postgres.md",
+    "redis.md",
+    "scripts.md",
+    "troubleshooting.md",
+    "documentation-generator.md",
+    "sources.md",
+]
+
+
+def _fix_links_for_docs_root(content):
+    for link in WIKI_LINKS:
+        content = content.replace("](" + link + ")", "](wiki/" + link + ")")
+    return content
+
+
 def render_main_document(docs_dir, wiki_dir):
     pages = [
         "index.md",
@@ -836,7 +859,7 @@ def render_main_document(docs_dir, wiki_dir):
         path = Path(wiki_dir) / page
         if path.exists():
             md.append("\n---\n\n")
-            md.append(read_text(path))
+            md.append(_fix_links_for_docs_root(read_text(path)))
             md.append("\n")
 
     write_text(Path(docs_dir) / "DOCUMENTATIE.md", "".join(md))
@@ -1085,16 +1108,29 @@ def page_scripts(script_analysis):
         "rebuildall": "Bouwt de volledige stack opnieuw.",
         "logs": "Toont live logs.",
         "status": "Toont status, locks, heartbeats en streaminfo.",
+        "health": "Toont runtime health, Redis en heartbeat status.",
         "dlq": "Toont DLQ-informatie.",
-        "redis": "Opent redis-cli.",
         "cleanlocks": "Verwijdert locks handmatig.",
         "watch": "Live monitor.",
-        "docs": "Genereert documentatie.",
+        "gendocs": "Genereert documentatie.",
+    }
+
+    core_commands = {
+        "logs": "core runtime logs",
+        "status": "core runtime status",
+        "health": "core runtime health",
+        "dlq": "core runtime dlq",
+        "cleanlocks": "core runtime cleanlocks",
+        "watch": "core runtime watch",
+        "gendocs": "core docs generate",
     }
 
     for name, info in script_analysis.items():
+        script_name = name.split("/")[-1]
         md.append("## `" + name + "`\n\n")
-        md.append(descriptions.get(name, "Script") + "\n\n")
+        md.append(descriptions.get(script_name, "Script") + "\n\n")
+        if script_name in core_commands:
+            md.append("- CORE command: `" + core_commands[script_name] + "`\n")
         md.append("- Bestaat: `" + str(info["exists"]) + "`\n")
         md.append("- Regels: `" + str(info["line_count"]) + "`\n")
         md.append("- Gebruikt docker compose: `" + str(info["uses_docker_compose"]) + "`\n")
@@ -1109,7 +1145,15 @@ def page_scripts(script_analysis):
 def page_troubleshooting():
     return """# Troubleshooting
 
+Alle runtime checks lopen via de CORE CLI. Run deze commands op de NAS in `/volume1/docker/nas-stack`, of via de Windows wrapper vanuit de repository.
+
 ## Worker is unhealthy
+
+```bash
+core runtime health
+```
+
+Voor detailinformatie:
 
 ```bash
 docker inspect nas-metadata_worker-1 --format '{{json .State.Health}}'
@@ -1120,8 +1164,8 @@ Controleer of de healthcheck `python3` gebruikt.
 ## Scanner doet niets
 
 ```bash
-./logs
-./status
+core runtime logs
+core runtime status
 ```
 
 ## Worker zegt dat er al een worker draait
@@ -1129,19 +1173,32 @@ Controleer of de healthcheck `python3` gebruikt.
 Controleer locks en heartbeats:
 
 ```bash
-./status
+core runtime status
 ```
 
 ## DLQ groeit
 
 ```bash
-./dlq
+core runtime dlq
 ```
 
 ## Noodoplossing locks
 
 ```bash
-./cleanlocks
+core runtime cleanlocks
+```
+
+## Live monitor
+
+```bash
+core runtime watch
+```
+
+## Windows wrapper
+
+```powershell
+.\\tools\\windows\\core.ps1 runtime status
+.\\tools\\windows\\core.ps1 runtime dlq
 ```
 """
 
@@ -2593,7 +2650,7 @@ ALTER TABLE ONLY public.metadata
 \unrestrict KM5I8YsUK7CLbO0daSZ9hUdbrsZeFBT9FWSYUKVNueqkKGoLNR6hGNMoNadS5g0
 ```
 
-## `rebuild`
+## `tools/runtime/rebuild`
 
 ```bash
 #!/bin/bash
@@ -2611,7 +2668,7 @@ echo "========== LOGS =========="
 docker compose logs -f --tail=50 scanner metadata_worker
 ```
 
-## `rebuildall`
+## `tools/runtime/rebuildall`
 
 ```bash
 #!/bin/bash
@@ -2629,7 +2686,7 @@ echo "========== LOGS =========="
 docker compose logs -f --tail=50
 ```
 
-## `logs`
+## `tools/runtime/logs`
 
 ```bash
 #!/bin/bash
@@ -2637,7 +2694,7 @@ cd /volume1/docker/nas-stack
 docker compose logs -f --tail=50 scanner metadata_worker
 ```
 
-## `status`
+## `tools/runtime/status`
 
 ```bash
 #!/bin/bash
@@ -2687,26 +2744,90 @@ echo "========== DOCS =========="
 ls -lh docs/DOCUMENTATIE.md 2>/dev/null || echo "docs/DOCUMENTATIE.md ontbreekt"
 ```
 
-## `dlq`
+## `tools/runtime/health`
 
 ```bash
 #!/bin/bash
 cd /volume1/docker/nas-stack
+fail=0
+
+echo "========== CONTAINER HEALTH =========="
+
+check_container() {
+  name="$1"
+  if docker inspect "$name" >/dev/null 2>&1; then
+    state=$(docker inspect "$name" --format '{{.State.Status}}')
+    health=$(docker inspect "$name" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
+    echo "$name: status=$state health=$health"
+    [ "$state" = "running" ] || fail=1
+    [ "$health" = "unhealthy" ] && fail=1
+  else
+    echo "$name: missing"
+    fail=1
+  fi
+}
+
+check_container nas-redis-1
+check_container nas-scanner-1
+check_container nas-metadata_worker-1
+
+echo
+echo "========== REDIS =========="
+docker exec nas-redis-1 redis-cli ping || fail=1
+
+echo
+echo "========== HEARTBEATS =========="
+scanner_hb=$(docker exec nas-redis-1 redis-cli GET scanner:heartbeat 2>/dev/null)
+worker_hb=$(docker exec nas-redis-1 redis-cli GET metadata_worker:heartbeat 2>/dev/null)
+
+echo "scanner: ${scanner_hb:-missing}"
+echo "metadata_worker: ${worker_hb:-missing}"
+
+[ -n "$scanner_hb" ] || fail=1
+[ -n "$worker_hb" ] || fail=1
+
+echo
+echo "========== LAST ACTIVITY =========="
+echo -n "scanner:last_scan = "
+docker exec nas-redis-1 redis-cli GET scanner:last_scan 2>/dev/null || true
+echo -n "metadata_worker:last_event = "
+docker exec nas-redis-1 redis-cli GET metadata_worker:last_event 2>/dev/null || true
+
+echo
+echo "========== STREAM =========="
+docker exec nas-redis-1 redis-cli XLEN scan_stream || fail=1
+docker exec nas-redis-1 redis-cli XINFO GROUPS scan_stream || true
+
+echo
+echo "========== DLQ =========="
+docker exec nas-redis-1 redis-cli XLEN scan_stream_dlq || true
+
+echo
+if [ "$fail" -eq 0 ]; then
+  echo "HEALTH OK"
+else
+  echo "HEALTH WARNING"
+fi
+
+exit "$fail"
+```
+
+## `tools/runtime/dlq`
+
+```bash
+#!/bin/sh
+set -eu
+cd /volume1/docker/nas-stack
+
 echo "========== DLQ LENGTH =========="
 docker exec nas-redis-1 redis-cli XLEN scan_stream_dlq
+
 echo
 echo "========== LAST 20 DLQ ITEMS =========="
 docker exec nas-redis-1 redis-cli XREVRANGE scan_stream_dlq + - COUNT 20
 ```
 
-## `redis`
-
-```bash
-#!/bin/bash
-docker exec -it nas-redis-1 redis-cli
-```
-
-## `cleanlocks`
+## `tools/runtime/cleanlocks`
 
 ```bash
 #!/bin/bash
@@ -2717,7 +2838,7 @@ docker exec nas-redis-1 redis-cli DEL metadata:lock
 echo "Locks cleared."
 ```
 
-## `watch`
+## `tools/runtime/watch`
 
 ```bash
 #!/bin/bash

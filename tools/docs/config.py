@@ -1,6 +1,6 @@
 from pathlib import Path
 
-ROOT = Path("/volume1/docker/nas-stack")
+ROOT = Path(__file__).resolve().parents[2]
 DOCS_DIR = ROOT / "docs"
 WIKI_DIR = DOCS_DIR / "wiki"
 GENERATED_DIR = DOCS_DIR / "generated"
@@ -28,14 +28,14 @@ CONFIG_FILES = [
 ]
 
 SCRIPT_FILES = [
-    "rebuild",
-    "rebuildall",
-    "logs",
-    "status",
-    "dlq",
-    "redis",
-    "cleanlocks",
-    "watch",
+    "tools/runtime/rebuild",
+    "tools/runtime/rebuildall",
+    "tools/runtime/logs",
+    "tools/runtime/status",
+    "tools/runtime/health",
+    "tools/runtime/dlq",
+    "tools/runtime/cleanlocks",
+    "tools/runtime/watch",
     "gendocs",
 ]
 

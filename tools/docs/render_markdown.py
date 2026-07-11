@@ -3,6 +3,29 @@ from datetime import datetime
 from tools.docs.io_utils import write_text, read_text
 
 
+WIKI_LINKS = [
+    "architecture.md",
+    "core.md",
+    "rfc.md",
+    "database-views.md",
+    "scanner.md",
+    "metadata-worker.md",
+    "docker.md",
+    "postgres.md",
+    "redis.md",
+    "scripts.md",
+    "troubleshooting.md",
+    "documentation-generator.md",
+    "sources.md",
+]
+
+
+def _fix_links_for_docs_root(content):
+    for link in WIKI_LINKS:
+        content = content.replace("](" + link + ")", "](wiki/" + link + ")")
+    return content
+
+
 def render_main_document(docs_dir, wiki_dir):
     pages = [
         "index.md",
@@ -29,7 +52,7 @@ def render_main_document(docs_dir, wiki_dir):
         path = Path(wiki_dir) / page
         if path.exists():
             md.append("\n---\n\n")
-            md.append(read_text(path))
+            md.append(_fix_links_for_docs_root(read_text(path)))
             md.append("\n")
 
     write_text(Path(docs_dir) / "DOCUMENTATIE.md", "".join(md))

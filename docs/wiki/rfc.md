@@ -6,7 +6,7 @@ Aantal RFC's: `1`
 
 - Titel: `RFC-0001 - CORE Foundation`
 - Status: `Accepted`
-- Bestand: `docs/rfc/RFC-0001-core-foundation.md`
+- Bestand: `docs\rfc\RFC-0001-core-foundation.md`
 - Regels: `27`
 
 ```markdown

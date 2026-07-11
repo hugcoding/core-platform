@@ -28,9 +28,14 @@ function Show-Help {
     Write-Host "  core project analyze"
     Write-Host "  core project export"
     Write-Host "  core runtime status"
+    Write-Host "  core runtime health"
     Write-Host "  core runtime logs"
+    Write-Host "  core runtime dlq"
+    Write-Host "  core runtime cleanlocks"
+    Write-Host "  core runtime watch"
     Write-Host "  core runtime start"
     Write-Host "  core runtime stop"
+    Write-Host "  core runtime restart"
     Write-Host "  core git status"
     Write-Host "  core version"
     Write-Host ""
@@ -90,8 +95,20 @@ function Invoke-Runtime {
         "status" {
             Invoke-Nas "./tools/runtime/status"
         }
+        "health" {
+            Invoke-Nas "./tools/runtime/health"
+        }
         "logs" {
             Invoke-Nas "./tools/runtime/logs"
+        }
+        "dlq" {
+            Invoke-Nas "sh ./tools/runtime/dlq"
+        }
+        "cleanlocks" {
+            Invoke-Nas "./tools/runtime/cleanlocks"
+        }
+        "watch" {
+            Invoke-Nas "./tools/runtime/watch"
         }
         "start" {
             Invoke-Nas "docker compose up -d"
@@ -104,7 +121,7 @@ function Invoke-Runtime {
         }
         default {
             Write-Host "Unknown runtime command." -ForegroundColor Yellow
-            Write-Host "Use: core runtime status | logs | start | stop | restart"
+            Write-Host "Use: core runtime status | health | logs | dlq | cleanlocks | watch | start | stop | restart"
         }
     }
 }

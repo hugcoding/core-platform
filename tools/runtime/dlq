@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+cd /volume1/docker/nas-stack
+
+echo "========== DLQ LENGTH =========="
+docker exec nas-redis-1 redis-cli XLEN scan_stream_dlq
+
+echo
+echo "========== LAST 20 DLQ ITEMS =========="
+docker exec nas-redis-1 redis-cli XREVRANGE scan_stream_dlq + - COUNT 20
