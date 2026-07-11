@@ -73,3 +73,29 @@ core doctor
 ```
 
 De doctor controleert of alle verplichte bestanden bestaan en of verplichte velden zoals `paths.mkdocs`, `github.token`, `github.owner`, `jira.url`, `jira.email` en `jira.token` gevuld zijn.
+## Jira integration
+
+PROJECT-005 starts with a read-only Jira integration slice. CORE uses `jira.url`, `jira.email` and `jira.token` from `core/secrets/credentials.yaml`.
+
+Issue search uses Jira Cloud enhanced search: /rest/api/3/search/jql.
+
+Use dry-run first to inspect the JQL without calling Jira:
+
+```powershell
+core jira epics --project SCRUM --dry-run
+core jira stories --project SCRUM --dry-run
+core jira sync --project SCRUM --dry-run
+```
+
+Use the auth check to verify credentials:
+
+```powershell
+core jira auth
+```
+
+Read-only fetch commands write local cache files under `core/cache/jira/`, which is ignored by Git:
+
+```powershell
+core jira epics --project SCRUM --limit 50
+core jira stories --project SCRUM --limit 50
+```

@@ -3,7 +3,10 @@ param(
     [string]$Domain,
 
     [Parameter(Position=1)]
-    [string]$Action
+    [string]$Action,
+
+    [Parameter(ValueFromRemainingArguments=$true)]
+    [string[]]$Arguments
 )
 
 $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
@@ -27,6 +30,10 @@ function Show-Help {
     Write-Host "  core docs open"
     Write-Host "  core project analyze"
     Write-Host "  core project export"
+    Write-Host "  core jira auth"
+    Write-Host "  core jira epics --project SCRUM --dry-run"
+    Write-Host "  core jira stories --project SCRUM --dry-run"
+    Write-Host "  core jira sync --project SCRUM --dry-run"
     Write-Host "  core runtime status"
     Write-Host "  core runtime health"
     Write-Host "  core runtime logs"
@@ -126,6 +133,13 @@ function Invoke-Runtime {
     }
 }
 
+
+function Invoke-Jira {
+    Set-Location $ProjectRoot
+    $JiraArgs = @($Action) + $Arguments
+    python -m core.cli jira @JiraArgs
+    exit $LASTEXITCODE
+}
 function Invoke-Git {
     switch ($Action) {
         "status" {
@@ -163,6 +177,9 @@ switch ($Domain) {
     }
     "project" {
         Invoke-Project
+    }
+    "jira" {
+        Invoke-Jira
     }
     "runtime" {
         Invoke-Runtime

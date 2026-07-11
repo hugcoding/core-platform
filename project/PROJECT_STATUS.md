@@ -22,7 +22,13 @@
 
 
 
-\# Executive Summary
+\
+## Current Engineering Notes
+
+- PROJECT-005 Jira Synchronization Engine started with a read-only foundation slice.
+- Added CORE Jira commands for auth, epics/stories dry-run, read-only fetch and local cache.
+- No Jira write/synchronization mutations are enabled in this slice.
+# Executive Summary
 
 
 

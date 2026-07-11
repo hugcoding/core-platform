@@ -4,6 +4,7 @@
 
 ### Added
 
+- Jira integration read-only foundation with auth, epics/stories dry-run, issue mapping and local cache.
 - Configuration-driven CORE CLI.
 - CORE docs commands: `core docs serve`, `core docs build`, `core docs open`.
 - Windows and NAS CORE wrappers for docs commands.
