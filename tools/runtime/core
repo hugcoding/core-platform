@@ -20,6 +20,8 @@ show_help() {
     printf '%s\n' "  core jira epics --project SCRUM --dry-run"
     printf '%s\n' "  core jira stories --project SCRUM --dry-run"
     printf '%s\n' "  core jira sync --project SCRUM --dry-run"
+    printf '%s\n' "  core cleanup assess"
+    printf '%s\n' "  core cleanup legacy-duplicates --dry-run"
     printf '%s\n' "  core runtime status"
     printf '%s\n' "  core runtime health"
     printf '%s\n' "  core runtime logs"
@@ -77,6 +79,21 @@ case "$command_domain" in
     jira)
         shift
         python3 -m core.cli jira "$@"
+        ;;
+    cleanup)
+        case "$command_action" in
+            assess)
+                sh ./tools/runtime/legacy-assessment
+                ;;
+            legacy-duplicates)
+                sh ./tools/runtime/legacy-duplicates "${3:-}"
+                ;;
+            *)
+                echo "Unknown cleanup command."
+                echo "Use: core cleanup assess | legacy-duplicates --dry-run"
+                exit 1
+                ;;
+        esac
         ;;
     runtime)
         case "$command_action" in

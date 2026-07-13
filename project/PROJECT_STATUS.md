@@ -14,7 +14,7 @@
 
 
 
-\*\*Last Updated:\*\* 2026-07-10
+\*\*Last Updated:\*\* 2026-07-13
 
 
 
@@ -24,6 +24,9 @@
 
 \
 ## Current Engineering Notes
+
+- SCRUM-19 Legacy Assessment started with read-only `core cleanup assess` reporting for duplicates, noise, missing metadata and extension distribution.
+- SCRUM-20 Controlled Cleanup started with read-only `core cleanup legacy-duplicates --dry-run` candidate and cascade-impact reporting.
 
 - PROJECT-005 Jira Synchronization Engine started with a read-only foundation slice.
 - Added CORE Jira commands for auth, epics/stories dry-run, read-only fetch and local cache.

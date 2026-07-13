@@ -99,3 +99,22 @@ Read-only fetch commands write local cache files under `core/cache/jira/`, which
 core jira epics --project SCRUM --limit 50
 core jira stories --project SCRUM --limit 50
 ```
+## Cleanup assessment
+
+SCRUM-19 Legacy Assessment is read-only. It inspects PostgreSQL and writes reports under `project/exports/legacy-assessment/`.
+
+```powershell
+core cleanup assess
+```
+
+The assessment exports summary, extension, noise, duplicate hash, reconstructed path and missing metadata CSV files. It does not delete or update database rows. SCRUM-20 Controlled Cleanup should use these reports as input and still run dry-run first.
+
+## Controlled cleanup dry-run
+
+SCRUM-20 starts with a legacy duplicate dry-run. It matches legacy rows without `path`, `hash_content` and `hash_path` to active canonical rows with the same reconstructed path.
+
+```powershell
+core cleanup legacy-duplicates --dry-run
+```
+
+The dry-run writes reports under `project/exports/controlled-cleanup/`, including candidate rows, blocked legacy rows and cascade impact for metadata, embeddings and AI output. It does not delete or update database rows.

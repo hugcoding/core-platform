@@ -153,3 +153,5 @@ core/secrets/credentials.yaml
 project/exports/exportsFromJira/
 project/exports/jira_sprint3.csv
 core/cache/
+project/exports/legacy-assessment/
+project/exports/controlled-cleanup/

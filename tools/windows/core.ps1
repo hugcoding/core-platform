@@ -34,6 +34,8 @@ function Show-Help {
     Write-Host "  core jira epics --project SCRUM --dry-run"
     Write-Host "  core jira stories --project SCRUM --dry-run"
     Write-Host "  core jira sync --project SCRUM --dry-run"
+    Write-Host "  core cleanup assess"
+    Write-Host "  core cleanup legacy-duplicates --dry-run"
     Write-Host "  core runtime status"
     Write-Host "  core runtime health"
     Write-Host "  core runtime logs"
@@ -97,6 +99,25 @@ function Invoke-Project {
     }
 }
 
+
+function Invoke-Cleanup {
+    switch ($Action) {
+        "assess" {
+            Invoke-Nas "sh ./tools/runtime/legacy-assessment"
+        }
+        "legacy-duplicates" {
+            $CleanupArgs = @($Arguments) -join " "
+            if ([string]::IsNullOrWhiteSpace($CleanupArgs)) {
+                $CleanupArgs = "--dry-run"
+            }
+            Invoke-Nas "sh ./tools/runtime/legacy-duplicates $CleanupArgs"
+        }
+        default {
+            Write-Host "Unknown cleanup command." -ForegroundColor Yellow
+            Write-Host "Use: core cleanup assess | legacy-duplicates --dry-run"
+        }
+    }
+}
 function Invoke-Runtime {
     switch ($Action) {
         "status" {
@@ -180,6 +201,9 @@ switch ($Domain) {
     }
     "jira" {
         Invoke-Jira
+    }
+    "cleanup" {
+        Invoke-Cleanup
     }
     "runtime" {
         Invoke-Runtime

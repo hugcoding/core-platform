@@ -1,0 +1,277 @@
+#!/bin/sh
+set -eu
+
+PROJECT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+cd "$PROJECT_ROOT"
+
+mode="${1:---dry-run}"
+if [ "$mode" != "--dry-run" ]; then
+    echo "Refusing to run without --dry-run."
+    echo "Use: core cleanup legacy-duplicates --dry-run"
+    exit 1
+fi
+
+if [ -f .env ]; then
+    set -a
+    . ./.env
+    set +a
+fi
+
+POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-postgres}"
+DB_USER="${DB_USER:-hugo}"
+DB_NAME="${DB_NAME:-nas}"
+EXPORT_DIR="project/exports/controlled-cleanup"
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+REPORT="$EXPORT_DIR/legacy-duplicates-dry-run-$TIMESTAMP.md"
+SUMMARY_CSV="$EXPORT_DIR/legacy-duplicates-summary-$TIMESTAMP.csv"
+CANDIDATES_CSV="$EXPORT_DIR/legacy-duplicates-candidates-$TIMESTAMP.csv"
+BLOCKED_CSV="$EXPORT_DIR/legacy-duplicates-blocked-$TIMESTAMP.csv"
+CASCADE_CSV="$EXPORT_DIR/legacy-duplicates-cascade-impact-$TIMESTAMP.csv"
+SIZE_MISMATCH_CSV="$EXPORT_DIR/legacy-duplicates-size-mismatches-$TIMESTAMP.csv"
+
+mkdir -p "$EXPORT_DIR"
+
+DOCKER_BIN="${DOCKER_BIN:-docker}"
+if ! command -v "$DOCKER_BIN" >/dev/null 2>&1; then
+    if [ -x /usr/local/bin/docker ]; then
+        DOCKER_BIN=/usr/local/bin/docker
+    else
+        echo "Docker command not found. Set DOCKER_BIN or make docker available on PATH."
+        exit 1
+    fi
+fi
+
+psql_csv() {
+    query="$1"
+    output="$2"
+    "$DOCKER_BIN" exec "$POSTGRES_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 --csv -c "$query" > "$output"
+}
+
+psql_value() {
+    query="$1"
+    "$DOCKER_BIN" exec "$POSTGRES_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -At -c "$query"
+}
+
+candidate_cte="
+WITH legacy AS (
+    SELECT f.id AS legacy_id,
+           fo.path || '/' || f.filename AS reconstructed_path,
+           f.folder_id,
+           f.filename,
+           f.size_bytes,
+           f.modified_at_fs,
+           f.created_at,
+           f.updated_at,
+           f.deleted_at
+    FROM files f
+    JOIN folders fo ON fo.id = f.folder_id
+    WHERE (f.path IS NULL OR f.path = '')
+      AND (f.hash_content IS NULL OR f.hash_content = '')
+      AND (f.hash_path IS NULL OR f.hash_path = '')
+      AND f.filename IS NOT NULL AND f.filename <> ''
+      AND fo.path IS NOT NULL AND fo.path <> ''
+),
+canonical AS (
+    SELECT id AS canonical_id,
+           path AS canonical_path,
+           hash_content,
+           hash_path,
+           mime_type,
+           size_bytes,
+           modified_at_fs,
+           deleted_at
+    FROM files
+    WHERE path IS NOT NULL AND path <> ''
+      AND hash_content IS NOT NULL AND hash_content <> ''
+      AND hash_path IS NOT NULL AND hash_path <> ''
+      AND deleted_at IS NULL
+),
+candidates AS (
+    SELECT l.legacy_id,
+           c.canonical_id,
+           l.reconstructed_path,
+           l.size_bytes AS legacy_size_bytes,
+           c.size_bytes AS canonical_size_bytes,
+           l.modified_at_fs AS legacy_modified_at_fs,
+           c.modified_at_fs AS canonical_modified_at_fs,
+           l.deleted_at AS legacy_deleted_at,
+           c.deleted_at AS canonical_deleted_at
+    FROM legacy l
+    JOIN canonical c ON c.canonical_path = l.reconstructed_path
+)
+"
+
+summary_query="$candidate_cte
+SELECT 'candidate_legacy_files' AS metric, COUNT(*)::text AS value FROM candidates
+UNION ALL SELECT 'distinct_canonical_files', COUNT(DISTINCT canonical_id)::text FROM candidates
+UNION ALL SELECT 'legacy_with_metadata', COUNT(DISTINCT c.legacy_id)::text FROM candidates c JOIN metadata m ON m.file_id = c.legacy_id
+UNION ALL SELECT 'legacy_with_embeddings', COUNT(DISTINCT c.legacy_id)::text FROM candidates c JOIN embeddings e ON e.file_id = c.legacy_id
+UNION ALL SELECT 'legacy_with_ai_output', COUNT(DISTINCT c.legacy_id)::text FROM candidates c JOIN ai_output a ON a.file_id = c.legacy_id
+UNION ALL SELECT 'metadata_rows_to_cascade', COUNT(m.*)::text FROM candidates c JOIN metadata m ON m.file_id = c.legacy_id
+UNION ALL SELECT 'embedding_rows_to_cascade', COUNT(e.*)::text FROM candidates c JOIN embeddings e ON e.file_id = c.legacy_id
+UNION ALL SELECT 'ai_output_rows_to_cascade', COUNT(a.*)::text FROM candidates c JOIN ai_output a ON a.file_id = c.legacy_id
+UNION ALL SELECT 'size_mismatch_candidates', COUNT(*)::text FROM candidates WHERE legacy_size_bytes IS DISTINCT FROM canonical_size_bytes;
+"
+
+candidates_query="$candidate_cte
+SELECT legacy_id,
+       canonical_id,
+       reconstructed_path,
+       legacy_size_bytes,
+       canonical_size_bytes,
+       legacy_modified_at_fs,
+       canonical_modified_at_fs
+FROM candidates
+ORDER BY reconstructed_path
+LIMIT 5000;
+"
+
+blocked_query="
+WITH legacy AS (
+    SELECT f.id AS legacy_id,
+           fo.path || '/' || f.filename AS reconstructed_path,
+           f.size_bytes,
+           f.modified_at_fs
+    FROM files f
+    JOIN folders fo ON fo.id = f.folder_id
+    WHERE (f.path IS NULL OR f.path = '')
+      AND (f.hash_content IS NULL OR f.hash_content = '')
+      AND (f.hash_path IS NULL OR f.hash_path = '')
+      AND f.filename IS NOT NULL AND f.filename <> ''
+      AND fo.path IS NOT NULL AND fo.path <> ''
+),
+canonical AS (
+    SELECT id AS canonical_id, path AS canonical_path
+    FROM files
+    WHERE path IS NOT NULL AND path <> ''
+      AND hash_content IS NOT NULL AND hash_content <> ''
+      AND hash_path IS NOT NULL AND hash_path <> ''
+      AND deleted_at IS NULL
+)
+SELECT l.legacy_id,
+       l.reconstructed_path,
+       l.size_bytes,
+       l.modified_at_fs,
+       'no canonical row with path/hash fields' AS reason
+FROM legacy l
+LEFT JOIN canonical c ON c.canonical_path = l.reconstructed_path
+WHERE c.canonical_id IS NULL
+ORDER BY l.reconstructed_path
+LIMIT 5000;
+"
+
+cascade_query="$candidate_cte
+SELECT c.legacy_id,
+       c.canonical_id,
+       c.reconstructed_path,
+       COUNT(DISTINCT m.file_id) AS metadata_rows,
+       COUNT(DISTINCT e.file_id) AS embedding_rows,
+       COUNT(DISTINCT a.file_id) AS ai_output_rows
+FROM candidates c
+LEFT JOIN metadata m ON m.file_id = c.legacy_id
+LEFT JOIN embeddings e ON e.file_id = c.legacy_id
+LEFT JOIN ai_output a ON a.file_id = c.legacy_id
+GROUP BY c.legacy_id, c.canonical_id, c.reconstructed_path
+HAVING COUNT(DISTINCT m.file_id) > 0
+    OR COUNT(DISTINCT e.file_id) > 0
+    OR COUNT(DISTINCT a.file_id) > 0
+ORDER BY c.reconstructed_path
+LIMIT 5000;
+"
+
+size_mismatch_query="$candidate_cte
+SELECT legacy_id,
+       canonical_id,
+       reconstructed_path,
+       legacy_size_bytes,
+       canonical_size_bytes,
+       legacy_modified_at_fs,
+       canonical_modified_at_fs
+FROM candidates
+WHERE legacy_size_bytes IS DISTINCT FROM canonical_size_bytes
+ORDER BY reconstructed_path;
+"
+
+psql_csv "$summary_query" "$SUMMARY_CSV"
+psql_csv "$candidates_query" "$CANDIDATES_CSV"
+psql_csv "$blocked_query" "$BLOCKED_CSV"
+psql_csv "$cascade_query" "$CASCADE_CSV"
+psql_csv "$size_mismatch_query" "$SIZE_MISMATCH_CSV"
+
+candidate_count=$(psql_value "$candidate_cte SELECT COUNT(*) FROM candidates;")
+blocked_count=$(psql_value "
+WITH legacy AS (
+    SELECT f.id AS legacy_id, fo.path || '/' || f.filename AS reconstructed_path
+    FROM files f
+    JOIN folders fo ON fo.id = f.folder_id
+    WHERE (f.path IS NULL OR f.path = '')
+      AND (f.hash_content IS NULL OR f.hash_content = '')
+      AND (f.hash_path IS NULL OR f.hash_path = '')
+      AND f.filename IS NOT NULL AND f.filename <> ''
+      AND fo.path IS NOT NULL AND fo.path <> ''
+),
+canonical AS (
+    SELECT id AS canonical_id, path AS canonical_path
+    FROM files
+    WHERE path IS NOT NULL AND path <> ''
+      AND hash_content IS NOT NULL AND hash_content <> ''
+      AND hash_path IS NOT NULL AND hash_path <> ''
+      AND deleted_at IS NULL
+)
+SELECT COUNT(*)
+FROM legacy l
+LEFT JOIN canonical c ON c.canonical_path = l.reconstructed_path
+WHERE c.canonical_id IS NULL;
+")
+metadata_count=$(psql_value "$candidate_cte SELECT COUNT(m.*) FROM candidates c JOIN metadata m ON m.file_id = c.legacy_id;")
+embeddings_count=$(psql_value "$candidate_cte SELECT COUNT(e.*) FROM candidates c JOIN embeddings e ON e.file_id = c.legacy_id;")
+ai_output_count=$(psql_value "$candidate_cte SELECT COUNT(a.*) FROM candidates c JOIN ai_output a ON a.file_id = c.legacy_id;")
+size_mismatch_count=$(psql_value "$candidate_cte SELECT COUNT(*) FROM candidates WHERE legacy_size_bytes IS DISTINCT FROM canonical_size_bytes;")
+
+cat > "$REPORT" <<EOF
+# SCRUM-20 Controlled Cleanup Dry Run
+
+Generated: $TIMESTAMP
+
+This is a dry-run report. No data was changed.
+
+## Legacy Duplicate Candidates
+
+- Candidate legacy rows: $candidate_count
+- Blocked legacy rows without canonical match: $blocked_count
+- Metadata rows that would cascade: $metadata_count
+- Embedding rows that would cascade: $embeddings_count
+- AI output rows that would cascade: $ai_output_count
+- Size mismatch candidates: $size_mismatch_count
+
+## Matching Rule
+
+Legacy rows are rows where path, hash_content and hash_path are missing, but folder path plus filename reconstructs an effective path.
+
+Canonical rows are active rows where path, hash_content and hash_path are present.
+
+A legacy row is a cleanup candidate only when its reconstructed path equals an active canonical path.
+
+## Exported CSV files
+
+- $SUMMARY_CSV
+- $CANDIDATES_CSV
+- $BLOCKED_CSV
+- $CASCADE_CSV
+- $SIZE_MISMATCH_CSV
+
+## Next Step
+
+Review the candidate and cascade-impact CSV files before adding any apply mode.
+EOF
+
+cp "$REPORT" "$EXPORT_DIR/latest.md"
+cp "$SUMMARY_CSV" "$EXPORT_DIR/latest-summary.csv"
+cp "$CANDIDATES_CSV" "$EXPORT_DIR/latest-candidates.csv"
+cp "$BLOCKED_CSV" "$EXPORT_DIR/latest-blocked.csv"
+cp "$CASCADE_CSV" "$EXPORT_DIR/latest-cascade-impact.csv"
+cp "$SIZE_MISMATCH_CSV" "$EXPORT_DIR/latest-size-mismatches.csv"
+
+printf '%s\n' "SCRUM-20 Controlled Cleanup dry-run complete"
+printf '%s\n' "Report: $REPORT"
+printf '%s\n' "Latest: $EXPORT_DIR/latest.md"

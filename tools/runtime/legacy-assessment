@@ -1,0 +1,316 @@
+#!/bin/sh
+set -eu
+
+PROJECT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+cd "$PROJECT_ROOT"
+
+if [ -f .env ]; then
+    set -a
+    . ./.env
+    set +a
+fi
+
+POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-postgres}"
+DB_USER="${DB_USER:-hugo}"
+DB_NAME="${DB_NAME:-nas}"
+EXPORT_DIR="project/exports/legacy-assessment"
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+REPORT="$EXPORT_DIR/legacy-assessment-$TIMESTAMP.md"
+SUMMARY_CSV="$EXPORT_DIR/legacy-assessment-summary-$TIMESTAMP.csv"
+EXT_CSV="$EXPORT_DIR/legacy-assessment-extensions-$TIMESTAMP.csv"
+NOISE_CSV="$EXPORT_DIR/legacy-assessment-noise-$TIMESTAMP.csv"
+DUP_HASH_CSV="$EXPORT_DIR/legacy-assessment-duplicate-hashes-$TIMESTAMP.csv"
+MISSING_CSV="$EXPORT_DIR/legacy-assessment-missing-metadata-$TIMESTAMP.csv"
+LEGACY_PATHS_CSV="$EXPORT_DIR/legacy-assessment-legacy-paths-$TIMESTAMP.csv"
+DUP_RECON_PATH_CSV="$EXPORT_DIR/legacy-assessment-duplicate-reconstructed-paths-$TIMESTAMP.csv"
+DUP_NAME_SIZE_CSV="$EXPORT_DIR/legacy-assessment-duplicate-name-size-$TIMESTAMP.csv"
+DUP_SIGNATURE_CSV="$EXPORT_DIR/legacy-assessment-duplicate-name-size-mtime-$TIMESTAMP.csv"
+DUP_INODE_MTIME_CSV="$EXPORT_DIR/legacy-assessment-duplicate-inode-mtime-$TIMESTAMP.csv"
+
+mkdir -p "$EXPORT_DIR"
+
+DOCKER_BIN="${DOCKER_BIN:-docker}"
+if ! command -v "$DOCKER_BIN" >/dev/null 2>&1; then
+    if [ -x /usr/local/bin/docker ]; then
+        DOCKER_BIN=/usr/local/bin/docker
+    else
+        echo "Docker command not found. Set DOCKER_BIN or make docker available on PATH."
+        exit 1
+    fi
+fi
+
+psql_csv() {
+    query="$1"
+    output="$2"
+    "$DOCKER_BIN" exec "$POSTGRES_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 --csv -c "$query" > "$output"
+}
+
+psql_value() {
+    query="$1"
+    "$DOCKER_BIN" exec "$POSTGRES_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -At -c "$query"
+}
+
+summary_query="
+SELECT 'files_total' AS metric, COUNT(*)::text AS value FROM files
+UNION ALL SELECT 'files_active', COUNT(*)::text FROM files WHERE deleted_at IS NULL
+UNION ALL SELECT 'files_deleted', COUNT(*)::text FROM files WHERE deleted_at IS NOT NULL
+UNION ALL SELECT 'folders_total', COUNT(*)::text FROM folders
+UNION ALL SELECT 'metadata_total', COUNT(*)::text FROM metadata
+UNION ALL SELECT 'embeddings_total', COUNT(*)::text FROM embeddings
+UNION ALL SELECT 'ai_output_total', COUNT(*)::text FROM ai_output
+UNION ALL SELECT 'missing_path', COUNT(*)::text FROM files WHERE path IS NULL OR path = ''
+UNION ALL SELECT 'reconstructable_legacy_path', COUNT(*)::text FROM files f JOIN folders fo ON fo.id = f.folder_id WHERE (f.path IS NULL OR f.path = '') AND f.filename IS NOT NULL AND f.filename <> '' AND fo.path IS NOT NULL AND fo.path <> ''
+UNION ALL SELECT 'missing_hash_content', COUNT(*)::text FROM files WHERE hash_content IS NULL OR hash_content = ''
+UNION ALL SELECT 'missing_hash_path', COUNT(*)::text FROM files WHERE hash_path IS NULL OR hash_path = ''
+UNION ALL SELECT 'missing_mime_type', COUNT(*)::text FROM files WHERE mime_type IS NULL OR mime_type = ''
+UNION ALL SELECT 'duplicate_path_groups', COUNT(*)::text FROM (SELECT path FROM files WHERE path IS NOT NULL AND path <> '' GROUP BY path HAVING COUNT(*) > 1) d
+UNION ALL SELECT 'duplicate_reconstructed_path_groups', COUNT(*)::text FROM (SELECT COALESCE(NULLIF(f.path, ''), fo.path || '/' || f.filename) AS effective_path FROM files f LEFT JOIN folders fo ON fo.id = f.folder_id WHERE COALESCE(NULLIF(f.path, ''), fo.path || '/' || f.filename) IS NOT NULL GROUP BY COALESCE(NULLIF(f.path, ''), fo.path || '/' || f.filename) HAVING COUNT(*) > 1) d
+UNION ALL SELECT 'duplicate_name_size_groups', COUNT(*)::text FROM (SELECT lower(filename), size_bytes FROM files WHERE filename IS NOT NULL AND filename <> '' AND size_bytes IS NOT NULL AND size_bytes > 0 GROUP BY lower(filename), size_bytes HAVING COUNT(*) > 1) d
+UNION ALL SELECT 'duplicate_name_size_mtime_groups', COUNT(*)::text FROM (SELECT lower(filename), size_bytes, modified_at_fs FROM files WHERE filename IS NOT NULL AND filename <> '' AND size_bytes IS NOT NULL AND size_bytes > 0 AND modified_at_fs IS NOT NULL GROUP BY lower(filename), size_bytes, modified_at_fs HAVING COUNT(*) > 1) d
+UNION ALL SELECT 'duplicate_inode_mtime_groups', COUNT(*)::text FROM (SELECT inode, modified_at_fs, size_bytes FROM files WHERE inode IS NOT NULL AND modified_at_fs IS NOT NULL AND size_bytes IS NOT NULL GROUP BY inode, modified_at_fs, size_bytes HAVING COUNT(*) > 1) d
+UNION ALL SELECT 'duplicate_hash_groups', COUNT(*)::text FROM (SELECT hash_content FROM files WHERE hash_content IS NOT NULL AND hash_content <> '' GROUP BY hash_content HAVING COUNT(*) > 1) d
+UNION ALL SELECT 'orphan_metadata', COUNT(*)::text FROM metadata m LEFT JOIN files f ON f.id = m.file_id WHERE f.id IS NULL
+UNION ALL SELECT 'orphan_embeddings', COUNT(*)::text FROM embeddings e LEFT JOIN files f ON f.id = e.file_id WHERE f.id IS NULL
+UNION ALL SELECT 'orphan_ai_output', COUNT(*)::text FROM ai_output a LEFT JOIN files f ON f.id = a.file_id WHERE f.id IS NULL;
+"
+
+extensions_query="
+SELECT COALESCE(NULLIF(lower(extension), ''), '<none>') AS extension,
+       COUNT(*) AS files,
+       COUNT(*) FILTER (WHERE deleted_at IS NULL) AS active_files,
+       COUNT(*) FILTER (WHERE hash_content IS NULL OR hash_content = '') AS missing_hash_content,
+       COUNT(*) FILTER (WHERE mime_type IS NULL OR mime_type = '') AS missing_mime_type
+FROM files
+GROUP BY COALESCE(NULLIF(lower(extension), ''), '<none>')
+ORDER BY files DESC, extension
+LIMIT 100;
+"
+
+noise_query="
+SELECT id, path, extension, mime_type, size_bytes, deleted_at,
+       CASE
+           WHEN path LIKE '%/@eaDir/%' THEN 'synology_eadir'
+           WHEN path LIKE '%/#recycle/%' THEN 'recycle_bin'
+           WHEN path LIKE '%/.Trash%' THEN 'trash'
+           WHEN filename LIKE '@%' THEN 'synology_system_file'
+           WHEN filename LIKE '.%' THEN 'dotfile'
+           WHEN lower(filename) IN ('.ds_store', 'thumbs.db', 'desktop.ini') THEN 'system_file'
+           WHEN lower(extension) IN ('tmp','temp','bak','old','orig','swp','log','ini','db','sieve','core') THEN 'low_value_extension'
+           ELSE 'review'
+       END AS reason
+FROM files
+WHERE path LIKE '%/@eaDir/%'
+   OR path LIKE '%/#recycle/%'
+   OR path LIKE '%/.Trash%'
+   OR filename LIKE '@%'
+   OR filename LIKE '.%'
+   OR lower(filename) IN ('.ds_store', 'thumbs.db', 'desktop.ini')
+   OR lower(extension) IN ('tmp','temp','bak','old','orig','swp','log','ini','db','sieve','core')
+ORDER BY reason, path
+LIMIT 500;
+"
+
+duplicate_hash_query="
+SELECT hash_content,
+       COUNT(*) AS files,
+       MIN(id) AS canonical_candidate_id,
+       MIN(path) AS sample_path,
+       SUM(COALESCE(size_bytes, 0)) AS total_size_bytes
+FROM files
+WHERE hash_content IS NOT NULL AND hash_content <> '' AND deleted_at IS NULL
+GROUP BY hash_content
+HAVING COUNT(*) > 1
+ORDER BY files DESC, total_size_bytes DESC
+LIMIT 500;
+"
+
+missing_query="
+SELECT id, path, extension, mime_type, size_bytes, deleted_at,
+       (hash_content IS NULL OR hash_content = '') AS missing_hash_content,
+       (hash_path IS NULL OR hash_path = '') AS missing_hash_path,
+       (mime_type IS NULL OR mime_type = '') AS missing_mime_type
+FROM files
+WHERE path IS NULL OR path = ''
+   OR hash_content IS NULL OR hash_content = ''
+   OR hash_path IS NULL OR hash_path = ''
+   OR mime_type IS NULL OR mime_type = ''
+ORDER BY id
+LIMIT 500;
+"
+
+legacy_paths_query="
+SELECT f.id,
+       fo.path AS folder_path,
+       f.filename,
+       fo.path || '/' || f.filename AS reconstructed_path,
+       f.extension,
+       f.size_bytes,
+       f.created_at,
+       f.updated_at
+FROM files f
+JOIN folders fo ON fo.id = f.folder_id
+WHERE (f.path IS NULL OR f.path = '')
+  AND f.filename IS NOT NULL AND f.filename <> ''
+  AND fo.path IS NOT NULL AND fo.path <> ''
+ORDER BY f.id
+LIMIT 1000;
+"
+duplicate_reconstructed_path_query="
+WITH effective_files AS (
+    SELECT f.id,
+           COALESCE(NULLIF(f.path, ''), fo.path || '/' || f.filename) AS effective_path,
+           f.path,
+           fo.path AS folder_path,
+           f.filename,
+           f.size_bytes,
+           f.hash_content,
+           f.deleted_at
+    FROM files f
+    LEFT JOIN folders fo ON fo.id = f.folder_id
+)
+SELECT effective_path,
+       COUNT(*) AS files,
+       COUNT(*) FILTER (WHERE path IS NULL OR path = '') AS legacy_missing_path_files,
+       MIN(id) AS canonical_candidate_id,
+       MIN(path) AS sample_existing_path,
+       MIN(folder_path) AS sample_folder_path,
+       MIN(filename) AS sample_filename
+FROM effective_files
+WHERE effective_path IS NOT NULL AND effective_path <> ''
+GROUP BY effective_path
+HAVING COUNT(*) > 1
+ORDER BY files DESC, legacy_missing_path_files DESC, effective_path
+LIMIT 1000;
+"
+
+duplicate_name_size_query="
+SELECT lower(filename) AS filename_key,
+       size_bytes,
+       COUNT(*) AS files,
+       COUNT(DISTINCT folder_id) AS folders,
+       COUNT(*) FILTER (WHERE path IS NULL OR path = '') AS legacy_missing_path_files,
+       MIN(id) AS canonical_candidate_id,
+       MIN(path) AS sample_path
+FROM files
+WHERE filename IS NOT NULL AND filename <> ''
+  AND size_bytes IS NOT NULL AND size_bytes > 0
+GROUP BY lower(filename), size_bytes
+HAVING COUNT(*) > 1
+ORDER BY files DESC, folders DESC, size_bytes DESC
+LIMIT 1000;
+"
+
+duplicate_signature_query="
+SELECT lower(filename) AS filename_key,
+       size_bytes,
+       modified_at_fs,
+       COUNT(*) AS files,
+       COUNT(DISTINCT folder_id) AS folders,
+       COUNT(*) FILTER (WHERE path IS NULL OR path = '') AS legacy_missing_path_files,
+       MIN(id) AS canonical_candidate_id,
+       MIN(path) AS sample_path
+FROM files
+WHERE filename IS NOT NULL AND filename <> ''
+  AND size_bytes IS NOT NULL AND size_bytes > 0
+  AND modified_at_fs IS NOT NULL
+GROUP BY lower(filename), size_bytes, modified_at_fs
+HAVING COUNT(*) > 1
+ORDER BY files DESC, folders DESC, size_bytes DESC
+LIMIT 1000;
+"
+
+duplicate_inode_mtime_query="
+SELECT inode,
+       modified_at_fs,
+       size_bytes,
+       COUNT(*) AS files,
+       COUNT(DISTINCT folder_id) AS folders,
+       COUNT(*) FILTER (WHERE path IS NULL OR path = '') AS legacy_missing_path_files,
+       MIN(id) AS canonical_candidate_id,
+       MIN(path) AS sample_path
+FROM files
+WHERE inode IS NOT NULL
+  AND modified_at_fs IS NOT NULL
+  AND size_bytes IS NOT NULL
+GROUP BY inode, modified_at_fs, size_bytes
+HAVING COUNT(*) > 1
+ORDER BY files DESC, folders DESC, size_bytes DESC
+LIMIT 1000;
+"
+
+psql_csv "$summary_query" "$SUMMARY_CSV"
+psql_csv "$extensions_query" "$EXT_CSV"
+psql_csv "$noise_query" "$NOISE_CSV"
+psql_csv "$duplicate_hash_query" "$DUP_HASH_CSV"
+psql_csv "$missing_query" "$MISSING_CSV"
+psql_csv "$legacy_paths_query" "$LEGACY_PATHS_CSV"
+psql_csv "$duplicate_reconstructed_path_query" "$DUP_RECON_PATH_CSV"
+psql_csv "$duplicate_name_size_query" "$DUP_NAME_SIZE_CSV"
+psql_csv "$duplicate_signature_query" "$DUP_SIGNATURE_CSV"
+psql_csv "$duplicate_inode_mtime_query" "$DUP_INODE_MTIME_CSV"
+
+total_files=$(psql_value "SELECT COUNT(*) FROM files;")
+active_files=$(psql_value "SELECT COUNT(*) FROM files WHERE deleted_at IS NULL;")
+duplicate_hash_groups=$(psql_value "SELECT COUNT(*) FROM (SELECT hash_content FROM files WHERE hash_content IS NOT NULL AND hash_content <> '' AND deleted_at IS NULL GROUP BY hash_content HAVING COUNT(*) > 1) d;")
+duplicate_reconstructed_path_groups=$(psql_value "SELECT COUNT(*) FROM (SELECT COALESCE(NULLIF(f.path, ''), fo.path || '/' || f.filename) AS effective_path FROM files f LEFT JOIN folders fo ON fo.id = f.folder_id WHERE COALESCE(NULLIF(f.path, ''), fo.path || '/' || f.filename) IS NOT NULL GROUP BY COALESCE(NULLIF(f.path, ''), fo.path || '/' || f.filename) HAVING COUNT(*) > 1) d;")
+duplicate_name_size_groups=$(psql_value "SELECT COUNT(*) FROM (SELECT lower(filename), size_bytes FROM files WHERE filename IS NOT NULL AND filename <> '' AND size_bytes IS NOT NULL AND size_bytes > 0 GROUP BY lower(filename), size_bytes HAVING COUNT(*) > 1) d;")
+duplicate_signature_groups=$(psql_value "SELECT COUNT(*) FROM (SELECT lower(filename), size_bytes, modified_at_fs FROM files WHERE filename IS NOT NULL AND filename <> '' AND size_bytes IS NOT NULL AND size_bytes > 0 AND modified_at_fs IS NOT NULL GROUP BY lower(filename), size_bytes, modified_at_fs HAVING COUNT(*) > 1) d;")
+duplicate_inode_mtime_groups=$(psql_value "SELECT COUNT(*) FROM (SELECT inode, modified_at_fs, size_bytes FROM files WHERE inode IS NOT NULL AND modified_at_fs IS NOT NULL AND size_bytes IS NOT NULL GROUP BY inode, modified_at_fs, size_bytes HAVING COUNT(*) > 1) d;")
+noise_candidates=$(psql_value "SELECT COUNT(*) FROM files WHERE path LIKE '%/@eaDir/%' OR path LIKE '%/#recycle/%' OR path LIKE '%/.Trash%' OR filename LIKE '@%'
+   OR filename LIKE '.%' OR lower(filename) IN ('.ds_store', 'thumbs.db', 'desktop.ini') OR lower(extension) IN ('tmp','temp','bak','old','orig','swp','log','ini','db','sieve','core');")
+missing_hash=$(psql_value "SELECT COUNT(*) FROM files WHERE hash_content IS NULL OR hash_content = '';")
+reconstructable_legacy_path=$(psql_value "SELECT COUNT(*) FROM files f JOIN folders fo ON fo.id = f.folder_id WHERE (f.path IS NULL OR f.path = '') AND f.filename IS NOT NULL AND f.filename <> '' AND fo.path IS NOT NULL AND fo.path <> '';")
+
+cat > "$REPORT" <<EOF
+# SCRUM-19 Legacy Assessment
+
+Generated: $TIMESTAMP
+
+This is a read-only assessment. No data was changed.
+
+## Summary
+
+- Total files: $total_files
+- Active files: $active_files
+- Duplicate content hash groups: $duplicate_hash_groups
+- Duplicate reconstructed path groups: $duplicate_reconstructed_path_groups
+- Duplicate filename+size groups: $duplicate_name_size_groups
+- Duplicate filename+size+mtime groups: $duplicate_signature_groups
+- Duplicate inode+mtime groups: $duplicate_inode_mtime_groups
+- Noise candidates: $noise_candidates
+- Files missing content hash: $missing_hash
+- Reconstructable legacy paths: $reconstructable_legacy_path
+
+## Exported CSV files
+
+- $SUMMARY_CSV
+- $EXT_CSV
+- $NOISE_CSV
+- $DUP_HASH_CSV
+- $MISSING_CSV
+- $LEGACY_PATHS_CSV
+- $DUP_RECON_PATH_CSV
+- $DUP_NAME_SIZE_CSV
+- $DUP_SIGNATURE_CSV
+- $DUP_INODE_MTIME_CSV
+
+## Recommended next step
+
+Review CSV output before SCRUM-20 Controlled Cleanup. Cleanup should use dry-run first and should prefer marking/excluding over hard deletes.
+EOF
+
+cp "$REPORT" "$EXPORT_DIR/latest.md"
+cp "$SUMMARY_CSV" "$EXPORT_DIR/latest-summary.csv"
+cp "$EXT_CSV" "$EXPORT_DIR/latest-extensions.csv"
+cp "$NOISE_CSV" "$EXPORT_DIR/latest-noise.csv"
+cp "$DUP_HASH_CSV" "$EXPORT_DIR/latest-duplicate-hashes.csv"
+cp "$MISSING_CSV" "$EXPORT_DIR/latest-missing-metadata.csv"
+cp "$LEGACY_PATHS_CSV" "$EXPORT_DIR/latest-legacy-paths.csv"
+cp "$DUP_RECON_PATH_CSV" "$EXPORT_DIR/latest-duplicate-reconstructed-paths.csv"
+cp "$DUP_NAME_SIZE_CSV" "$EXPORT_DIR/latest-duplicate-name-size.csv"
+cp "$DUP_SIGNATURE_CSV" "$EXPORT_DIR/latest-duplicate-name-size-mtime.csv"
+cp "$DUP_INODE_MTIME_CSV" "$EXPORT_DIR/latest-duplicate-inode-mtime.csv"
+
+printf '%s\n' "SCRUM-19 Legacy Assessment complete"
+printf '%s\n' "Report: $REPORT"
+printf '%s\n' "Latest: $EXPORT_DIR/latest.md"
