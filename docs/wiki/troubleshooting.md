@@ -55,3 +55,45 @@ core runtime watch
 .\tools\windows\core.ps1 runtime status
 .\tools\windows\core.ps1 runtime dlq
 ```
+
+## Docs build op NAS zegt dat MkDocs ontbreekt
+
+Controleer eerst of MkDocs op dezelfde machine staat als waar je `core docs build` draait:
+
+```bash
+python3 -m mkdocs --version
+```
+
+Als MkDocs ontbreekt op de NAS:
+
+```bash
+python3 -m pip install --user mkdocs-material
+core docs build
+```
+
+CORE probeert eerst `mkdocs` op `PATH` en valt daarna terug op `python3 -m mkdocs`.
+
+## `core` niet herkend in Windows PowerShell
+
+Gebruik de Windows wrapper vanuit de repository:
+
+```powershell
+.\tools\windows\core.ps1 docs build
+```
+
+Of voeg een Windows `core` wrapper toe aan je PATH.
+
+## Docker command gebruikt Docker Desktop in plaats van NAS
+
+Als je in Windows PowerShell `docker ...` draait, praat je met Docker Desktop. Gebruik voor NAS Docker commands SSH of draai het command direct op de NAS:
+
+```powershell
+ssh hugo@NAS "cd /volume1/docker/nas-stack && docker compose ps"
+```
+
+## Bash prompt blijft hangen op `>`
+
+Er staat waarschijnlijk een open quote in je command. Druk `Ctrl+C` en voer het command opnieuw uit zonder los afsluitend aanhalingsteken.
+
+PowerShell gebruikt geen Bash line continuation met `\`. Gebruik lange NAS databasecommands bij voorkeur als een enkele SSH-regel, of voer losse Bash-regels direct op de NAS uit.
+

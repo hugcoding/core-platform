@@ -11,6 +11,7 @@ Deze wiki wordt automatisch gegenereerd door de documentatiegenerator.
 - [PostgreSQL](postgres.md)
 - [Redis](redis.md)
 - [Scripts](scripts.md)
+- [Operations Runbook](operations.md)
 - [Troubleshooting](troubleshooting.md)
 - [Documentatiegenerator](documentation-generator.md)
 - [Bronbestanden](sources.md)

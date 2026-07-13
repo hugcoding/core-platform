@@ -51,6 +51,7 @@ nav:
   - Architecture: wiki/architecture.md
   - CORE: wiki/core.md
   - Configuration: wiki/configuration.md
+  - Operations: wiki/operations.md
   - Runtime:
       - Scanner: wiki/scanner.md
       - Metadata Worker: wiki/metadata-worker.md
