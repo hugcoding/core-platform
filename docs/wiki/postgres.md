@@ -20,6 +20,48 @@
 - `folder_id`
 - `parent_id`
 
+## Backup before cleanup
+
+Maak altijd een databasebackup voordat je cleanup-commands met apply-mode draait. De cleanup verwijdert geen bestanden van disk, maar kan wel database-rijen verwijderen en via `ON DELETE CASCADE` gekoppelde metadata-rijen opruimen.
+
+Run Docker databasecommands op de NAS, niet vanuit Windows Docker Desktop. Vanuit Windows PowerShell kan dat via SSH:
+
+```powershell
+ssh hugo@NAS "cd /volume1/docker/nas-stack && mkdir -p project/exports/db-backups && /usr/local/bin/docker exec postgres pg_dump -U hugo -d nasdb_test -Fc > project/exports/db-backups/nasdb_test-before-cleanup-$(date +%Y%m%d-%H%M%S).dump && ls -lh project/exports/db-backups | tail -5"
+```
+
+Als je al op de NAS bent:
+
+```bash
+cd /volume1/docker/nas-stack
+mkdir -p project/exports/db-backups
+docker exec postgres pg_dump -U hugo -d nasdb_test -Fc > project/exports/db-backups/nasdb_test-before-cleanup-$(date +%Y%m%d-%H%M%S).dump
+ls -lh project/exports/db-backups | tail -5
+```
+
+Gebruik `/usr/local/bin/docker` als `docker` niet op `PATH` staat:
+
+```bash
+/usr/local/bin/docker exec postgres pg_dump -U hugo -d nasdb_test -Fc > project/exports/db-backups/nasdb_test-before-cleanup-$(date +%Y%m%d-%H%M%S).dump
+```
+
+Controleer dat de dump bestaat en niet leeg is voordat je cleanup uitvoert.
+
+## Restore from backup
+
+Restore is destructief voor de database-inhoud. Gebruik dit alleen als je bewust terug wilt naar een backup:
+
+```bash
+cd /volume1/docker/nas-stack
+docker exec -i postgres pg_restore -U hugo -d nasdb_test --clean --if-exists < project/exports/db-backups/NAAM-VAN-BACKUP.dump
+```
+
+## Command pitfalls
+
+Als de NAS-shell blijft hangen op een `>` prompt, staat er meestal een open quote in je command. Druk `Ctrl+C` en voer het command opnieuw uit zonder los afsluitend aanhalingsteken.
+
+Windows PowerShell gebruikt geen Bash line continuation met `\`. Gebruik voor lange databasecommands bij voorkeur één SSH-regel, of voer de losse Bash-regels direct uit op de NAS.
+
 ## schema.sql
 
 ```sql

@@ -117,4 +117,12 @@ SCRUM-20 starts with a legacy duplicate dry-run. It matches legacy rows without 
 core cleanup legacy-duplicates --dry-run
 ```
 
-The dry-run writes reports under `project/exports/controlled-cleanup/`, including candidate rows, blocked legacy rows and cascade impact for metadata, embeddings and AI output. It does not delete or update database rows.
+The dry-run writes reports under `project/exports/controlled-cleanup/`, including candidate rows, blocked legacy rows, size mismatches and cascade impact for metadata, embeddings and AI output. It does not delete or update database rows.
+
+After a verified database backup, apply mode can delete only the matched legacy duplicate database rows. Files on disk are not removed. Apply mode requires an explicit confirmation flag:
+
+```powershell
+core cleanup legacy-duplicates --apply --confirm-delete-legacy-duplicates
+```
+
+After apply mode, run `core cleanup legacy-duplicates --dry-run` and `core cleanup assess` again to verify the cleanup result.

@@ -6,6 +6,8 @@
 
 - SCRUM-19 legacy assessment command: `core cleanup assess` with read-only database reports.
 - SCRUM-20 controlled cleanup dry-run command: `core cleanup legacy-duplicates --dry-run` with candidate, blocked and cascade-impact reports.
+- SCRUM-20 controlled cleanup apply mode with explicit confirmation guard for legacy duplicate database rows.
+- PostgreSQL backup, restore and command pitfall documentation for cleanup preparation.
 - Jira integration read-only foundation with auth, epics/stories dry-run, issue mapping and local cache.
 - Configuration-driven CORE CLI.
 - CORE docs commands: `core docs serve`, `core docs build`, `core docs open`.

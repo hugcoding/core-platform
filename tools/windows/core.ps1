@@ -36,6 +36,7 @@ function Show-Help {
     Write-Host "  core jira sync --project SCRUM --dry-run"
     Write-Host "  core cleanup assess"
     Write-Host "  core cleanup legacy-duplicates --dry-run"
+    Write-Host "  core cleanup legacy-duplicates --apply --confirm-delete-legacy-duplicates"
     Write-Host "  core runtime status"
     Write-Host "  core runtime health"
     Write-Host "  core runtime logs"
@@ -114,7 +115,7 @@ function Invoke-Cleanup {
         }
         default {
             Write-Host "Unknown cleanup command." -ForegroundColor Yellow
-            Write-Host "Use: core cleanup assess | legacy-duplicates --dry-run"
+            Write-Host "Use: core cleanup assess | legacy-duplicates --dry-run | legacy-duplicates --apply --confirm-delete-legacy-duplicates"
         }
     }
 }

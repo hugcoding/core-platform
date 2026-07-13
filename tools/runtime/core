@@ -22,6 +22,7 @@ show_help() {
     printf '%s\n' "  core jira sync --project SCRUM --dry-run"
     printf '%s\n' "  core cleanup assess"
     printf '%s\n' "  core cleanup legacy-duplicates --dry-run"
+    printf '%s\n' "  core cleanup legacy-duplicates --apply --confirm-delete-legacy-duplicates"
     printf '%s\n' "  core runtime status"
     printf '%s\n' "  core runtime health"
     printf '%s\n' "  core runtime logs"
@@ -86,11 +87,12 @@ case "$command_domain" in
                 sh ./tools/runtime/legacy-assessment
                 ;;
             legacy-duplicates)
-                sh ./tools/runtime/legacy-duplicates "${3:-}"
+                shift 2
+                sh ./tools/runtime/legacy-duplicates "$@"
                 ;;
             *)
                 echo "Unknown cleanup command."
-                echo "Use: core cleanup assess | legacy-duplicates --dry-run"
+                echo "Use: core cleanup assess | legacy-duplicates --dry-run | legacy-duplicates --apply --confirm-delete-legacy-duplicates"
                 exit 1
                 ;;
         esac

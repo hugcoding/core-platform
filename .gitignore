@@ -155,3 +155,4 @@ project/exports/jira_sprint3.csv
 core/cache/
 project/exports/legacy-assessment/
 project/exports/controlled-cleanup/
+project/exports/db-backups/

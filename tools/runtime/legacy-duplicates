@@ -5,11 +5,27 @@ PROJECT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$PROJECT_ROOT"
 
 mode="${1:---dry-run}"
-if [ "$mode" != "--dry-run" ]; then
-    echo "Refusing to run without --dry-run."
-    echo "Use: core cleanup legacy-duplicates --dry-run"
-    exit 1
-fi
+confirm="${2:-}"
+
+case "$mode" in
+    --dry-run)
+        RUN_MODE="dry-run"
+        ;;
+    --apply)
+        if [ "$confirm" != "--confirm-delete-legacy-duplicates" ]; then
+            echo "Refusing to apply without explicit confirmation."
+            echo "Use: core cleanup legacy-duplicates --apply --confirm-delete-legacy-duplicates"
+            exit 1
+        fi
+        RUN_MODE="apply"
+        ;;
+    *)
+        echo "Unknown legacy duplicate cleanup mode."
+        echo "Use: core cleanup legacy-duplicates --dry-run"
+        echo "  or: core cleanup legacy-duplicates --apply --confirm-delete-legacy-duplicates"
+        exit 1
+        ;;
+esac
 
 if [ -f .env ]; then
     set -a
@@ -22,7 +38,11 @@ DB_USER="${DB_USER:-hugo}"
 DB_NAME="${DB_NAME:-nas}"
 EXPORT_DIR="project/exports/controlled-cleanup"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-REPORT="$EXPORT_DIR/legacy-duplicates-dry-run-$TIMESTAMP.md"
+if [ "$RUN_MODE" = "apply" ]; then
+    REPORT="$EXPORT_DIR/legacy-duplicates-apply-$TIMESTAMP.md"
+else
+    REPORT="$EXPORT_DIR/legacy-duplicates-dry-run-$TIMESTAMP.md"
+fi
 SUMMARY_CSV="$EXPORT_DIR/legacy-duplicates-summary-$TIMESTAMP.csv"
 CANDIDATES_CSV="$EXPORT_DIR/legacy-duplicates-candidates-$TIMESTAMP.csv"
 BLOCKED_CSV="$EXPORT_DIR/legacy-duplicates-blocked-$TIMESTAMP.csv"
@@ -227,13 +247,34 @@ metadata_count=$(psql_value "$candidate_cte SELECT COUNT(m.*) FROM candidates c 
 embeddings_count=$(psql_value "$candidate_cte SELECT COUNT(e.*) FROM candidates c JOIN embeddings e ON e.file_id = c.legacy_id;")
 ai_output_count=$(psql_value "$candidate_cte SELECT COUNT(a.*) FROM candidates c JOIN ai_output a ON a.file_id = c.legacy_id;")
 size_mismatch_count=$(psql_value "$candidate_cte SELECT COUNT(*) FROM candidates WHERE legacy_size_bytes IS DISTINCT FROM canonical_size_bytes;")
+deleted_count=0
+post_candidate_count="$candidate_count"
+
+if [ "$RUN_MODE" = "apply" ]; then
+    deleted_count=$(psql_value "$candidate_cte
+, deleted AS (
+    DELETE FROM files
+    WHERE id IN (SELECT legacy_id FROM candidates)
+    RETURNING id
+)
+SELECT COUNT(*) FROM deleted;")
+    post_candidate_count=$(psql_value "$candidate_cte SELECT COUNT(*) FROM candidates;")
+fi
+
+if [ "$RUN_MODE" = "apply" ]; then
+    report_title="# SCRUM-20 Controlled Cleanup Apply"
+    report_status="Apply mode was executed. Legacy duplicate database rows were deleted; filesystem files were not touched."
+else
+    report_title="# SCRUM-20 Controlled Cleanup Dry Run"
+    report_status="This is a dry-run report. No data was changed."
+fi
 
 cat > "$REPORT" <<EOF
-# SCRUM-20 Controlled Cleanup Dry Run
+$report_title
 
 Generated: $TIMESTAMP
 
-This is a dry-run report. No data was changed.
+$report_status
 
 ## Legacy Duplicate Candidates
 
@@ -243,6 +284,8 @@ This is a dry-run report. No data was changed.
 - Embedding rows that would cascade: $embeddings_count
 - AI output rows that would cascade: $ai_output_count
 - Size mismatch candidates: $size_mismatch_count
+- Deleted legacy rows: $deleted_count
+- Candidate legacy rows after apply: $post_candidate_count
 
 ## Matching Rule
 
@@ -262,7 +305,9 @@ A legacy row is a cleanup candidate only when its reconstructed path equals an a
 
 ## Next Step
 
-Review the candidate and cascade-impact CSV files before adding any apply mode.
+For dry-run reports, review the candidate, cascade-impact and size-mismatch CSV files before apply mode.
+
+For apply reports, run core cleanup legacy-duplicates --dry-run and core cleanup assess again to verify the cleanup result.
 EOF
 
 cp "$REPORT" "$EXPORT_DIR/latest.md"
@@ -272,6 +317,12 @@ cp "$BLOCKED_CSV" "$EXPORT_DIR/latest-blocked.csv"
 cp "$CASCADE_CSV" "$EXPORT_DIR/latest-cascade-impact.csv"
 cp "$SIZE_MISMATCH_CSV" "$EXPORT_DIR/latest-size-mismatches.csv"
 
-printf '%s\n' "SCRUM-20 Controlled Cleanup dry-run complete"
+if [ "$RUN_MODE" = "apply" ]; then
+    printf '%s\n' "SCRUM-20 Controlled Cleanup apply complete"
+    printf '%s\n' "Deleted legacy rows: $deleted_count"
+    printf '%s\n' "Candidate legacy rows after apply: $post_candidate_count"
+else
+    printf '%s\n' "SCRUM-20 Controlled Cleanup dry-run complete"
+fi
 printf '%s\n' "Report: $REPORT"
 printf '%s\n' "Latest: $EXPORT_DIR/latest.md"
