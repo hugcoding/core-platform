@@ -1,5 +1,6 @@
 import io
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -125,6 +126,24 @@ class CoreCliDocsTest(unittest.TestCase):
             self.assertEqual([], calls)
             self.assertIn("MkDocs config not found", stdout.getvalue())
             self.assertIn("core/config/core.yaml", stdout.getvalue())
+
+    def test_docs_build_falls_back_to_python_module_when_mkdocs_executable_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_config(root)
+            calls = []
+
+            def runner(command):
+                calls.append(command)
+                if command[0] == "mkdocs":
+                    raise FileNotFoundError
+                return subprocess.CompletedProcess(command, 0)
+
+            exit_code = main(["docs", "build"], base_path=root, runner=runner)
+
+            self.assertEqual(0, exit_code)
+            self.assertEqual("mkdocs", calls[0][0])
+            self.assertEqual([sys.executable, "-m", "mkdocs", "build", "-f", str(root / "mkdocs.yml")], calls[1])
 
     def test_docs_command_reports_missing_mkdocs_executable(self):
         with tempfile.TemporaryDirectory() as tmp:

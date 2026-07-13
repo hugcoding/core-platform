@@ -87,18 +87,27 @@ def run_docs(
         print(f"Opening {url}", file=stdout)
         return 0 if browser_open(url) else 1
 
-    commands = {
+    primary_commands = {
         "serve": ["mkdocs", "serve", "-f", str(mkdocs_config), "-a", "127.0.0.1:8000"],
         "build": ["mkdocs", "build", "-f", str(mkdocs_config)],
     }
+    module_commands = {
+        "serve": [sys.executable, "-m", "mkdocs", "serve", "-f", str(mkdocs_config), "-a", "127.0.0.1:8000"],
+        "build": [sys.executable, "-m", "mkdocs", "build", "-f", str(mkdocs_config)],
+    }
 
-    try:
-        completed = runner(commands[action])
-    except FileNotFoundError:
-        print("MkDocs command not found. Install MkDocs and run it through `core docs ...`.", file=stdout)
-        return 1
+    for command in (primary_commands[action], module_commands[action]):
+        try:
+            completed = runner(command)
+        except FileNotFoundError:
+            continue
+        return completed.returncode
 
-    return completed.returncode
+    print(
+        "MkDocs command not found. Install MkDocs or mkdocs-material and run it through `core docs ...`.",
+        file=stdout,
+    )
+    return 1
 
 
 def _jira_client(loader: ConfigLoader, opener=None) -> JiraClient:

@@ -35,6 +35,8 @@ core docs open
 
 `core docs serve` start MkDocs op `127.0.0.1:8000`, `core docs build` bouwt de site, en `core docs open` opent `http://127.0.0.1:8000` in de standaardbrowser.
 
+CORE probeert eerst het `mkdocs` command. Als dat niet op `PATH` staat, probeert CORE automatisch `python -m mkdocs`. MkDocs moet wel op dezelfde machine geinstalleerd zijn als waar je `core docs ...` draait.
+
 Als `mkdocs.yml` ontbreekt, geeft CORE een duidelijke foutmelding met het geconfigureerde pad.
 
 ## Secrets
