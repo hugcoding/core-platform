@@ -3,6 +3,7 @@ import os
 import time
 import socket
 import logging
+import uuid
 from datetime import datetime, timezone
 
 import redis
@@ -15,6 +16,7 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
 SCAN_ROOT = os.getenv("SCAN_ROOT", "/volume1")
 SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", "30"))
+MISSING_SCAN_THRESHOLD = max(1, int(os.getenv("MISSING_SCAN_THRESHOLD", "2")))
 
 STREAM_KEY = os.getenv("STREAM_KEY", "scan_stream")
 LOCK_KEY = "scanner:lock:event"
@@ -26,6 +28,8 @@ LAST_SCAN_KEY = "scanner:last_scan"
 HEARTBEAT_TTL = 120
 
 CONSUMER_NAME = socket.gethostname()
+SIGNATURE_PREFIX = "scanner:sig:"
+STATE_SEPARATOR = "\n"
 
 IGNORE_PREFIXES = ("@", ".", "#")
 IGNORE_NAMES = {"tmp", "lost+found"}
@@ -130,16 +134,77 @@ def file_signature(path, st):
     return f"{int(st.st_mtime)}:{st.st_size}:{st.st_ino}"
 
 
-def changed(path, signature):
-    key = "scanner:sig:" + path
-    old = r.get(key)
-    if old == signature:
-        return False
-    r.set(key, signature)
-    return True
+def parse_file_state(raw):
+    if not raw:
+        return None, None, 0
+
+    parts = str(raw).split(STATE_SEPARATOR, 2)
+    signature = parts[0]
+    scan_id = (parts[1] or None) if len(parts) > 1 else None
+
+    try:
+        missing_scans = int(parts[2]) if len(parts) > 2 else 0
+    except ValueError:
+        missing_scans = 0
+
+    return signature, scan_id, missing_scans
+
+
+def encode_file_state(signature, scan_id, missing_scans=0):
+    return STATE_SEPARATOR.join((signature, scan_id or "", str(missing_scans)))
+
+
+def changed(path, signature, scan_id):
+    key = SIGNATURE_PREFIX + path
+    old_signature, _, _ = parse_file_state(r.get(key))
+    r.set(key, encode_file_state(signature, scan_id))
+    return old_signature != signature
+
+
+def mark_seen(path, scan_id):
+    key = SIGNATURE_PREFIX + path
+    signature, _, _ = parse_file_state(r.get(key))
+    if signature is not None:
+        r.set(key, encode_file_state(signature, scan_id))
+
+
+def reconcile_missing(scan_id):
+    checked = 0
+    deleted = 0
+
+    for key in r.scan_iter(match=SIGNATURE_PREFIX + "*", count=1000):
+        raw = r.get(key)
+        signature, last_seen_scan, missing_scans = parse_file_state(raw)
+
+        if signature is None or last_seen_scan == scan_id:
+            continue
+
+        checked += 1
+        missing_scans += 1
+
+        if missing_scans < MISSING_SCAN_THRESHOLD:
+            r.set(key, encode_file_state(signature, last_seen_scan, missing_scans))
+            continue
+
+        path = key[len(SIGNATURE_PREFIX):]
+        r.xadd(STREAM_KEY, {
+            "event": "DELETE",
+            "path": path,
+            "source": "polling_scanner",
+            "ts": utc_now(),
+        })
+        r.delete(key)
+        deleted += 1
+
+    return checked, deleted
+
+
+def raise_walk_error(error):
+    raise error
 
 
 def scan_once():
+    scan_id = uuid.uuid4().hex
     roots = discover_roots()
     logger.info("Discovered scan roots: %s", ", ".join(roots))
 
@@ -150,7 +215,7 @@ def scan_once():
         heartbeat("scanning")
         refresh_lock()
 
-        for root, dirs, files in os.walk(root_base):
+        for root, dirs, files in os.walk(root_base, onerror=raise_walk_error):
             dirs[:] = [
                 d for d in dirs
                 if d not in IGNORE_NAMES
@@ -169,16 +234,18 @@ def scan_once():
                 except FileNotFoundError:
                     continue
                 except PermissionError:
+                    mark_seen(path, scan_id)
                     logger.warning("Permission denied: %s", path)
                     continue
                 except Exception as e:
+                    mark_seen(path, scan_id)
                     logger.warning("stat failed: %s err=%s", path, e)
                     continue
 
                 discovered += 1
                 sig = file_signature(path, st)
 
-                if not changed(path, sig):
+                if not changed(path, sig, scan_id):
                     continue
 
                 r.xadd(STREAM_KEY, {
@@ -192,8 +259,9 @@ def scan_once():
                 })
                 enqueued += 1
 
+    missing, deleted = reconcile_missing(scan_id)
     r.set(LAST_SCAN_KEY, utc_now(), ex=HEARTBEAT_TTL * 4)
-    return discovered, enqueued
+    return discovered, enqueued, missing, deleted
 
 
 def main():
@@ -210,10 +278,17 @@ def main():
 
             started = time.time()
             try:
-                discovered, enqueued = scan_once()
+                discovered, enqueued, missing, deleted = scan_once()
                 elapsed = time.time() - started
                 heartbeat("idle")
-                logger.info("Scan done: discovered=%s enqueued=%s elapsed=%.1fs", discovered, enqueued, elapsed)
+                logger.info(
+                    "Scan done: discovered=%s enqueued=%s missing=%s deleted=%s elapsed=%.1fs",
+                    discovered,
+                    enqueued,
+                    missing,
+                    deleted,
+                    elapsed,
+                )
             except Exception as e:
                 heartbeat("error")
                 logger.exception("Scan loop failed: %s", e)

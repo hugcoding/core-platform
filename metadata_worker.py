@@ -168,6 +168,61 @@ def get_image_dims(path, mime):
         return None, None
 
 
+def path_is_missing(path):
+    try:
+        os.stat(path)
+        return False
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+
+
+def get_file_by_path(cur, path):
+    cur.execute(
+        "SELECT id, path, deleted_at FROM files WHERE path = %s",
+        (path,),
+    )
+    return cur.fetchone()
+
+
+def classify_path_mutation(existing_file):
+    if not existing_file:
+        return "CREATED"
+    if existing_file["deleted_at"] is not None:
+        return "RESTORED"
+    return "MODIFIED"
+
+
+def classify_rename_mutation(old_path, new_path):
+    if os.path.dirname(old_path) == os.path.dirname(new_path):
+        return "RENAMED"
+    return "MOVED"
+
+
+def find_rename_candidate(cur, path, inode, size_bytes, modified_at_fs):
+    cur.execute("""
+        SELECT id, path
+        FROM files
+        WHERE inode = %s
+          AND size_bytes = %s
+          AND modified_at_fs = %s
+          AND path <> %s
+          AND deleted_at IS NULL
+        ORDER BY id
+    """, (inode, size_bytes, modified_at_fs, path))
+
+    missing_candidates = [
+        row for row in cur.fetchall()
+        if path_is_missing(row["path"])
+    ]
+
+    if len(missing_candidates) != 1:
+        return None
+
+    return missing_candidates[0]
+
+
 def process_event(cur, data):
     event = str(data.get("event", "")).lower()
     path = data.get("path")
@@ -178,12 +233,26 @@ def process_event(cur, data):
     path = os.path.normpath(str(path))
 
     if "delete" in event:
-        cur.execute("UPDATE files SET deleted_at = NOW() WHERE path = %s", (path,))
+        cur.execute("""
+            UPDATE files SET
+                deleted_at = NOW(),
+                updated_at = NOW(),
+                last_mutation_type = 'DELETED',
+                last_mutation_at = NOW()
+            WHERE path = %s
+        """, (path,))
         logger.info("Deleted: %s", path)
         return
 
     if not os.path.exists(path):
-        cur.execute("UPDATE files SET deleted_at = NOW() WHERE path = %s", (path,))
+        cur.execute("""
+            UPDATE files SET
+                deleted_at = NOW(),
+                updated_at = NOW(),
+                last_mutation_type = 'DELETED',
+                last_mutation_at = NOW()
+            WHERE path = %s
+        """, (path,))
         logger.warning("Missing file, marked deleted: %s", path)
         return
 
@@ -205,30 +274,7 @@ def process_event(cur, data):
     hash_content = hash_first_1024(path)
     mime = get_mime(path)
 
-    cur.execute("""
-        INSERT INTO files (
-            folder_id, filename, extension, size_bytes,
-            modified_at_fs, inode, xxhash,
-            path, source, hash_path, hash_content,
-            mime_type, deleted_at
-        )
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL)
-        ON CONFLICT (path) DO UPDATE SET
-            folder_id       = EXCLUDED.folder_id,
-            filename        = EXCLUDED.filename,
-            extension       = EXCLUDED.extension,
-            size_bytes      = EXCLUDED.size_bytes,
-            modified_at_fs  = EXCLUDED.modified_at_fs,
-            inode           = EXCLUDED.inode,
-            xxhash          = EXCLUDED.xxhash,
-            source          = EXCLUDED.source,
-            hash_path       = EXCLUDED.hash_path,
-            hash_content    = EXCLUDED.hash_content,
-            mime_type       = EXCLUDED.mime_type,
-            updated_at      = NOW(),
-            deleted_at      = NULL
-        RETURNING id
-    """, (
+    values = (
         folder_id,
         filename,
         extension,
@@ -241,30 +287,91 @@ def process_event(cur, data):
         hash_path,
         hash_content,
         mime,
-    ))
+    )
 
+    existing_file = get_file_by_path(cur, path)
+    rename_candidate = None
+    if not existing_file:
+        rename_candidate = find_rename_candidate(
+            cur, path, inode, size_bytes, modified_at_fs
+        )
+
+    if rename_candidate:
+        mutation_type = classify_rename_mutation(rename_candidate["path"], path)
+        cur.execute("""
+            UPDATE files SET
+                folder_id          = %s,
+                filename           = %s,
+                extension          = %s,
+                size_bytes         = %s,
+                modified_at_fs     = %s,
+                inode              = %s,
+                xxhash             = %s,
+                path               = %s,
+                source             = %s,
+                hash_path          = %s,
+                hash_content       = %s,
+                mime_type          = %s,
+                last_mutation_type = %s,
+                last_mutation_at   = NOW(),
+                updated_at         = NOW(),
+                deleted_at         = NULL
+            WHERE id = %s
+            RETURNING id
+        """, values + (mutation_type, rename_candidate["id"]))
+        logger.info(
+            "%s: %s -> %s",
+            mutation_type.title(),
+            rename_candidate["path"],
+            path,
+        )
+    else:
+        mutation_type = classify_path_mutation(existing_file)
+        cur.execute("""
+            INSERT INTO files (
+                folder_id, filename, extension, size_bytes,
+                modified_at_fs, inode, xxhash,
+                path, source, hash_path, hash_content,
+                mime_type, deleted_at,
+                last_mutation_type, last_mutation_at
+            )
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,%s,NOW())
+            ON CONFLICT (path) DO UPDATE SET
+                folder_id          = EXCLUDED.folder_id,
+                filename           = EXCLUDED.filename,
+                extension          = EXCLUDED.extension,
+                size_bytes         = EXCLUDED.size_bytes,
+                modified_at_fs     = EXCLUDED.modified_at_fs,
+                inode              = EXCLUDED.inode,
+                xxhash             = EXCLUDED.xxhash,
+                source             = EXCLUDED.source,
+                hash_path          = EXCLUDED.hash_path,
+                hash_content       = EXCLUDED.hash_content,
+                mime_type          = EXCLUDED.mime_type,
+                last_mutation_type = EXCLUDED.last_mutation_type,
+                last_mutation_at   = NOW(),
+                updated_at         = NOW(),
+                deleted_at         = NULL
+            RETURNING id
+        """, values + (mutation_type,))
     file_id = cur.fetchone()["id"]
 
     if FORCE_FULL:
         cur.execute("DELETE FROM metadata WHERE file_id = %s", (file_id,))
 
-    cur.execute("SELECT 1 FROM metadata WHERE file_id = %s", (file_id,))
-    exists = cur.fetchone()
+    width, height = get_image_dims(path, mime)
 
-    if not exists:
-        width, height = get_image_dims(path, mime)
-
-        cur.execute("""
-            INSERT INTO metadata (
-                file_id, mime_type, width, height, duration, missing
-            )
-            VALUES (%s,%s,%s,%s,NULL,false)
-            ON CONFLICT (file_id) DO UPDATE SET
-                mime_type = EXCLUDED.mime_type,
-                width     = EXCLUDED.width,
-                height    = EXCLUDED.height,
-                missing   = false
-        """, (file_id, mime, width, height))
+    cur.execute("""
+        INSERT INTO metadata (
+            file_id, mime_type, width, height, duration, missing
+        )
+        VALUES (%s,%s,%s,%s,NULL,false)
+        ON CONFLICT (file_id) DO UPDATE SET
+            mime_type = EXCLUDED.mime_type,
+            width     = EXCLUDED.width,
+            height    = EXCLUDED.height,
+            missing   = false
+    """, (file_id, mime, width, height))
 
     r.set(LAST_EVENT_KEY, utc_now(), ex=HEARTBEAT_TTL * 4)
     logger.info("Processed: %s", path)

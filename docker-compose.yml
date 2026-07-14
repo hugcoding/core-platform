@@ -16,6 +16,7 @@ services:
       - DB_HOST=${DB_HOST}
       - REDIS_HOST=redis
       - SCAN_ROOT=${SCAN_ROOT:-/volume1}
+      - MISSING_SCAN_THRESHOLD=${MISSING_SCAN_THRESHOLD:-2}
 
   metadata_worker:
     build: { context: ., dockerfile: Dockerfile.metadata }

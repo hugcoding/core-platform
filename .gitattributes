@@ -21,6 +21,8 @@ tools/migration/* text eol=lf
 
 # SQL
 *.sql text eol=lf
+/schema.sql -text
+/database/schema/schema.sql -text
 
 # Markdown
 *.md text eol=lf
