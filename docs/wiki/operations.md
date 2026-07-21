@@ -113,6 +113,18 @@ De Material for MkDocs 2.0 waarschuwing is upstream en geen build failure zolang
 
 ## Cleanup workflow
 
+### Database schema review
+
+Run the read-only SCRUM-53 assessment before proposing column removal:
+
+```bash
+cd /volume1/docker/nas-stack
+/usr/local/bin/docker exec -i postgres psql -U hugo -d nasdb_test \
+  < database/assessment/schema_review.sql
+```
+
+The assessment contains only `SELECT` statements. The current evidence and candidate classifications are documented in `project/reports/SCRUM-53-database-schema-review.md`.
+
 Maak eerst een databasebackup. Zie [PostgreSQL](postgres.md).
 
 Run daarna de read-only assessment:
