@@ -21,6 +21,12 @@ echo
 echo "========== LAST ACTIVITY =========="
 echo -n "scanner:last_scan = "
 docker exec nas-redis-1 redis-cli GET scanner:last_scan 2>/dev/null || true
+echo -n "scanner:last_full_scan = "
+docker exec nas-redis-1 redis-cli GET scanner:last_full_scan 2>/dev/null || true
+echo -n "scanner:last_interval_scan = "
+docker exec nas-redis-1 redis-cli GET scanner:last_interval_scan 2>/dev/null || true
+echo -n "scanner:last_interval_root = "
+docker exec nas-redis-1 redis-cli GET scanner:last_interval_root 2>/dev/null || true
 echo -n "metadata_worker:last_event = "
 docker exec nas-redis-1 redis-cli GET metadata_worker:last_event 2>/dev/null || true
 

@@ -16,7 +16,8 @@ REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
 SCAN_ROOT = os.getenv("SCAN_ROOT", "/volume1")
-SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", "30"))
+SCAN_INTERVAL = max(1, int(os.getenv("SCAN_INTERVAL", "600")))
+FULL_SCAN_INTERVAL = max(SCAN_INTERVAL, int(os.getenv("FULL_SCAN_INTERVAL", "3600")))
 MISSING_SCAN_THRESHOLD = max(1, int(os.getenv("MISSING_SCAN_THRESHOLD", "2")))
 
 STREAM_KEY = os.getenv("STREAM_KEY", "scan_stream")
@@ -26,6 +27,10 @@ LOCK_TTL = 90
 HEARTBEAT_KEY = "scanner:heartbeat"
 HEARTBEAT_STATUS_KEY = "scanner:heartbeat:status"
 LAST_SCAN_KEY = "scanner:last_scan"
+LAST_FULL_SCAN_KEY = "scanner:last_full_scan"
+LAST_INTERVAL_SCAN_KEY = "scanner:last_interval_scan"
+LAST_INTERVAL_ROOT_KEY = "scanner:last_interval_root"
+INTERVAL_ROOT_INDEX_KEY = "scanner:interval:root_index"
 HEARTBEAT_TTL = 120
 
 CONSUMER_NAME = socket.gethostname()
@@ -183,10 +188,13 @@ def encode_file_state(signature, scan_id, missing_scans=0):
     return STATE_SEPARATOR.join((signature, scan_id or "", str(missing_scans)))
 
 
-def changed(path, signature, scan_id):
+def changed(path, signature, scan_id, full_sweep=True):
     key = SIGNATURE_PREFIX + path
-    old_signature, _, _ = parse_file_state(r.get(key))
-    r.set(key, encode_file_state(signature, scan_id))
+    old_signature, last_full_sweep, missing_sweeps = parse_file_state(r.get(key))
+    if full_sweep:
+        last_full_sweep = scan_id
+        missing_sweeps = 0
+    r.set(key, encode_file_state(signature, last_full_sweep, missing_sweeps))
     return old_signature != signature
 
 
@@ -233,14 +241,29 @@ def raise_walk_error(error):
     raise error
 
 
-def _scan_once(scan_id, session_id):
-    roots = discover_roots()
-    logger.info("Discovered scan roots: %s", ", ".join(roots))
+def select_interval_root(roots):
+    if not roots:
+        return None
+    try:
+        index = int(r.get(INTERVAL_ROOT_INDEX_KEY) or 0)
+    except (TypeError, ValueError):
+        index = 0
+    root = roots[index % len(roots)]
+    r.set(INTERVAL_ROOT_INDEX_KEY, str((index + 1) % len(roots)))
+    return root
+
+
+def _scan_roots(roots, scan_id, session_id, full_sweep):
+    scan_type = "full" if full_sweep else "interval"
+    logger.info("Starting %s scan roots=%s", scan_type, ", ".join(roots))
 
     discovered = 0
     enqueued = 0
 
     for root_base in roots:
+        root_started = time.time()
+        root_discovered = 0
+        root_enqueued = 0
         heartbeat("scanning")
         refresh_lock()
 
@@ -263,18 +286,24 @@ def _scan_once(scan_id, session_id):
                 except FileNotFoundError:
                     continue
                 except PermissionError:
-                    mark_seen(path, scan_id)
+                    if full_sweep:
+                        mark_seen(path, scan_id)
                     logger.warning("Permission denied: %s", path)
                     continue
                 except Exception as e:
-                    mark_seen(path, scan_id)
+                    if full_sweep:
+                        mark_seen(path, scan_id)
                     logger.warning("stat failed: %s err=%s", path, e)
                     continue
 
                 discovered += 1
+                root_discovered += 1
+                if root_discovered % 1000 == 0:
+                    heartbeat("scanning")
+                    refresh_lock()
                 sig = file_signature(path, st)
 
-                if not changed(path, sig, scan_id):
+                if not changed(path, sig, scan_id, full_sweep=full_sweep):
                     continue
 
                 r.xadd(STREAM_KEY, {
@@ -288,21 +317,42 @@ def _scan_once(scan_id, session_id):
                     "scan_session_id": str(session_id or ""),
                 })
                 enqueued += 1
+                root_enqueued += 1
 
-    missing, deleted = reconcile_missing(scan_id, session_id=session_id)
+        logger.info(
+            "Root done: type=%s root=%s discovered=%s enqueued=%s elapsed=%.1fs",
+            scan_type,
+            root_base,
+            root_discovered,
+            root_enqueued,
+            time.time() - root_started,
+        )
+
+    if full_sweep:
+        missing, deleted = reconcile_missing(scan_id, session_id=session_id)
+    else:
+        missing, deleted = 0, 0
+
     if session_id:
         session_call("SELECT increment_files_discovered(%s, %s)", (session_id, discovered))
         session_call("SELECT increment_jobs_enqueued(%s, %s)", (session_id, enqueued + deleted))
         session_call("SELECT finish_scan_session(%s)", (session_id,))
-    r.set(LAST_SCAN_KEY, utc_now(), ex=HEARTBEAT_TTL * 4)
+
+    finished_at = utc_now()
+    r.set(LAST_SCAN_KEY, finished_at, ex=HEARTBEAT_TTL * 4)
+    if full_sweep:
+        r.set(LAST_FULL_SCAN_KEY, finished_at)
+    else:
+        r.set(LAST_INTERVAL_SCAN_KEY, finished_at)
+        r.set(LAST_INTERVAL_ROOT_KEY, roots[0] if roots else "")
     return discovered, enqueued, missing, deleted
 
 
-def scan_once():
+def run_scan(scan_type, roots):
     scan_id = uuid.uuid4().hex
-    session_id = session_call("SELECT create_scan_session(%s)", ("interval",), fetch=True)
+    session_id = session_call("SELECT create_scan_session(%s)", (scan_type,), fetch=True)
     try:
-        return _scan_once(scan_id, session_id)
+        return _scan_roots(roots, scan_id, session_id, full_sweep=(scan_type == "full"))
     except Exception:
         if session_id:
             session_call(
@@ -312,12 +362,32 @@ def scan_once():
         raise
 
 
+def scan_once():
+    """Run a complete reconciliation sweep (backward-compatible entry point)."""
+    roots = discover_roots()
+    if not roots:
+        raise RuntimeError("Full scan aborted: no scan roots discovered")
+    return run_scan("full", roots)
+
+
+def scan_interval_once():
+    roots = discover_roots()
+    root = select_interval_root(roots)
+    return run_scan("interval", [root] if root else [])
+
+
 def main():
     if not acquire_lock():
         return
 
     heartbeat("started")
-    logger.info("Starting polling scanner on %s interval=%ss", SCAN_ROOT, SCAN_INTERVAL)
+    logger.info(
+        "Starting polling scanner on %s interval=%ss full_interval=%ss",
+        SCAN_ROOT,
+        SCAN_INTERVAL,
+        FULL_SCAN_INTERVAL,
+    )
+    next_full_at = 0.0
 
     try:
         while True:
@@ -326,11 +396,19 @@ def main():
 
             started = time.time()
             try:
-                discovered, enqueued, missing, deleted = scan_once()
+                full_sweep = time.monotonic() >= next_full_at
+                if full_sweep:
+                    discovered, enqueued, missing, deleted = scan_once()
+                    next_full_at = time.monotonic() + FULL_SCAN_INTERVAL
+                    scan_type = "full"
+                else:
+                    discovered, enqueued, missing, deleted = scan_interval_once()
+                    scan_type = "interval"
                 elapsed = time.time() - started
                 heartbeat("idle")
                 logger.info(
-                    "Scan done: discovered=%s enqueued=%s missing=%s deleted=%s elapsed=%.1fs",
+                    "Scan done: type=%s discovered=%s enqueued=%s missing=%s deleted=%s elapsed=%.1fs",
+                    scan_type,
                     discovered,
                     enqueued,
                     missing,

@@ -1,5 +1,18 @@
 # Configuration
 
+## Scanner cadence
+
+The scanner separates lightweight root-level interval scans from complete reconciliation sweeps:
+
+| Variable | Default | Meaning |
+|---|---:|---|
+| `SCAN_ROOT` | `/volume1` | Parent directory containing scan roots |
+| `SCAN_INTERVAL` | `600` | Seconds to wait after each completed scan |
+| `FULL_SCAN_INTERVAL` | `3600` | Minimum seconds between completed full sweeps |
+| `MISSING_SCAN_THRESHOLD` | `2` | Completed full sweeps a path may be absent before `DELETE` |
+
+An interval scan rotates through one top-level root and only produces `UPSERT` events. Only a successful full sweep over every root performs delete reconciliation. See [ADR-0002](../adr/ADR-0002-full-and-interval-scans.md).
+
 CORE gebruikt twee soorten instellingen:
 
 - Configuratie staat in `core/config/` en mag in Git staan.

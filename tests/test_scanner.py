@@ -1,6 +1,7 @@
 import sys
 import types
 import unittest
+from unittest import mock
 
 
 if "redis" not in sys.modules:
@@ -92,6 +93,66 @@ class ScannerStateTests(unittest.TestCase):
         checked, deleted = scanner.reconcile_missing("scan-current")
 
         self.assertEqual((0, 0), (checked, deleted))
+        self.assertEqual([], scanner.r.events)
+
+    def test_interval_update_preserves_full_sweep_state(self):
+        path = "/volume1/share/file.txt"
+        key = scanner.SIGNATURE_PREFIX + path
+        scanner.r.set(key, scanner.encode_file_state("old", "full-1", missing_scans=1))
+
+        self.assertTrue(scanner.changed(path, "new", "interval-9", full_sweep=False))
+
+        self.assertEqual(("new", "full-1", 1), scanner.parse_file_state(scanner.r.get(key)))
+
+    def test_interval_scan_never_reconciles_missing_files(self):
+        path = "/volume1/share/missing.txt"
+        key = scanner.SIGNATURE_PREFIX + path
+        scanner.r.set(key, scanner.encode_file_state("sig", "full-1", missing_scans=1))
+
+        result = scanner._scan_roots([], "interval-1", None, full_sweep=False)
+
+        self.assertEqual((0, 0, 0, 0), result)
+        self.assertIn(key, scanner.r.values)
+        self.assertEqual([], scanner.r.events)
+
+    def test_interval_roots_rotate_persistently(self):
+        roots = ["/volume1/a", "/volume1/b"]
+
+        self.assertEqual("/volume1/a", scanner.select_interval_root(roots))
+        self.assertEqual("/volume1/b", scanner.select_interval_root(roots))
+        self.assertEqual("/volume1/a", scanner.select_interval_root(roots))
+
+    def test_scan_once_registers_a_full_session(self):
+        calls = []
+
+        def session_call(query, params=(), fetch=False):
+            calls.append((query, params, fetch))
+            return "session-1" if "create_scan_session" in query else None
+
+        with (
+            mock.patch.object(scanner, "discover_roots", return_value=["/volume1/share"]),
+            mock.patch.object(scanner, "session_call", side_effect=session_call),
+            mock.patch.object(scanner, "_scan_roots", return_value=(0, 0, 0, 0)),
+        ):
+            scanner.scan_once()
+
+        self.assertEqual(("full",), calls[0][1])
+
+    def test_full_scan_without_roots_aborts_before_reconciliation(self):
+        with mock.patch.object(scanner, "discover_roots", return_value=[]):
+            with self.assertRaisesRegex(RuntimeError, "no scan roots"):
+                scanner.scan_once()
+
+    def test_failed_full_walk_does_not_reconcile(self):
+        path = "/volume1/share/missing.txt"
+        key = scanner.SIGNATURE_PREFIX + path
+        scanner.r.set(key, scanner.encode_file_state("sig", "full-1", missing_scans=1))
+
+        with mock.patch.object(scanner.os, "walk", side_effect=OSError("mount failed")):
+            with self.assertRaises(OSError):
+                scanner._scan_roots(["/volume1/share"], "full-2", None, full_sweep=True)
+
+        self.assertIn(key, scanner.r.values)
         self.assertEqual([], scanner.r.events)
 
 

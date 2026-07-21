@@ -20,6 +20,8 @@ services:
       - DB_NAME=${DB_NAME}
       - REDIS_HOST=redis
       - SCAN_ROOT=${SCAN_ROOT:-/volume1}
+      - SCAN_INTERVAL=${SCAN_INTERVAL:-600}
+      - FULL_SCAN_INTERVAL=${FULL_SCAN_INTERVAL:-3600}
       - MISSING_SCAN_THRESHOLD=${MISSING_SCAN_THRESHOLD:-2}
 
   metadata_worker:

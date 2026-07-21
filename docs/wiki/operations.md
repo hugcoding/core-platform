@@ -83,6 +83,23 @@ Stoppen en opnieuw starten zonder rebuild:
 /usr/local/bin/docker compose up -d
 ```
 
+### Full- en intervalscans controleren
+
+```bash
+/usr/local/bin/docker compose logs --tail=100 scanner
+./tools/runtime/status
+```
+
+Runtime-status toont afzonderlijk de laatste full scan, intervalscan en intervalroot. Controleer in `scan_sessions` dat beide types voorkomen:
+
+```bash
+/usr/local/bin/docker exec postgres psql -U hugo -d nasdb_test -c \
+"SELECT type,status,started_at,finished_at,files_discovered,jobs_enqueued,jobs_processed
+ FROM scan_sessions
+ ORDER BY started_at DESC
+ LIMIT 10;"
+```
+
 ## NAS repository veilig bijwerken
 
 Gebruik vanuit Windows PowerShell het wrapper-script. Het controleert op lokale NAS-wijzigingen, schakelt automatisch Git-onderhoud op de SMB-share uit en staat alleen een fast-forward toe:

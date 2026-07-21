@@ -63,6 +63,7 @@ nav:
       - RFC Overview: wiki/rfc.md
       - ADR:
           - Polling vs Inotify: adr/ADR-0001-polling-vs-inotify.md
+          - Full vs Interval Scans: adr/ADR-0002-full-and-interval-scans.md
       - Standards Sources:
           - Database: standards/database.md
           - Docker: standards/docker.md
