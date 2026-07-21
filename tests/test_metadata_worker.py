@@ -186,7 +186,19 @@ class MutationPersistenceTests(unittest.TestCase):
 
         query, params = next(call for call in cursor.calls if "INSERT INTO files" in call[0])
         self.assertIn("last_mutation_type", query)
+        self.assertNotIn("xxhash", query)
+        self.assertEqual(query.count("%s"), len(params))
         self.assertEqual("CREATED", params[-1])
+
+    def test_mime_is_only_written_to_canonical_files_column(self):
+        cursor = ProcessCursor()
+
+        self.process_upsert(cursor)
+
+        files_query, _ = next(call for call in cursor.calls if "INSERT INTO files" in call[0])
+        metadata_query, _ = next(call for call in cursor.calls if "INSERT INTO metadata" in call[0])
+        self.assertIn("mime_type", files_query)
+        self.assertNotIn("mime_type", metadata_query)
 
     def test_rename_is_written_to_existing_file_update(self):
         old_path = metadata_worker.os.path.normpath("/volume1/photos/old.jpg")
@@ -203,6 +215,7 @@ class MutationPersistenceTests(unittest.TestCase):
 
         query, params = next(call for call in cursor.calls if "UPDATE files SET" in call[0])
         self.assertIn("last_mutation_type", query)
+        self.assertEqual(query.count("%s"), len(params))
         self.assertEqual("RENAMED", params[-2])
         self.assertEqual(42, params[-1])
 

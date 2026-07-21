@@ -281,7 +281,6 @@ def process_event(cur, data):
         size_bytes,
         modified_at_fs,
         inode,
-        hash_path,
         path,
         data.get("source", "polling_scanner"),
         hash_path,
@@ -306,7 +305,6 @@ def process_event(cur, data):
                 size_bytes         = %s,
                 modified_at_fs     = %s,
                 inode              = %s,
-                xxhash             = %s,
                 path               = %s,
                 source             = %s,
                 hash_path          = %s,
@@ -330,12 +328,12 @@ def process_event(cur, data):
         cur.execute("""
             INSERT INTO files (
                 folder_id, filename, extension, size_bytes,
-                modified_at_fs, inode, xxhash,
+                modified_at_fs, inode,
                 path, source, hash_path, hash_content,
                 mime_type, deleted_at,
                 last_mutation_type, last_mutation_at
             )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,%s,NOW())
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,%s,NOW())
             ON CONFLICT (path) DO UPDATE SET
                 folder_id          = EXCLUDED.folder_id,
                 filename           = EXCLUDED.filename,
@@ -343,7 +341,6 @@ def process_event(cur, data):
                 size_bytes         = EXCLUDED.size_bytes,
                 modified_at_fs     = EXCLUDED.modified_at_fs,
                 inode              = EXCLUDED.inode,
-                xxhash             = EXCLUDED.xxhash,
                 source             = EXCLUDED.source,
                 hash_path          = EXCLUDED.hash_path,
                 hash_content       = EXCLUDED.hash_content,
@@ -363,15 +360,14 @@ def process_event(cur, data):
 
     cur.execute("""
         INSERT INTO metadata (
-            file_id, mime_type, width, height, duration, missing
+            file_id, width, height, duration, missing
         )
-        VALUES (%s,%s,%s,%s,NULL,false)
+        VALUES (%s,%s,%s,NULL,false)
         ON CONFLICT (file_id) DO UPDATE SET
-            mime_type = EXCLUDED.mime_type,
             width     = EXCLUDED.width,
             height    = EXCLUDED.height,
             missing   = false
-    """, (file_id, mime, width, height))
+    """, (file_id, width, height))
 
     r.set(LAST_EVENT_KEY, utc_now(), ex=HEARTBEAT_TTL * 4)
     logger.info("Processed: %s", path)

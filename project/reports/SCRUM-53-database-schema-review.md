@@ -12,7 +12,7 @@ No columns should be removed in this phase. The review identifies three deprecat
 |---|---|---|---|
 | `files.xxhash` | Deprecate | Equals `files.hash_path` for 221,451 rows; the worker writes the same path hash to both columns | Stop writes, move index consumers to `hash_path`, monitor, then propose removal |
 | `metadata.duration` | Deprecate | NULL for all 225,287 metadata rows; worker explicitly inserts NULL and never updates it | Decide whether media duration is roadmap scope; otherwise stop exposing and later remove |
-| `metadata.mime_type` | Deprecate or make canonical | Duplicates `files.mime_type`; 3,855 disagreements are mainly legacy/incomplete file rows | Choose one owner and backfill before removing either copy |
+| `metadata.mime_type` | Deprecate | Duplicates `files.mime_type`; active integrity and cleanup tools already use the file column | Stop metadata writes, observe compatibility, then remove its index and column |
 | `ai_output` | Keep pending roadmap decision | Zero rows and no runtime writer; FK to `files` | Confirm AI roadmap before table-level deprecation |
 | `embeddings` | Keep pending roadmap decision | Zero rows and no runtime writer; FK to `files` | Confirm semantic-search roadmap before table-level deprecation |
 
@@ -51,7 +51,7 @@ Recommendation: retain `hash_path` and `hash_content`; deprecate `xxhash`. Do no
 
 Both `files.mime_type` and `metadata.mime_type` are written from the same MIME detection result. `metadata.mime_type` has no nulls; `files.mime_type` has 3,852 null rows. There are 3,855 cross-table disagreements. The metadata MIME column is indexed by `idx_metadata_mime_type`; the file MIME column is used by `v_file_integrity`.
 
-Recommendation: retain both during deprecation. Select a canonical owner first, update views and reports, backfill discrepancies, and add an integrity check before removing either field.
+Recommendation: use `files.mime_type` as the canonical value because active integrity, audit and cleanup tooling already depends on it. Stop writes to `metadata.mime_type`, retain it during the compatibility window, and remove `idx_metadata_mime_type` together with the column only after observation.
 
 ### Duration and missing metadata
 
@@ -81,7 +81,7 @@ These timestamps describe different events and should be kept.
 |---|---|---|---|---|
 | `files.xxhash` | `metadata_worker.py` | `idx_files_xxhash` | Legacy/generated schema docs | Medium |
 | `metadata.duration` | Worker writes NULL | None | Generated schema docs | Low after deprecation |
-| `metadata.mime_type` | `metadata_worker.py` | `idx_metadata_mime_type` | Metadata queries/docs | High until canonical owner chosen |
+| `metadata.mime_type` | Deprecated in `metadata_worker.py` | `idx_metadata_mime_type` | Generated schema docs | Medium |
 | `ai_output` | None | PK, FK to `files` | Schema docs | Roadmap-dependent |
 | `embeddings` | None | PK, FK to `files` | Schema docs | Roadmap-dependent |
 
