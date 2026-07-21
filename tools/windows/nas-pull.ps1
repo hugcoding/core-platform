@@ -15,7 +15,7 @@ if (-not (Test-Path -LiteralPath $Repository)) {
 # additional Git status processes while pack files are being updated.
 Set-Location $PSScriptRoot
 
-$Status = & git -C $Repository status --porcelain
+$Status = & git -c maintenance.auto=false -C $Repository status --porcelain
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Unable to read NAS repository status."
     exit $LASTEXITCODE
@@ -29,19 +29,19 @@ if ($Status) {
 }
 
 Write-Host "Fetching $Remote without automatic maintenance..." -ForegroundColor Cyan
-& git -C $Repository fetch --no-auto-maintenance $Remote
+& git -c maintenance.auto=false -C $Repository fetch --no-auto-maintenance $Remote
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
 Write-Host "Fast-forwarding to $Remote/$Branch..." -ForegroundColor Cyan
-& git -C $Repository merge --ff-only "$Remote/$Branch"
+& git -c maintenance.auto=false -C $Repository merge --ff-only "$Remote/$Branch"
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-$Head = & git -C $Repository rev-parse HEAD
-$RemoteHead = & git -C $Repository rev-parse "$Remote/$Branch"
+$Head = & git -c maintenance.auto=false -C $Repository rev-parse HEAD
+$RemoteHead = & git -c maintenance.auto=false -C $Repository rev-parse "$Remote/$Branch"
 if ($LASTEXITCODE -ne 0 -or $Head -ne $RemoteHead) {
     Write-Error "NAS HEAD does not match $Remote/$Branch after pull."
     exit 3

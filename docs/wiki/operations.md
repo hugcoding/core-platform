@@ -98,7 +98,7 @@ Via de CORE-wrapper kan hetzelfde met:
 .\tools\windows\core.ps1 git pull
 ```
 
-Gebruik geen gewone `git pull` vanuit `\\NAS\docker\nas-stack`; packfile-renames en automatisch repository-onderhoud zijn via SMB niet betrouwbaar.
+Gebruik geen gewone `git pull` vanuit `\\NAS\docker\nas-stack`; packfile-renames en automatisch repository-onderhoud zijn via SMB niet betrouwbaar. De wrapper zet `maintenance.auto=false` voor zowel fetch als merge, omdat beide commands anders na hun hoofdactie alsnog een repack kunnen starten.
 
 ## Documentation workflow
 
