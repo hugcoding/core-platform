@@ -40,6 +40,49 @@ core jira auth
 core jira stories --project SCRUM --limit 50
 ```
 
+## Docker Compose deployment
+
+Voer deze commands op de NAS uit vanuit de repository:
+
+```bash
+cd /volume1/docker/nas-stack
+```
+
+Verwijder de scanner- en workercontainers, bouw beide images volledig opnieuw en maak de containers opnieuw aan:
+
+```bash
+/usr/local/bin/docker compose rm -sf scanner metadata_worker
+/usr/local/bin/docker compose build --no-cache scanner metadata_worker
+/usr/local/bin/docker compose up -d --force-recreate scanner metadata_worker
+```
+
+Controleer daarna status en logs:
+
+```bash
+/usr/local/bin/docker compose ps
+/usr/local/bin/docker compose logs --tail=100 scanner metadata_worker
+./tools/runtime/status
+```
+
+Voor een normale rebuild zonder eerst containers te verwijderen:
+
+```bash
+/usr/local/bin/docker compose up -d --build scanner metadata_worker
+```
+
+Voor de volledige stack:
+
+```bash
+/usr/local/bin/docker compose up -d --build
+```
+
+Stoppen en opnieuw starten zonder rebuild:
+
+```bash
+/usr/local/bin/docker compose down
+/usr/local/bin/docker compose up -d
+```
+
 ## Documentation workflow
 
 Build de documentatie via CORE:

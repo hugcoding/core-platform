@@ -1,5 +1,52 @@
 # Docker
 
+## Beheercommands
+
+Gebruik op de Synology NAS het volledige Docker-pad:
+
+```bash
+cd /volume1/docker/nas-stack
+/usr/local/bin/docker compose ps
+```
+
+### Scanner en metadata-worker volledig herbouwen
+
+Gebruik deze procedure wanneer nieuwe broncode ondanks een eerdere rebuild niet in de containers zichtbaar is:
+
+```bash
+/usr/local/bin/docker compose rm -sf scanner metadata_worker
+/usr/local/bin/docker compose build --no-cache scanner metadata_worker
+/usr/local/bin/docker compose up -d --force-recreate scanner metadata_worker
+```
+
+### Normale build en deployment
+
+```bash
+/usr/local/bin/docker compose build scanner metadata_worker
+/usr/local/bin/docker compose up -d scanner metadata_worker
+```
+
+Of gecombineerd:
+
+```bash
+/usr/local/bin/docker compose up -d --build scanner metadata_worker
+```
+
+### Volledige stack
+
+```bash
+/usr/local/bin/docker compose up -d --build
+/usr/local/bin/docker compose down
+```
+
+### Status en logs
+
+```bash
+/usr/local/bin/docker compose ps
+/usr/local/bin/docker compose logs --tail=100 scanner metadata_worker
+/usr/local/bin/docker compose logs -f --tail=50 scanner metadata_worker
+```
+
 ## Services
 
 - `redis`
