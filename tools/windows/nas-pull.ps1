@@ -11,10 +11,6 @@ if (-not (Test-Path -LiteralPath $Repository)) {
     exit 1
 }
 
-# Stay outside the UNC worktree so shell prompt integrations do not start
-# additional Git status processes while pack files are being updated.
-Set-Location $PSScriptRoot
-
 $Status = & git -c maintenance.auto=false -C $Repository status --porcelain
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Unable to read NAS repository status."
