@@ -469,10 +469,13 @@ CREATE TABLE public.files (
     modified_at_fs bigint,
     inode bigint,
     path text,
+    mime_type text,
     deleted_at timestamp without time zone,
     hash_content text,
     hash_path text,
-    source text
+    source text,
+    last_mutation_type text DEFAULT 'UNKNOWN'::text NOT NULL,
+    CONSTRAINT files_last_mutation_type_check CHECK ((last_mutation_type = ANY (ARRAY['UNKNOWN'::text, 'CREATED'::text, 'MODIFIED'::text, 'RENAMED'::text, 'MOVED'::text, 'RESTORED'::text, 'DELETED'::text])))
 );
 
 
@@ -544,7 +547,6 @@ CREATE TABLE public.metadata (
     id integer NOT NULL,
     file_id bigint NOT NULL,
     created_at timestamp without time zone DEFAULT now(),
-    mime_type text,
     width integer,
     height integer,
     duration double precision,

@@ -15,7 +15,7 @@ In de eerste fase worden geen kolommen verwijderd. De worker stopt eerst met sch
 | `files.xxhash` | Deprecate | Dupliceert voor 221.451 rijen `files.hash_path` | Writes stoppen, indexgebruik controleren en later verwijderen |
 | `metadata.mime_type` | Deprecate | Dupliceert het actief gebruikte `files.mime_type` | Writes stoppen, observeren en later index plus kolom verwijderen |
 | `metadata.duration` | Deprecate-kandidaat | Alle 225.287 waarden zijn `NULL` | Eerst besluit over media-duration-roadmap |
-| `files.last_mutation_at` | Deprecate | Alle 2.222 gevulde waarden waren gelijk aan `updated_at`; geen runtime-reader gebruikt het veld | Writes stoppen, volledige cyclus observeren en later verwijderen |
+| `files.last_mutation_at` | Remove approved | Alle 2.222 gevulde waarden waren gelijk aan `updated_at`; nieuwe mutaties werken aantoonbaar zonder write naar dit veld | Fysieke verwijdering met geteste rollback |
 | `ai_output` | Keep pending decision | Geen rijen en geen actieve writer | AI-roadmap bevestigen |
 | `embeddings` | Keep pending decision | Geen rijen en geen actieve writer | Semantic-search-roadmap bevestigen |
 
