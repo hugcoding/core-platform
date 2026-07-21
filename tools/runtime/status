@@ -25,6 +25,12 @@ echo -n "metadata_worker:last_event = "
 docker exec nas-redis-1 redis-cli GET metadata_worker:last_event 2>/dev/null || true
 
 echo
+echo "========== SCAN SESSIONS =========="
+docker exec nas-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -P pager=off -c "SELECT id, type, status, started_at, finished_at, files_discovered, jobs_enqueued, jobs_processed FROM public.v_scan_status LIMIT 5"' 2>/dev/null \
+  || docker exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -P pager=off -c "SELECT id, type, status, started_at, finished_at, files_discovered, jobs_enqueued, jobs_processed FROM public.v_scan_status LIMIT 5"' 2>/dev/null \
+  || echo "scan sessions niet beschikbaar"
+
+echo
 echo "========== LOCKS =========="
 docker exec nas-redis-1 redis-cli KEYS "*lock*" 2>/dev/null || true
 

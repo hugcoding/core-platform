@@ -8,6 +8,11 @@ if "redis" not in sys.modules:
     redis_stub.Redis = lambda *args, **kwargs: None
     sys.modules["redis"] = redis_stub
 
+if "psycopg2" not in sys.modules:
+    psycopg2_stub = types.ModuleType("psycopg2")
+    psycopg2_stub.connect = lambda *args, **kwargs: None
+    sys.modules["psycopg2"] = psycopg2_stub
+
 import scanner
 
 
@@ -68,6 +73,17 @@ class ScannerStateTests(unittest.TestCase):
         self.assertNotIn(key, scanner.r.values)
         self.assertEqual("DELETE", scanner.r.events[0][1]["event"])
         self.assertEqual(path, scanner.r.events[0][1]["path"])
+
+    def test_delete_event_carries_scan_session(self):
+        path = "/volume1/share/old.txt"
+        scanner.r.set(
+            scanner.SIGNATURE_PREFIX + path,
+            scanner.encode_file_state("10:20:30", "scan-1", missing_scans=1),
+        )
+
+        scanner.reconcile_missing("scan-2", session_id="session-7")
+
+        self.assertEqual("session-7", scanner.r.events[0][1]["scan_session_id"])
 
     def test_seen_file_is_not_reconciled_as_missing(self):
         path = "/volume1/share/current.txt"

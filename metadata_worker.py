@@ -377,6 +377,17 @@ def process_event(cur, data):
     logger.info("Processed: %s", path)
 
 
+def mark_session_job_processed(cur, data):
+    session_id = data.get("scan_session_id")
+    if session_id:
+        try:
+            cur.execute("SELECT increment_jobs_processed(%s)", (session_id,))
+        except Exception as exc:
+            # Session accounting must never turn an otherwise valid legacy
+            # metadata event into a DLQ entry.
+            logger.warning("Scan session update failed: %s", exc)
+
+
 def main():
     if not acquire_lock():
         return
@@ -417,6 +428,7 @@ def main():
                 for msg_id, data in msgs:
                     try:
                         process_event(cur, data)
+                        mark_session_job_processed(cur, data)
                     except Exception as e:
                         logger.error("DLQ msg=%s: %s", msg_id, e, exc_info=True)
                         r.xadd(DLQ_STREAM, {

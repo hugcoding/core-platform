@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timezone
 
 import redis
+import psycopg2
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("scanner")
@@ -49,6 +50,34 @@ r = redis.Redis(
     socket_connect_timeout=10,
     retry_on_timeout=True,
 )
+
+_db_conn = None
+
+
+def get_db():
+    global _db_conn
+    if _db_conn is None or _db_conn.closed:
+        _db_conn = psycopg2.connect(
+            host=os.getenv("DB_HOST"),
+            port=int(os.getenv("DB_PORT", "5432")),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASS"),
+            dbname=os.getenv("DB_NAME"),
+        )
+        _db_conn.autocommit = True
+    return _db_conn
+
+
+def session_call(query, params=(), fetch=False):
+    """Run scan bookkeeping without making PostgreSQL a scanner dependency."""
+    try:
+        with get_db().cursor() as cur:
+            cur.execute(query, params)
+            row = cur.fetchone() if fetch else None
+            return row[0] if row else None
+    except Exception as exc:
+        logger.warning("Scan session update failed: %s", exc)
+        return None
 
 
 def utc_now():
@@ -168,7 +197,7 @@ def mark_seen(path, scan_id):
         r.set(key, encode_file_state(signature, scan_id))
 
 
-def reconcile_missing(scan_id):
+def reconcile_missing(scan_id, session_id=None):
     checked = 0
     deleted = 0
 
@@ -192,6 +221,7 @@ def reconcile_missing(scan_id):
             "path": path,
             "source": "polling_scanner",
             "ts": utc_now(),
+            "scan_session_id": str(session_id or ""),
         })
         r.delete(key)
         deleted += 1
@@ -203,8 +233,7 @@ def raise_walk_error(error):
     raise error
 
 
-def scan_once():
-    scan_id = uuid.uuid4().hex
+def _scan_once(scan_id, session_id):
     roots = discover_roots()
     logger.info("Discovered scan roots: %s", ", ".join(roots))
 
@@ -256,12 +285,31 @@ def scan_once():
                     "size": str(st.st_size),
                     "inode": str(st.st_ino),
                     "ts": utc_now(),
+                    "scan_session_id": str(session_id or ""),
                 })
                 enqueued += 1
 
-    missing, deleted = reconcile_missing(scan_id)
+    missing, deleted = reconcile_missing(scan_id, session_id=session_id)
+    if session_id:
+        session_call("SELECT increment_files_discovered(%s, %s)", (session_id, discovered))
+        session_call("SELECT increment_jobs_enqueued(%s, %s)", (session_id, enqueued + deleted))
+        session_call("SELECT finish_scan_session(%s)", (session_id,))
     r.set(LAST_SCAN_KEY, utc_now(), ex=HEARTBEAT_TTL * 4)
     return discovered, enqueued, missing, deleted
+
+
+def scan_once():
+    scan_id = uuid.uuid4().hex
+    session_id = session_call("SELECT create_scan_session(%s)", ("interval",), fetch=True)
+    try:
+        return _scan_once(scan_id, session_id)
+    except Exception:
+        if session_id:
+            session_call(
+                "UPDATE scan_sessions SET status = 'failed', finished_at = NOW() WHERE id = %s",
+                (session_id,),
+            )
+        raise
 
 
 def main():

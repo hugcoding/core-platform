@@ -111,6 +111,32 @@ class MutationClassificationTests(unittest.TestCase):
         self.assertEqual("MOVED", mutation)
 
 
+class ScanSessionTests(unittest.TestCase):
+    def test_processed_job_updates_its_scan_session(self):
+        cursor = CandidateCursor()
+
+        metadata_worker.mark_session_job_processed(
+            cursor, {"scan_session_id": "f93d9348-7c3a-42e1-a123-dc31e08a7319"}
+        )
+
+        self.assertEqual(1, cursor.query_count)
+
+    def test_legacy_event_without_session_is_ignored(self):
+        cursor = CandidateCursor()
+
+        metadata_worker.mark_session_job_processed(cursor, {"event": "UPSERT"})
+
+        self.assertEqual(0, cursor.query_count)
+
+    def test_session_update_failure_does_not_fail_event(self):
+        cursor = mock.Mock()
+        cursor.execute.side_effect = RuntimeError("old database schema")
+
+        metadata_worker.mark_session_job_processed(
+            cursor, {"scan_session_id": "f93d9348-7c3a-42e1-a123-dc31e08a7319"}
+        )
+
+
 class ProcessCursor:
     def __init__(self, existing_file=None, rename_rows=None):
         self.existing_file = existing_file
