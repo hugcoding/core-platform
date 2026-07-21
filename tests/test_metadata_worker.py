@@ -186,6 +186,7 @@ class MutationPersistenceTests(unittest.TestCase):
 
         query, params = next(call for call in cursor.calls if "INSERT INTO files" in call[0])
         self.assertIn("last_mutation_type", query)
+        self.assertNotIn("last_mutation_at", query)
         self.assertNotIn("xxhash", query)
         self.assertEqual(query.count("%s"), len(params))
         self.assertEqual("CREATED", params[-1])
@@ -215,6 +216,7 @@ class MutationPersistenceTests(unittest.TestCase):
 
         query, params = next(call for call in cursor.calls if "UPDATE files SET" in call[0])
         self.assertIn("last_mutation_type", query)
+        self.assertNotIn("last_mutation_at", query)
         self.assertEqual(query.count("%s"), len(params))
         self.assertEqual("RENAMED", params[-2])
         self.assertEqual(42, params[-1])
@@ -229,7 +231,8 @@ class MutationPersistenceTests(unittest.TestCase):
 
         query, _ = cursor.calls[0]
         self.assertIn("last_mutation_type = 'DELETED'", query)
-        self.assertIn("last_mutation_at = NOW()", query)
+        self.assertNotIn("last_mutation_at", query)
+        self.assertIn("updated_at = NOW()", query)
 
 
 if __name__ == "__main__":

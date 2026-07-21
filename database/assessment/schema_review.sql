@@ -57,7 +57,7 @@ SELECT
     count(*) FILTER (WHERE mime_type IS NULL) AS mime_null,
     count(*) FILTER (WHERE path IS NULL) AS path_null,
     count(*) FILTER (WHERE deleted_at IS NOT NULL) AS deleted_rows,
-    count(*) FILTER (WHERE last_mutation_at IS NOT NULL) AS mutation_tracked
+    count(*) FILTER (WHERE last_mutation_type <> 'UNKNOWN') AS classified_mutations
 FROM public.files;
 
 SELECT

@@ -237,8 +237,7 @@ def process_event(cur, data):
             UPDATE files SET
                 deleted_at = NOW(),
                 updated_at = NOW(),
-                last_mutation_type = 'DELETED',
-                last_mutation_at = NOW()
+                last_mutation_type = 'DELETED'
             WHERE path = %s
         """, (path,))
         logger.info("Deleted: %s", path)
@@ -249,8 +248,7 @@ def process_event(cur, data):
             UPDATE files SET
                 deleted_at = NOW(),
                 updated_at = NOW(),
-                last_mutation_type = 'DELETED',
-                last_mutation_at = NOW()
+                last_mutation_type = 'DELETED'
             WHERE path = %s
         """, (path,))
         logger.warning("Missing file, marked deleted: %s", path)
@@ -311,7 +309,6 @@ def process_event(cur, data):
                 hash_content       = %s,
                 mime_type          = %s,
                 last_mutation_type = %s,
-                last_mutation_at   = NOW(),
                 updated_at         = NOW(),
                 deleted_at         = NULL
             WHERE id = %s
@@ -331,9 +328,9 @@ def process_event(cur, data):
                 modified_at_fs, inode,
                 path, source, hash_path, hash_content,
                 mime_type, deleted_at,
-                last_mutation_type, last_mutation_at
+                last_mutation_type
             )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,%s,NOW())
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,%s)
             ON CONFLICT (path) DO UPDATE SET
                 folder_id          = EXCLUDED.folder_id,
                 filename           = EXCLUDED.filename,
@@ -346,7 +343,6 @@ def process_event(cur, data):
                 hash_content       = EXCLUDED.hash_content,
                 mime_type          = EXCLUDED.mime_type,
                 last_mutation_type = EXCLUDED.last_mutation_type,
-                last_mutation_at   = NOW(),
                 updated_at         = NOW(),
                 deleted_at         = NULL
             RETURNING id

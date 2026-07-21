@@ -73,9 +73,9 @@ Recommendation: keep `files.path`, `folder_id`, `filename` and `folders.path`. A
 - `files.updated_at`: current application activity; used by `v_files_last_hour`.
 - `files.modified_at_fs`: filesystem mtime; used with inode and size for rename identity.
 - `files.deleted_at`: soft-delete marker; used by worker and integrity reporting.
-- `files.last_mutation_at`: new mutation classification timestamp; only populated after its migration.
+- `files.last_mutation_at`: deprecated because it was always written together with the identical `updated_at`; `updated_at` is now canonical for `last_mutation_type`.
 
-These timestamps describe different events and should be kept.
+`created_at`, `updated_at`, `modified_at_fs` and `deleted_at` describe different events and should be kept. `last_mutation_at` is the exception: all 2,222 populated live values equalled `updated_at`, and no runtime reader depended on it. Its writer is disabled before physical removal.
 
 ## Dependency impact
 
