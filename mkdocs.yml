@@ -52,6 +52,9 @@ nav:
   - CORE: wiki/core.md
   - Configuration: wiki/configuration.md
   - Operations: wiki/operations.md
+  - Project:
+      - Overview: project/index.md
+      - SCRUM-53 Database Review: project/scrum-53-database-schema-review.md
   - Runtime:
       - Scanner: wiki/scanner.md
       - Metadata Worker: wiki/metadata-worker.md
