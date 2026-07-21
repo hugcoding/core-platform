@@ -47,6 +47,7 @@ function Show-Help {
     Write-Host "  core runtime stop"
     Write-Host "  core runtime restart"
     Write-Host "  core git status"
+    Write-Host "  core git pull"
     Write-Host "  core version"
     Write-Host ""
 }
@@ -172,9 +173,13 @@ function Invoke-Git {
             Set-Location $ProjectRoot
             git push
         }
+        "pull" {
+            & (Join-Path $PSScriptRoot "nas-pull.ps1") -Repository $ProjectRoot
+            exit $LASTEXITCODE
+        }
         default {
             Write-Host "Unknown git command." -ForegroundColor Yellow
-            Write-Host "Use: core git status | push"
+            Write-Host "Use: core git status | pull | push"
         }
     }
 }

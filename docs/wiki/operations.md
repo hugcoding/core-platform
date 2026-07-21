@@ -83,6 +83,23 @@ Stoppen en opnieuw starten zonder rebuild:
 /usr/local/bin/docker compose up -d
 ```
 
+## NAS repository veilig bijwerken
+
+Gebruik vanuit Windows PowerShell het wrapper-script. Het controleert op lokale NAS-wijzigingen, schakelt automatisch Git-onderhoud op de SMB-share uit en staat alleen een fast-forward toe:
+
+```powershell
+cd C:\Development\nas-stack
+.\tools\windows\nas-pull.ps1
+```
+
+Via de CORE-wrapper kan hetzelfde met:
+
+```powershell
+.\tools\windows\core.ps1 git pull
+```
+
+Gebruik geen gewone `git pull` vanuit `\\NAS\docker\nas-stack`; packfile-renames en automatisch repository-onderhoud zijn via SMB niet betrouwbaar.
+
 ## Documentation workflow
 
 Build de documentatie via CORE:
