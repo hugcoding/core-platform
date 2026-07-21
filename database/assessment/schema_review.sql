@@ -53,9 +53,7 @@ ORDER BY viewname;
 
 SELECT
     count(*) AS files_total,
-    count(*) FILTER (WHERE xxhash IS NULL) AS xxhash_null,
     count(*) FILTER (WHERE hash_path IS NULL) AS hash_path_null,
-    count(*) FILTER (WHERE xxhash IS NOT DISTINCT FROM hash_path) AS xxhash_equals_hash_path,
     count(*) FILTER (WHERE mime_type IS NULL) AS mime_null,
     count(*) FILTER (WHERE path IS NULL) AS path_null,
     count(*) FILTER (WHERE deleted_at IS NOT NULL) AS deleted_rows,
@@ -65,14 +63,8 @@ FROM public.files;
 SELECT
     count(*) AS metadata_total,
     count(*) FILTER (WHERE duration IS NULL) AS duration_null,
-    count(*) FILTER (WHERE mime_type IS NULL) AS mime_null,
     count(*) FILTER (WHERE missing) AS marked_missing
 FROM public.metadata;
-
-SELECT count(*) AS mime_disagreements
-FROM public.files f
-JOIN public.metadata m ON m.file_id = f.id
-WHERE f.mime_type IS DISTINCT FROM m.mime_type;
 
 SELECT source, count(*)
 FROM public.files
@@ -83,4 +75,3 @@ SELECT last_mutation_type, count(*)
 FROM public.files
 GROUP BY last_mutation_type
 ORDER BY count(*) DESC;
-

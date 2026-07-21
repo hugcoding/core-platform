@@ -468,9 +468,7 @@ CREATE TABLE public.files (
     updated_at timestamp without time zone DEFAULT now(),
     modified_at_fs bigint,
     inode bigint,
-    xxhash text,
     path text,
-    mime_type text,
     deleted_at timestamp without time zone,
     hash_content text,
     hash_path text,
@@ -681,7 +679,7 @@ CREATE VIEW public.v_test_documents AS
     f.updated_at,
     f.modified_at_fs,
     f.inode,
-    f.xxhash,
+    f.hash_path AS xxhash,
     fo.path
    FROM (public.files f
      JOIN public.folders fo ON ((fo.id = f.folder_id)))
@@ -812,13 +810,6 @@ CREATE INDEX idx_files_inode_mtime ON public.files USING btree (inode, modified_
 
 
 --
--- Name: idx_files_xxhash; Type: INDEX; Schema: public; Owner: hugo
---
-
-CREATE INDEX idx_files_xxhash ON public.files USING btree (xxhash);
-
-
---
 -- Name: idx_folders_parent_id; Type: INDEX; Schema: public; Owner: hugo
 --
 
@@ -830,13 +821,6 @@ CREATE INDEX idx_folders_parent_id ON public.folders USING btree (parent_id);
 --
 
 CREATE INDEX idx_metadata_file_id ON public.metadata USING btree (file_id);
-
-
---
--- Name: idx_metadata_mime_type; Type: INDEX; Schema: public; Owner: hugo
---
-
-CREATE INDEX idx_metadata_mime_type ON public.metadata USING btree (mime_type);
 
 
 --
@@ -898,4 +882,3 @@ ALTER TABLE ONLY public.metadata
 --
 
 \unrestrict KM5I8YsUK7CLbO0daSZ9hUdbrsZeFBT9FWSYUKVNueqkKGoLNR6hGNMoNadS5g0
-

@@ -1,12 +1,14 @@
 # SCRUM-53 Database Schema Review
 
-Status: read-only assessment  
-Measured: 2026-07-21  
+Status: removal migration prepared after successful deprecation cycle
+
+Measured: 2026-07-21
+
 Database: `nasdb_test`
 
 ## Decision summary
 
-No columns should be removed in this phase. The review identifies three deprecation candidates and two unused future-facing tables. Removal requires a separate approved migration with a backup and rollback procedure.
+The duplicate hash and MIME columns completed their deprecation cycle. A verified backup exists and a removal plus rollback migration is prepared. Other candidates remain review-only.
 
 | Object | Classification | Evidence | Required next step |
 |---|---|---|---|
@@ -45,13 +47,13 @@ Live results:
 - `idx_files_xxhash` depends on `files.xxhash`;
 - `v_file_integrity` and cleanup diagnostics depend on `hash_path` and `hash_content`.
 
-Recommendation: retain `hash_path` and `hash_content`; deprecate `xxhash`. Do not drop it until the worker no longer writes it and the legacy index has been replaced or proven unnecessary.
+Decision: retain `hash_path` and `hash_content`; remove the physical `xxhash` column and its index. `v_test_documents` preserves its legacy output name by exposing `hash_path AS xxhash`.
 
 ### MIME fields
 
 Both `files.mime_type` and `metadata.mime_type` are written from the same MIME detection result. `metadata.mime_type` has no nulls; `files.mime_type` has 3,852 null rows. There are 3,855 cross-table disagreements. The metadata MIME column is indexed by `idx_metadata_mime_type`; the file MIME column is used by `v_file_integrity`.
 
-Recommendation: use `files.mime_type` as the canonical value because active integrity, audit and cleanup tooling already depends on it. Stop writes to `metadata.mime_type`, retain it during the compatibility window, and remove `idx_metadata_mime_type` together with the column only after observation.
+Decision: use `files.mime_type` as the canonical value because active integrity, audit and cleanup tooling already depends on it. Remove `metadata.mime_type` and `idx_metadata_mime_type` after the completed compatibility cycle.
 
 ### Duration and missing metadata
 
