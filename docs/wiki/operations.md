@@ -113,7 +113,7 @@ De Material for MkDocs 2.0 waarschuwing is upstream en geen build failure zolang
 
 ## Cleanup workflow
 
-Maak eerst een databasebackup. Zie [PostgreSQL](postgres.md#backup-before-cleanup).
+Maak eerst een databasebackup. Zie [PostgreSQL](postgres.md).
 
 Run daarna de read-only assessment:
 
