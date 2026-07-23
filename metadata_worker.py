@@ -67,7 +67,7 @@ def get_db():
             password=os.getenv("DB_PASS"),
             dbname=os.getenv("DB_NAME"),
         )
-        _db_conn.autocommit = True
+        _db_conn.autocommit = False
         logger.info("Database connected")
     return _db_conn
 
@@ -200,27 +200,101 @@ def classify_rename_mutation(old_path, new_path):
     return "MOVED"
 
 
-def find_rename_candidate(cur, path, inode, size_bytes, modified_at_fs):
+def identity_confidence(candidate, inode, size_bytes, modified_at_fs, content_hash):
+    signals = {
+        "inode_match": candidate.get("inode") == inode,
+        "size_match": candidate.get("size_bytes") == size_bytes,
+        "mtime_match": candidate.get("modified_at_fs") == modified_at_fs,
+        "content_hash_match": bool(content_hash) and candidate.get("hash_content") == content_hash,
+        "old_path_missing": path_is_missing(candidate["path"]),
+    }
+    weights = {
+        "inode_match": 30,
+        "size_match": 15,
+        "mtime_match": 15,
+        "content_hash_match": 30,
+        "old_path_missing": 10,
+    }
+    score = sum(weights[name] for name, matched in signals.items() if matched)
+    level = "high" if score >= 90 else "medium" if score >= 65 else "low"
+    return score, level, signals
+
+
+def insert_file_event(cur, *, file_id, event_type, source, old_path=None,
+                      new_path=None, candidate_file_id=None, score=None,
+                      level=None, decision=None, signals=None, reason=None,
+                      scan_session_id=None):
     cur.execute("""
-        SELECT id, path
+        INSERT INTO file_events (
+            file_id, candidate_file_id, event_type, old_path, new_path,
+            confidence_score, confidence_level, decision, signals, reason,
+            scan_session_id, source
+        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s)
+    """, (
+        file_id, candidate_file_id, event_type, old_path, new_path,
+        score, level, decision, json.dumps(signals or {}), reason,
+        scan_session_id, source,
+    ))
+
+
+def evaluate_identity_match(cur, path, inode, size_bytes, modified_at_fs, content_hash):
+    cur.execute("""
+        SELECT id, path, inode, size_bytes, modified_at_fs, hash_content
         FROM files
         WHERE inode = %s
-          AND size_bytes = %s
-          AND modified_at_fs = %s
           AND path <> %s
           AND deleted_at IS NULL
         ORDER BY id
-    """, (inode, size_bytes, modified_at_fs, path))
+    """, (inode, path))
 
-    missing_candidates = [
-        row for row in cur.fetchall()
-        if path_is_missing(row["path"])
-    ]
+    rows = cur.fetchall()
+    existing_paths = [row for row in rows if not path_is_missing(row["path"])]
+    missing_candidates = [row for row in rows if row not in existing_paths]
+
+    if existing_paths:
+        return {
+            "candidate": existing_paths[0],
+            "event_type": "HARDLINK_DETECTED",
+            "level": "ambiguous",
+            "score": None,
+            "signals": {"candidate_count": len(rows), "old_path_missing": False},
+            "decision": "created_separate",
+            "reason": "same inode is still active at another path",
+        }
 
     if len(missing_candidates) != 1:
-        return None
+        return {
+            "candidate": missing_candidates[0] if missing_candidates else None,
+            "event_type": "IDENTITY_AMBIGUOUS" if missing_candidates else None,
+            "level": "ambiguous" if missing_candidates else None,
+            "score": None,
+            "signals": {"candidate_count": len(missing_candidates)},
+            "decision": "created_separate",
+            "reason": "multiple missing candidates" if missing_candidates else "no candidate",
+        }
 
-    return missing_candidates[0]
+    candidate = missing_candidates[0]
+    score, level, signals = identity_confidence(
+        candidate, inode, size_bytes, modified_at_fs, content_hash
+    )
+    signals["candidate_count"] = 1
+    matched = level == "high"
+    return {
+        "candidate": candidate,
+        "event_type": "IDENTITY_MATCHED" if matched else "IDENTITY_REJECTED",
+        "level": level,
+        "score": score,
+        "signals": signals,
+        "decision": "auto_linked" if matched else "created_separate",
+        "reason": "unique high-confidence match" if matched else "confidence below automatic threshold",
+    }
+
+
+def find_rename_candidate(cur, path, inode, size_bytes, modified_at_fs, content_hash=None):
+    result = evaluate_identity_match(
+        cur, path, inode, size_bytes, modified_at_fs, content_hash
+    )
+    return result["candidate"] if result["decision"] == "auto_linked" else None
 
 
 def process_event(cur, data):
@@ -239,7 +313,15 @@ def process_event(cur, data):
                 updated_at = NOW(),
                 last_mutation_type = 'DELETED'
             WHERE path = %s
+            RETURNING id
         """, (path,))
+        row = cur.fetchone()
+        if row:
+            insert_file_event(
+                cur, file_id=row["id"], event_type="DELETED",
+                source=data.get("source", "polling_scanner"),
+                old_path=path, scan_session_id=data.get("scan_session_id"),
+            )
         logger.info("Deleted: %s", path)
         return
 
@@ -250,7 +332,16 @@ def process_event(cur, data):
                 updated_at = NOW(),
                 last_mutation_type = 'DELETED'
             WHERE path = %s
+            RETURNING id
         """, (path,))
+        row = cur.fetchone()
+        if row:
+            insert_file_event(
+                cur, file_id=row["id"], event_type="DELETED",
+                source=data.get("source", "polling_scanner"),
+                old_path=path, reason="path_missing",
+                scan_session_id=data.get("scan_session_id"),
+            )
         logger.warning("Missing file, marked deleted: %s", path)
         return
 
@@ -288,10 +379,13 @@ def process_event(cur, data):
 
     existing_file = get_file_by_path(cur, path)
     rename_candidate = None
+    identity_match = None
     if not existing_file:
-        rename_candidate = find_rename_candidate(
-            cur, path, inode, size_bytes, modified_at_fs
+        identity_match = evaluate_identity_match(
+            cur, path, inode, size_bytes, modified_at_fs, hash_content
         )
+        if identity_match["decision"] == "auto_linked":
+            rename_candidate = identity_match["candidate"]
 
     if rename_candidate:
         mutation_type = classify_rename_mutation(rename_candidate["path"], path)
@@ -348,6 +442,39 @@ def process_event(cur, data):
             RETURNING id
         """, values + (mutation_type,))
     file_id = cur.fetchone()["id"]
+    insert_file_event(
+        cur,
+        file_id=file_id,
+        candidate_file_id=rename_candidate["id"] if rename_candidate else None,
+        event_type=mutation_type,
+        source=data.get("source", "polling_scanner"),
+        old_path=rename_candidate["path"] if rename_candidate else None,
+        new_path=path,
+        decision="auto_linked" if rename_candidate else "state_updated",
+        scan_session_id=data.get("scan_session_id"),
+    )
+    if identity_match and identity_match["event_type"]:
+        insert_file_event(
+            cur,
+            file_id=file_id,
+            candidate_file_id=(
+                identity_match["candidate"]["id"]
+                if identity_match["candidate"] else None
+            ),
+            event_type=identity_match["event_type"],
+            source=data.get("source", "polling_scanner"),
+            old_path=(
+                identity_match["candidate"]["path"]
+                if identity_match["candidate"] else None
+            ),
+            new_path=path,
+            score=identity_match["score"],
+            level=identity_match["level"],
+            decision=identity_match["decision"],
+            signals=identity_match["signals"],
+            reason=identity_match["reason"],
+            scan_session_id=data.get("scan_session_id"),
+        )
 
     if FORCE_FULL:
         cur.execute("DELETE FROM metadata WHERE file_id = %s", (file_id,))
@@ -421,7 +548,9 @@ def main():
                     try:
                         process_event(cur, data)
                         mark_session_job_processed(cur, data)
+                        conn.commit()
                     except Exception as e:
+                        conn.rollback()
                         logger.error("DLQ msg=%s: %s", msg_id, e, exc_info=True)
                         r.xadd(DLQ_STREAM, {
                             "original_id": msg_id,
