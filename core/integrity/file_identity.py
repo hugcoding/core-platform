@@ -66,6 +66,45 @@ def inspect_file_identity(connector: Callable, path: str | None = None) -> dict:
         event_params,
     )
     review_events = cur.fetchall()
+
+    consistency_scope = ""
+    consistency_params: tuple = ()
+    if scope:
+        consistency_scope = "AND (f.path = %s OR f.path LIKE %s)"
+        consistency_params = params
+    cur.execute(
+        f"""
+        SELECT f.id, f.path, f.last_mutation_type, latest.event_type,
+               latest.created_at
+        FROM files f
+        JOIN LATERAL (
+            SELECT event_type, created_at
+            FROM file_events
+            WHERE file_id = f.id
+              AND event_type IN (
+                  'CREATED','MODIFIED','RENAMED','MOVED',
+                  'REPLACED','RESTORED','DELETED'
+              )
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+        ) latest ON true
+        WHERE f.last_mutation_type IS DISTINCT FROM latest.event_type
+        {consistency_scope}
+        ORDER BY latest.created_at DESC
+        LIMIT 200
+        """,
+        consistency_params,
+    )
+    mutation_mismatches = [
+        {
+            "file_id": row[0],
+            "path": row[1],
+            "files_last_mutation_type": row[2],
+            "latest_event_type": row[3],
+            "event_created_at": row[4],
+        }
+        for row in cur.fetchall()
+    ]
     conn.rollback()
     conn.close()
     return {
@@ -75,4 +114,6 @@ def inspect_file_identity(connector: Callable, path: str | None = None) -> dict:
         "shared_inode_groups": inode_groups,
         "review_event_count": len(review_events),
         "review_events": review_events,
+        "mutation_mismatch_count": len(mutation_mismatches),
+        "mutation_mismatches": mutation_mismatches,
     }
