@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import webbrowser
@@ -12,6 +13,7 @@ from core.config.loader import ConfigLoader
 from core.integrations.jira.cache import write_cache
 from core.integrations.jira.client import JiraClient, JiraClientError
 from core.integrations.jira.mapper import map_search_results
+from core.integrity.file_identity import inspect_file_identity
 
 
 def _default_base_path() -> Path:
@@ -223,6 +225,10 @@ def main(
     jira_parser.add_argument("--dry-run", action="store_true")
     jira_parser.add_argument("--no-cache", action="store_true")
 
+    integrity_parser = subparsers.add_parser("integrity")
+    integrity_parser.add_argument("check", choices=["file-identity"])
+    integrity_parser.add_argument("--path")
+
     args = parser.parse_args(argv)
 
     loader = ConfigLoader(base_path or _default_base_path())
@@ -248,6 +254,25 @@ def main(
             dry_run=args.dry_run,
             use_cache=not args.no_cache,
         )
+
+    if args.command == "integrity":
+        try:
+            import psycopg2
+            report = inspect_file_identity(
+                lambda: psycopg2.connect(
+                    host=os.getenv("DB_HOST"),
+                    port=int(os.getenv("DB_PORT", "5432")),
+                    user=os.getenv("DB_USER"),
+                    password=os.getenv("DB_PASS"),
+                    dbname=os.getenv("DB_NAME"),
+                ),
+                path=args.path,
+            )
+        except Exception as exc:
+            print(f"File identity integrity check failed: {exc}", file=stdout)
+            return 1
+        print(json.dumps(report, indent=2, default=str), file=stdout)
+        return 0
 
     return 1
 

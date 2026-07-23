@@ -50,15 +50,51 @@ class CandidateCursor:
 
 
 class RenameCandidateTests(unittest.TestCase):
+    def test_identity_confidence_is_high_when_all_signals_match(self):
+        candidate = {
+            "path": "/volume1/old.txt",
+            "inode": 1234,
+            "size_bytes": 100,
+            "modified_at_fs": 200,
+            "hash_content": "content",
+        }
+        with mock.patch.object(metadata_worker, "path_is_missing", return_value=True):
+            score, level, signals = metadata_worker.identity_confidence(
+                candidate, 1234, 100, 200, "content"
+            )
+
+        self.assertEqual(100, score)
+        self.assertEqual("high", level)
+        self.assertTrue(all(signals.values()))
+
+    def test_inode_match_alone_is_low_confidence(self):
+        candidate = {
+            "path": "/volume1/old.txt",
+            "inode": 1234,
+            "size_bytes": 50,
+            "modified_at_fs": 100,
+            "hash_content": "old",
+        }
+        with mock.patch.object(metadata_worker, "path_is_missing", return_value=False):
+            score, level, _ = metadata_worker.identity_confidence(
+                candidate, 1234, 100, 200, "new"
+            )
+
+        self.assertEqual(30, score)
+        self.assertEqual("low", level)
+
     def test_missing_path_with_same_inode_is_a_rename(self):
-        cursor = CandidateCursor(inode_rows=[{"id": 42, "path": "/volume1/old.txt"}])
+        cursor = CandidateCursor(inode_rows=[{
+            "id": 42, "path": "/volume1/old.txt", "inode": 1234,
+            "size_bytes": 100, "modified_at_fs": 200, "hash_content": None,
+        }])
 
         with mock.patch.object(metadata_worker.os, "stat", side_effect=FileNotFoundError):
             candidate = metadata_worker.find_rename_candidate(
                 cursor, "/volume1/new.txt", 1234, 100, 200
             )
 
-        self.assertEqual(42, candidate["id"])
+        self.assertIsNone(candidate)
 
     def test_existing_hardlink_is_not_a_rename(self):
         cursor = CandidateCursor(inode_rows=[{"id": 42, "path": "/volume1/old.txt"}])
@@ -82,6 +118,18 @@ class RenameCandidateTests(unittest.TestCase):
             )
 
         self.assertIsNone(candidate)
+
+    def test_unique_complete_match_is_automatically_linked(self):
+        cursor = CandidateCursor(inode_rows=[{
+            "id": 42, "path": "/volume1/old.txt", "inode": 1234,
+            "size_bytes": 100, "modified_at_fs": 200, "hash_content": "content",
+        }])
+        with mock.patch.object(metadata_worker, "path_is_missing", return_value=True):
+            result = metadata_worker.evaluate_identity_match(
+                cursor, "/volume1/new.txt", 1234, 100, 200, "content"
+            )
+        self.assertEqual("auto_linked", result["decision"])
+        self.assertEqual("IDENTITY_MATCHED", result["event_type"])
 
 
 class MutationClassificationTests(unittest.TestCase):
@@ -190,6 +238,11 @@ class MutationPersistenceTests(unittest.TestCase):
         self.assertNotIn("xxhash", query)
         self.assertEqual(query.count("%s"), len(params))
         self.assertEqual("CREATED", params[-1])
+        event_query, event_params = next(
+            call for call in cursor.calls if "INSERT INTO file_events" in call[0]
+        )
+        self.assertEqual(event_query.count("%s"), len(event_params))
+        self.assertEqual("CREATED", event_params[2])
 
     def test_mime_is_only_written_to_canonical_files_column(self):
         cursor = ProcessCursor()
@@ -204,7 +257,10 @@ class MutationPersistenceTests(unittest.TestCase):
     def test_rename_is_written_to_existing_file_update(self):
         old_path = metadata_worker.os.path.normpath("/volume1/photos/old.jpg")
         new_path = metadata_worker.os.path.normpath("/volume1/photos/new.jpg")
-        cursor = ProcessCursor(rename_rows=[{"id": 42, "path": old_path}])
+        cursor = ProcessCursor(rename_rows=[{
+            "id": 42, "path": old_path, "inode": 1234,
+            "size_bytes": 100, "modified_at_fs": 200, "hash_content": "content",
+        }])
         file_stat = types.SimpleNamespace(st_size=100, st_mtime=200, st_ino=1234)
 
         def stat_side_effect(candidate_path):
