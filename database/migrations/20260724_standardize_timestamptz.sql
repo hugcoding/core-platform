@@ -9,28 +9,28 @@ DROP VIEW IF EXISTS public.v_test_documents;
 
 ALTER TABLE public.ai_output
     ALTER COLUMN created_at TYPE timestamptz
-    USING created_at AT TIME ZONE 'Europe/Amsterdam';
+    USING created_at AT TIME ZONE 'UTC';
 ALTER TABLE public.embeddings
     ALTER COLUMN created_at TYPE timestamptz
-    USING created_at AT TIME ZONE 'Europe/Amsterdam';
+    USING created_at AT TIME ZONE 'UTC';
 ALTER TABLE public.files
     ALTER COLUMN created_at TYPE timestamptz
-        USING created_at AT TIME ZONE 'Europe/Amsterdam',
+        USING created_at AT TIME ZONE 'UTC',
     ALTER COLUMN updated_at TYPE timestamptz
-        USING updated_at AT TIME ZONE 'Europe/Amsterdam',
+        USING updated_at AT TIME ZONE 'UTC',
     ALTER COLUMN deleted_at TYPE timestamptz
-        USING deleted_at AT TIME ZONE 'Europe/Amsterdam';
+        USING deleted_at AT TIME ZONE 'UTC';
 ALTER TABLE public.folders
     ALTER COLUMN created_at TYPE timestamptz
-    USING created_at AT TIME ZONE 'Europe/Amsterdam';
+    USING created_at AT TIME ZONE 'UTC';
 ALTER TABLE public.metadata
     ALTER COLUMN created_at TYPE timestamptz
-    USING created_at AT TIME ZONE 'Europe/Amsterdam';
+    USING created_at AT TIME ZONE 'UTC';
 ALTER TABLE public.scan_sessions
     ALTER COLUMN started_at TYPE timestamptz
-        USING started_at AT TIME ZONE 'Europe/Amsterdam',
+        USING started_at AT TIME ZONE 'UTC',
     ALTER COLUMN finished_at TYPE timestamptz
-        USING finished_at AT TIME ZONE 'Europe/Amsterdam';
+        USING finished_at AT TIME ZONE 'UTC';
 
 CREATE VIEW public.v_file_integrity AS
 SELECT f.*,
