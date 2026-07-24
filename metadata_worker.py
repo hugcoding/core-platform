@@ -200,8 +200,9 @@ def classify_rename_mutation(old_path, new_path):
     return "MOVED"
 
 
-def identity_confidence(candidate, inode, size_bytes, modified_at_fs, content_hash):
+def identity_confidence(candidate, filesystem_device, inode, size_bytes, modified_at_fs, content_hash):
     signals = {
+        "filesystem_device_match": candidate.get("filesystem_device") == filesystem_device,
         "inode_match": candidate.get("inode") == inode,
         "size_match": candidate.get("size_bytes") == size_bytes,
         "mtime_match": candidate.get("modified_at_fs") == modified_at_fs,
@@ -209,9 +210,10 @@ def identity_confidence(candidate, inode, size_bytes, modified_at_fs, content_ha
         "old_path_missing": path_is_missing(candidate["path"]),
     }
     weights = {
-        "inode_match": 30,
-        "size_match": 15,
-        "mtime_match": 15,
+        "filesystem_device_match": 20,
+        "inode_match": 20,
+        "size_match": 10,
+        "mtime_match": 10,
         "content_hash_match": 30,
         "old_path_missing": 10,
     }
@@ -237,15 +239,16 @@ def insert_file_event(cur, *, file_id, event_type, source, old_path=None,
     ))
 
 
-def evaluate_identity_match(cur, path, inode, size_bytes, modified_at_fs, content_hash):
+def evaluate_identity_match(cur, path, filesystem_device, inode, size_bytes, modified_at_fs, content_hash):
     cur.execute("""
-        SELECT id, path, inode, size_bytes, modified_at_fs, hash_content
+        SELECT id, path, filesystem_device, inode, size_bytes, modified_at_fs, hash_content
         FROM files
-        WHERE inode = %s
+        WHERE filesystem_device = %s
+          AND inode = %s
           AND path <> %s
           AND deleted_at IS NULL
         ORDER BY id
-    """, (inode, path))
+    """, (filesystem_device, inode, path))
 
     rows = cur.fetchall()
     existing_paths = [row for row in rows if not path_is_missing(row["path"])]
@@ -275,7 +278,7 @@ def evaluate_identity_match(cur, path, inode, size_bytes, modified_at_fs, conten
 
     candidate = missing_candidates[0]
     score, level, signals = identity_confidence(
-        candidate, inode, size_bytes, modified_at_fs, content_hash
+        candidate, filesystem_device, inode, size_bytes, modified_at_fs, content_hash
     )
     signals["candidate_count"] = 1
     matched = level == "high"
@@ -290,9 +293,10 @@ def evaluate_identity_match(cur, path, inode, size_bytes, modified_at_fs, conten
     }
 
 
-def find_rename_candidate(cur, path, inode, size_bytes, modified_at_fs, content_hash=None):
+def find_rename_candidate(cur, path, inode, size_bytes, modified_at_fs,
+                          content_hash=None, filesystem_device=None):
     result = evaluate_identity_match(
-        cur, path, inode, size_bytes, modified_at_fs, content_hash
+        cur, path, filesystem_device, inode, size_bytes, modified_at_fs, content_hash
     )
     return result["candidate"] if result["decision"] == "auto_linked" else None
 
@@ -358,6 +362,7 @@ def process_event(cur, data):
     size_bytes = stat.st_size
     modified_at_fs = int(stat.st_mtime)
     inode = stat.st_ino
+    filesystem_device = stat.st_dev
 
     hash_path = xxhash.xxh64(path).hexdigest()
     hash_content = hash_first_1024(path)
@@ -369,6 +374,7 @@ def process_event(cur, data):
         extension,
         size_bytes,
         modified_at_fs,
+        filesystem_device,
         inode,
         path,
         data.get("source", "polling_scanner"),
@@ -382,7 +388,7 @@ def process_event(cur, data):
     identity_match = None
     if not existing_file:
         identity_match = evaluate_identity_match(
-            cur, path, inode, size_bytes, modified_at_fs, hash_content
+            cur, path, filesystem_device, inode, size_bytes, modified_at_fs, hash_content
         )
         if identity_match["decision"] == "auto_linked":
             rename_candidate = identity_match["candidate"]
@@ -396,6 +402,7 @@ def process_event(cur, data):
                 extension          = %s,
                 size_bytes         = %s,
                 modified_at_fs     = %s,
+                filesystem_device  = %s,
                 inode              = %s,
                 path               = %s,
                 source             = %s,
@@ -419,18 +426,19 @@ def process_event(cur, data):
         cur.execute("""
             INSERT INTO files (
                 folder_id, filename, extension, size_bytes,
-                modified_at_fs, inode,
+                modified_at_fs, filesystem_device, inode,
                 path, source, hash_path, hash_content,
                 mime_type, deleted_at,
                 last_mutation_type
             )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,%s)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,%s)
             ON CONFLICT (path) DO UPDATE SET
                 folder_id          = EXCLUDED.folder_id,
                 filename           = EXCLUDED.filename,
                 extension          = EXCLUDED.extension,
                 size_bytes         = EXCLUDED.size_bytes,
                 modified_at_fs     = EXCLUDED.modified_at_fs,
+                filesystem_device  = EXCLUDED.filesystem_device,
                 inode              = EXCLUDED.inode,
                 source             = EXCLUDED.source,
                 hash_path          = EXCLUDED.hash_path,
