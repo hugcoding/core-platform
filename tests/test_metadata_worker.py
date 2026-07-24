@@ -53,6 +53,7 @@ class RenameCandidateTests(unittest.TestCase):
     def test_identity_confidence_is_high_when_all_signals_match(self):
         candidate = {
             "path": "/volume1/old.txt",
+            "filesystem_device": 99,
             "inode": 1234,
             "size_bytes": 100,
             "modified_at_fs": 200,
@@ -60,7 +61,7 @@ class RenameCandidateTests(unittest.TestCase):
         }
         with mock.patch.object(metadata_worker, "path_is_missing", return_value=True):
             score, level, signals = metadata_worker.identity_confidence(
-                candidate, 1234, 100, 200, "content"
+                candidate, 99, 1234, 100, 200, "content"
             )
 
         self.assertEqual(100, score)
@@ -70,6 +71,7 @@ class RenameCandidateTests(unittest.TestCase):
     def test_inode_match_alone_is_low_confidence(self):
         candidate = {
             "path": "/volume1/old.txt",
+            "filesystem_device": 99,
             "inode": 1234,
             "size_bytes": 50,
             "modified_at_fs": 100,
@@ -77,15 +79,15 @@ class RenameCandidateTests(unittest.TestCase):
         }
         with mock.patch.object(metadata_worker, "path_is_missing", return_value=False):
             score, level, _ = metadata_worker.identity_confidence(
-                candidate, 1234, 100, 200, "new"
+                candidate, 99, 1234, 100, 200, "new"
             )
 
-        self.assertEqual(30, score)
+        self.assertEqual(40, score)
         self.assertEqual("low", level)
 
     def test_missing_path_with_same_inode_is_a_rename(self):
         cursor = CandidateCursor(inode_rows=[{
-            "id": 42, "path": "/volume1/old.txt", "inode": 1234,
+            "id": 42, "path": "/volume1/old.txt", "filesystem_device": 99, "inode": 1234,
             "size_bytes": 100, "modified_at_fs": 200, "hash_content": None,
         }])
 
@@ -121,15 +123,31 @@ class RenameCandidateTests(unittest.TestCase):
 
     def test_unique_complete_match_is_automatically_linked(self):
         cursor = CandidateCursor(inode_rows=[{
-            "id": 42, "path": "/volume1/old.txt", "inode": 1234,
+            "id": 42, "path": "/volume1/old.txt",
+            "filesystem_device": 99, "inode": 1234,
             "size_bytes": 100, "modified_at_fs": 200, "hash_content": "content",
         }])
         with mock.patch.object(metadata_worker, "path_is_missing", return_value=True):
             result = metadata_worker.evaluate_identity_match(
-                cursor, "/volume1/new.txt", 1234, 100, 200, "content"
+                cursor, "/volume1/new.txt", 99, 1234, 100, 200, "content"
             )
         self.assertEqual("auto_linked", result["decision"])
         self.assertEqual("IDENTITY_MATCHED", result["event_type"])
+
+    def test_same_inode_on_different_filesystem_is_rejected(self):
+        cursor = CandidateCursor(inode_rows=[{
+            "id": 42, "path": "/volume1/other/file.txt",
+            "filesystem_device": 7, "inode": 1234,
+            "size_bytes": 100, "modified_at_fs": 200,
+            "hash_content": "content",
+        }])
+        with mock.patch.object(metadata_worker, "path_is_missing", return_value=True):
+            result = metadata_worker.evaluate_identity_match(
+                cursor, "/volume1/new.txt", 99, 1234, 100, 200, "content"
+            )
+        self.assertEqual("created_separate", result["decision"])
+        self.assertEqual("medium", result["level"])
+        self.assertFalse(result["signals"]["filesystem_device_match"])
 
 
 class MutationClassificationTests(unittest.TestCase):
@@ -209,7 +227,7 @@ class ProcessCursor:
 
 class MutationPersistenceTests(unittest.TestCase):
     def process_upsert(self, cursor, path="/volume1/photos/new.jpg", stat_side_effect=None):
-        file_stat = types.SimpleNamespace(st_size=100, st_mtime=200, st_ino=1234)
+        file_stat = types.SimpleNamespace(st_size=100, st_mtime=200, st_ino=1234, st_dev=99)
         stat_effect = stat_side_effect or (lambda candidate_path: file_stat)
 
         with (
@@ -258,10 +276,10 @@ class MutationPersistenceTests(unittest.TestCase):
         old_path = metadata_worker.os.path.normpath("/volume1/photos/old.jpg")
         new_path = metadata_worker.os.path.normpath("/volume1/photos/new.jpg")
         cursor = ProcessCursor(rename_rows=[{
-            "id": 42, "path": old_path, "inode": 1234,
+            "id": 42, "path": old_path, "filesystem_device": 99, "inode": 1234,
             "size_bytes": 100, "modified_at_fs": 200, "hash_content": "content",
         }])
-        file_stat = types.SimpleNamespace(st_size=100, st_mtime=200, st_ino=1234)
+        file_stat = types.SimpleNamespace(st_size=100, st_mtime=200, st_ino=1234, st_dev=99)
 
         def stat_side_effect(candidate_path):
             if candidate_path == old_path:
