@@ -51,7 +51,10 @@ def inspect_file_identity(connector: Callable, path: str | None = None) -> dict:
         for row in cur.fetchall()
     ]
 
-    event_where = "confidence_level IN ('medium','low','ambiguous')"
+    event_where = (
+        "event_status <> 'invalidated' "
+        "AND confidence_level IN ('medium','low','ambiguous')"
+    )
     event_params: tuple = ()
     if scope:
         event_where += " AND (new_path = %s OR new_path LIKE %s)"
@@ -81,6 +84,7 @@ def inspect_file_identity(connector: Callable, path: str | None = None) -> dict:
             SELECT event_type, created_at
             FROM file_events
             WHERE file_id = f.id
+              AND event_status <> 'invalidated'
               AND event_type IN (
                   'CREATED','MODIFIED','RENAMED','MOVED',
                   'REPLACED','RESTORED','DELETED'
