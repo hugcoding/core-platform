@@ -122,6 +122,20 @@ class ScannerStateTests(unittest.TestCase):
         self.assertEqual("/volume1/b", scanner.select_interval_root(roots))
         self.assertEqual("/volume1/a", scanner.select_interval_root(roots))
 
+    def test_manual_full_request_is_consumed_once(self):
+        scanner.r.set(scanner.FULL_SCAN_REQUEST_KEY, "2026-07-21T17:00:00Z")
+
+        self.assertTrue(scanner.consume_full_scan_request())
+        self.assertFalse(scanner.consume_full_scan_request())
+
+    def test_wait_is_interrupted_by_manual_full_request(self):
+        scanner.r.set(scanner.FULL_SCAN_REQUEST_KEY, "now")
+
+        with mock.patch.object(scanner.time, "sleep") as sleep:
+            scanner.wait_for_next_scan(600)
+
+        sleep.assert_not_called()
+
     def test_scan_once_registers_a_full_session(self):
         calls = []
 

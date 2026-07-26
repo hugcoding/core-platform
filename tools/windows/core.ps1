@@ -46,6 +46,7 @@ function Show-Help {
     Write-Host "  core runtime start"
     Write-Host "  core runtime stop"
     Write-Host "  core runtime restart"
+    Write-Host "  core scanner full"
     Write-Host "  core git status"
     Write-Host "  core git pull"
     Write-Host "  core version"
@@ -156,6 +157,18 @@ function Invoke-Runtime {
     }
 }
 
+function Invoke-Scanner {
+    switch ($Action) {
+        "full" {
+            Invoke-Nas "sh ./tools/runtime/scanner-full"
+        }
+        default {
+            Write-Host "Unknown scanner command." -ForegroundColor Yellow
+            Write-Host "Use: core scanner full"
+        }
+    }
+}
+
 
 function Invoke-Jira {
     Set-Location $ProjectRoot
@@ -213,6 +226,9 @@ switch ($Domain) {
     }
     "runtime" {
         Invoke-Runtime
+    }
+    "scanner" {
+        Invoke-Scanner
     }
     "git" {
         Invoke-Git
