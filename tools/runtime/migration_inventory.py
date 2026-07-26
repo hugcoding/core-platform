@@ -103,6 +103,18 @@ DETAIL_QUERY = CLASSIFICATION_CTE + r"""
         ARRAY_TO_JSON(ARRAY_AGG(path ORDER BY path))::text AS source_paths
     FROM classified
     GROUP BY content_key
+),
+all_content_stats AS (
+    SELECT
+        hash_content,
+        size_bytes,
+        COUNT(*) AS active_copy_count,
+        BOOL_OR(path = '/volume1/data' OR path LIKE '/volume1/data/%') AS already_in_target
+    FROM files
+    WHERE deleted_at IS NULL
+      AND hash_content IS NOT NULL
+      AND hash_content <> ''
+    GROUP BY hash_content, size_bytes
 )
 SELECT
     g.representative_file_id,
@@ -111,22 +123,11 @@ SELECT
     g.category,
     g.sensitivity,
     CASE
-        WHEN EXISTS (
-            SELECT 1 FROM files target
-            WHERE target.deleted_at IS NULL
-              AND target.hash_content = g.hash_content
-              AND target.size_bytes IS NOT DISTINCT FROM g.size_bytes
-              AND (target.path = '/volume1/data' OR target.path LIKE '/volume1/data/%')
-        ) THEN 'already_in_target'
+        WHEN COALESCE(stats.already_in_target, FALSE) THEN 'already_in_target'
         ELSE g.migration_action
     END AS migration_action,
     g.source_copy_count,
-    (
-        SELECT COUNT(*) FROM files all_files
-        WHERE all_files.deleted_at IS NULL
-          AND all_files.hash_content = g.hash_content
-          AND all_files.size_bytes IS NOT DISTINCT FROM g.size_bytes
-    ) AS active_copy_count,
+    COALESCE(stats.active_copy_count, 0) AS active_copy_count,
     g.representative_path,
     g.source_paths,
     CASE
@@ -137,6 +138,9 @@ SELECT
         ELSE 'hashed candidate requiring review'
     END AS decision_reason
 FROM grouped g
+LEFT JOIN all_content_stats stats
+  ON stats.hash_content = g.hash_content
+ AND stats.size_bytes IS NOT DISTINCT FROM g.size_bytes
 ORDER BY
     CASE g.migration_action WHEN 'candidate' THEN 1 WHEN 'review_required' THEN 2 ELSE 3 END,
     g.category,
@@ -222,6 +226,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         detail_text = run_query(command, DETAIL_QUERY, source)
         summary_text = run_query(command, SUMMARY_QUERY, source)
+    except KeyboardInterrupt:
+        print("\nMigration inventory cancelled; no files or database records were changed.", file=sys.stderr)
+        return 130
     except subprocess.CalledProcessError as exc:
         print("Migration inventory failed.", file=sys.stderr)
         if exc.stderr:

@@ -11,6 +11,8 @@ class MigrationInventoryTest(unittest.TestCase):
         self.assertIn("sf.hash_content || ':' || COALESCE(sf.size_bytes::text, 'NULL')", DETAIL_QUERY)
         self.assertIn("ARRAY_TO_JSON(ARRAY_AGG(path ORDER BY path))", DETAIL_QUERY)
         self.assertIn("'already_in_target'", DETAIL_QUERY)
+        self.assertIn("all_content_stats AS", DETAIL_QUERY)
+        self.assertNotIn("SELECT COUNT(*) FROM files all_files", DETAIL_QUERY)
 
     def test_backup_wrapper_is_not_a_blanket_exclusion(self):
         self.assertNotIn("backup_or_archive", DETAIL_QUERY)
