@@ -8,9 +8,11 @@ import os
 import time
 import socket
 import logging
+import uuid
 from datetime import datetime, timezone
 
 import redis
+import psycopg2
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("scanner")
@@ -19,7 +21,9 @@ REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
 SCAN_ROOT = os.getenv("SCAN_ROOT", "/volume1")
-SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", "30"))
+SCAN_INTERVAL = max(1, int(os.getenv("SCAN_INTERVAL", "600")))
+FULL_SCAN_INTERVAL = max(SCAN_INTERVAL, int(os.getenv("FULL_SCAN_INTERVAL", "3600")))
+MISSING_SCAN_THRESHOLD = max(1, int(os.getenv("MISSING_SCAN_THRESHOLD", "2")))
 
 STREAM_KEY = os.getenv("STREAM_KEY", "scan_stream")
 LOCK_KEY = "scanner:lock:event"
@@ -28,9 +32,17 @@ LOCK_TTL = 90
 HEARTBEAT_KEY = "scanner:heartbeat"
 HEARTBEAT_STATUS_KEY = "scanner:heartbeat:status"
 LAST_SCAN_KEY = "scanner:last_scan"
+LAST_FULL_SCAN_KEY = "scanner:last_full_scan"
+LAST_INTERVAL_SCAN_KEY = "scanner:last_interval_scan"
+LAST_INTERVAL_ROOT_KEY = "scanner:last_interval_root"
+INTERVAL_ROOT_INDEX_KEY = "scanner:interval:root_index"
+DIRTY_ROOTS_KEY = "scanner:dirty_roots"
+FULL_SCAN_REQUEST_KEY = "scanner:request:full"
 HEARTBEAT_TTL = 120
 
 CONSUMER_NAME = socket.gethostname()
+SIGNATURE_PREFIX = "scanner:sig:"
+STATE_SEPARATOR = "\n"
 
 IGNORE_PREFIXES = ("@", ".", "#")
 IGNORE_NAMES = {"tmp", "lost+found"}
@@ -50,6 +62,34 @@ r = redis.Redis(
     socket_connect_timeout=10,
     retry_on_timeout=True,
 )
+
+_db_conn = None
+
+
+def get_db():
+    global _db_conn
+    if _db_conn is None or _db_conn.closed:
+        _db_conn = psycopg2.connect(
+            host=os.getenv("DB_HOST"),
+            port=int(os.getenv("DB_PORT", "5432")),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASS"),
+            dbname=os.getenv("DB_NAME"),
+        )
+        _db_conn.autocommit = True
+    return _db_conn
+
+
+def session_call(query, params=(), fetch=False):
+    """Run scan bookkeeping without making PostgreSQL a scanner dependency."""
+    try:
+        with get_db().cursor() as cur:
+            cur.execute(query, params)
+            row = cur.fetchone() if fetch else None
+            return row[0] if row else None
+    except Exception as exc:
+        logger.warning("Scan session update failed: %s", exc)
+        return None
 
 
 def utc_now():
@@ -135,27 +175,142 @@ def file_signature(path, st):
     return f"{int(st.st_mtime)}:{st.st_size}:{st.st_ino}"
 
 
-def changed(path, signature):
-    key = "scanner:sig:" + path
-    old = r.get(key)
-    if old == signature:
-        return False
-    r.set(key, signature)
-    return True
+def parse_file_state(raw):
+    if not raw:
+        return None, None, 0
+
+    parts = str(raw).split(STATE_SEPARATOR, 2)
+    signature = parts[0]
+    scan_id = (parts[1] or None) if len(parts) > 1 else None
+
+    try:
+        missing_scans = int(parts[2]) if len(parts) > 2 else 0
+    except ValueError:
+        missing_scans = 0
+
+    return signature, scan_id, missing_scans
 
 
-def scan_once():
-    roots = discover_roots()
-    logger.info("Discovered scan roots: %s", ", ".join(roots))
+def encode_file_state(signature, scan_id, missing_scans=0):
+    return STATE_SEPARATOR.join((signature, scan_id or "", str(missing_scans)))
+
+
+def changed(path, signature, scan_id, full_sweep=True):
+    key = SIGNATURE_PREFIX + path
+    old_signature, last_full_sweep, missing_sweeps = parse_file_state(r.get(key))
+    if full_sweep:
+        last_full_sweep = scan_id
+        missing_sweeps = 0
+    r.set(key, encode_file_state(signature, last_full_sweep, missing_sweeps))
+    return old_signature != signature
+
+
+def mark_seen(path, scan_id):
+    key = SIGNATURE_PREFIX + path
+    signature, _, _ = parse_file_state(r.get(key))
+    if signature is not None:
+        r.set(key, encode_file_state(signature, scan_id))
+
+
+def reconcile_missing(scan_id, session_id=None, root_scope=None, threshold=None):
+    checked = 0
+    deleted = 0
+    threshold = MISSING_SCAN_THRESHOLD if threshold is None else max(1, threshold)
+    pattern = SIGNATURE_PREFIX + "*"
+    if root_scope:
+        pattern = SIGNATURE_PREFIX + root_scope.rstrip("/") + "/" + "*"
+
+    for key in r.scan_iter(match=pattern, count=1000):
+        raw = r.get(key)
+        signature, last_seen_scan, missing_scans = parse_file_state(raw)
+
+        if signature is None or last_seen_scan == scan_id:
+            continue
+
+        checked += 1
+        missing_scans += 1
+
+        if missing_scans < threshold:
+            r.set(key, encode_file_state(signature, last_seen_scan, missing_scans))
+            continue
+
+        path = key[len(SIGNATURE_PREFIX):]
+        r.xadd(STREAM_KEY, {
+            "event": "DELETE",
+            "path": path,
+            "source": "polling_scanner",
+            "ts": utc_now(),
+            "scan_session_id": str(session_id or ""),
+        })
+        r.delete(key)
+        deleted += 1
+
+    return checked, deleted
+
+
+def raise_walk_error(error):
+    raise error
+
+
+def select_interval_root(roots):
+    if not roots:
+        return None
+    try:
+        index = int(r.get(INTERVAL_ROOT_INDEX_KEY) or 0)
+    except (TypeError, ValueError):
+        index = 0
+    root = roots[index % len(roots)]
+    r.set(INTERVAL_ROOT_INDEX_KEY, str((index + 1) % len(roots)))
+    return root
+
+
+def select_dirty_root(roots):
+    allowed = set(roots)
+    dirty = r.hgetall(DIRTY_ROOTS_KEY)
+    candidates = [
+        (marked_at, root)
+        for root, marked_at in dirty.items()
+        if root in allowed
+    ]
+    if not candidates:
+        return None, None
+    marked_at, root = min(candidates)
+    return root, marked_at
+
+
+def clear_dirty_root(root, expected_marker):
+    script = """
+    if redis.call('HGET', KEYS[1], ARGV[1]) == ARGV[2] then
+        return redis.call('HDEL', KEYS[1], ARGV[1])
+    end
+    return 0
+    """
+    return bool(r.eval(script, 1, DIRTY_ROOTS_KEY, root, expected_marker))
+
+
+def _scan_roots(
+    roots,
+    scan_id,
+    session_id,
+    full_sweep,
+    scan_type=None,
+    reconcile_scope=None,
+    missing_threshold=None,
+):
+    scan_type = scan_type or ("full" if full_sweep else "interval")
+    logger.info("Starting %s scan roots=%s", scan_type, ", ".join(roots))
 
     discovered = 0
     enqueued = 0
 
     for root_base in roots:
+        root_started = time.time()
+        root_discovered = 0
+        root_enqueued = 0
         heartbeat("scanning")
         refresh_lock()
 
-        for root, dirs, files in os.walk(root_base):
+        for root, dirs, files in os.walk(root_base, onerror=raise_walk_error):
             dirs[:] = [
                 d for d in dirs
                 if d not in IGNORE_NAMES
@@ -174,16 +329,24 @@ def scan_once():
                 except FileNotFoundError:
                     continue
                 except PermissionError:
+                    if full_sweep:
+                        mark_seen(path, scan_id)
                     logger.warning("Permission denied: %s", path)
                     continue
                 except Exception as e:
+                    if full_sweep:
+                        mark_seen(path, scan_id)
                     logger.warning("stat failed: %s err=%s", path, e)
                     continue
 
                 discovered += 1
+                root_discovered += 1
+                if root_discovered % 1000 == 0:
+                    heartbeat("scanning")
+                    refresh_lock()
                 sig = file_signature(path, st)
 
-                if not changed(path, sig):
+                if not changed(path, sig, scan_id, full_sweep=full_sweep):
                     continue
 
                 r.xadd(STREAM_KEY, {
@@ -194,11 +357,124 @@ def scan_once():
                     "size": str(st.st_size),
                     "inode": str(st.st_ino),
                     "ts": utc_now(),
+                    "scan_session_id": str(session_id or ""),
                 })
                 enqueued += 1
+                root_enqueued += 1
 
-    r.set(LAST_SCAN_KEY, utc_now(), ex=HEARTBEAT_TTL * 4)
-    return discovered, enqueued
+        logger.info(
+            "Root done: type=%s root=%s discovered=%s enqueued=%s elapsed=%.1fs",
+            scan_type,
+            root_base,
+            root_discovered,
+            root_enqueued,
+            time.time() - root_started,
+        )
+
+    if full_sweep:
+        missing, deleted = reconcile_missing(
+            scan_id,
+            session_id=session_id,
+            root_scope=reconcile_scope,
+            threshold=missing_threshold,
+        )
+    else:
+        missing, deleted = 0, 0
+
+    if session_id:
+        session_call("SELECT increment_files_discovered(%s, %s)", (session_id, discovered))
+        session_call("SELECT increment_jobs_enqueued(%s, %s)", (session_id, enqueued + deleted))
+        session_call("SELECT finish_scan_session(%s)", (session_id,))
+
+    finished_at = utc_now()
+    r.set(LAST_SCAN_KEY, finished_at, ex=HEARTBEAT_TTL * 4)
+    if scan_type == "full":
+        r.set(LAST_FULL_SCAN_KEY, finished_at)
+    else:
+        r.set(LAST_INTERVAL_SCAN_KEY, finished_at)
+        r.set(LAST_INTERVAL_ROOT_KEY, roots[0] if roots else "")
+    return discovered, enqueued, missing, deleted
+
+
+def run_scan(
+    scan_type,
+    roots,
+    *,
+    full_sweep=None,
+    reconcile_scope=None,
+    missing_threshold=None,
+):
+    scan_id = uuid.uuid4().hex
+    session_id = session_call("SELECT create_scan_session(%s)", (scan_type,), fetch=True)
+    if full_sweep is None:
+        full_sweep = scan_type == "full"
+    try:
+        return _scan_roots(
+            roots,
+            scan_id,
+            session_id,
+            full_sweep=full_sweep,
+            scan_type=scan_type,
+            reconcile_scope=reconcile_scope,
+            missing_threshold=missing_threshold,
+        )
+    except Exception:
+        if session_id:
+            session_call(
+                "UPDATE scan_sessions SET status = 'failed', finished_at = NOW() WHERE id = %s",
+                (session_id,),
+            )
+        raise
+
+
+def scan_once():
+    """Run a complete reconciliation sweep (backward-compatible entry point)."""
+    roots = discover_roots()
+    if not roots:
+        raise RuntimeError("Full scan aborted: no scan roots discovered")
+    return run_scan("full", roots)
+
+
+def scan_interval_once():
+    roots = discover_roots()
+    dirty_root, dirty_marker = select_dirty_root(roots)
+    root = dirty_root or select_interval_root(roots)
+    if dirty_root:
+        result = run_scan(
+            "interval",
+            [dirty_root],
+            full_sweep=True,
+            reconcile_scope=dirty_root,
+            missing_threshold=1,
+        )
+    else:
+        result = run_scan("interval", [root] if root else [])
+    if dirty_root:
+        if clear_dirty_root(dirty_root, dirty_marker):
+            logger.info("Dirty root reconciled: %s", dirty_root)
+        else:
+            logger.info("Dirty root changed during reconciliation; keeping marker: %s", dirty_root)
+    return result
+
+
+def consume_full_scan_request():
+    requested_at = r.get(FULL_SCAN_REQUEST_KEY)
+    if not requested_at:
+        return False
+    r.delete(FULL_SCAN_REQUEST_KEY)
+    logger.info("Manual full scan requested at %s", requested_at)
+    return True
+
+
+def wait_for_next_scan(seconds):
+    """Wait interruptibly so a manual full request is picked up promptly."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if r.get(FULL_SCAN_REQUEST_KEY):
+            return
+        heartbeat("idle")
+        refresh_lock()
+        time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
 
 
 def main():
@@ -206,7 +482,13 @@ def main():
         return
 
     heartbeat("started")
-    logger.info("Starting polling scanner on %s interval=%ss", SCAN_ROOT, SCAN_INTERVAL)
+    logger.info(
+        "Starting polling scanner on %s interval=%ss full_interval=%ss",
+        SCAN_ROOT,
+        SCAN_INTERVAL,
+        FULL_SCAN_INTERVAL,
+    )
+    next_full_at = 0.0
 
     try:
         while True:
@@ -215,15 +497,30 @@ def main():
 
             started = time.time()
             try:
-                discovered, enqueued = scan_once()
+                full_sweep = consume_full_scan_request() or time.monotonic() >= next_full_at
+                if full_sweep:
+                    discovered, enqueued, missing, deleted = scan_once()
+                    next_full_at = time.monotonic() + FULL_SCAN_INTERVAL
+                    scan_type = "full"
+                else:
+                    discovered, enqueued, missing, deleted = scan_interval_once()
+                    scan_type = "interval"
                 elapsed = time.time() - started
                 heartbeat("idle")
-                logger.info("Scan done: discovered=%s enqueued=%s elapsed=%.1fs", discovered, enqueued, elapsed)
+                logger.info(
+                    "Scan done: type=%s discovered=%s enqueued=%s missing=%s deleted=%s elapsed=%.1fs",
+                    scan_type,
+                    discovered,
+                    enqueued,
+                    missing,
+                    deleted,
+                    elapsed,
+                )
             except Exception as e:
                 heartbeat("error")
                 logger.exception("Scan loop failed: %s", e)
 
-            time.sleep(SCAN_INTERVAL)
+            wait_for_next_scan(SCAN_INTERVAL)
 
     finally:
         heartbeat("stopped")
@@ -258,6 +555,7 @@ REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
 STREAM_KEY = "scan_stream"
+REALTIME_STREAM_KEY = os.getenv("REALTIME_STREAM_KEY", "scan_stream_realtime")
 GROUP_NAME = "metadata_group"
 DLQ_STREAM = "scan_stream_dlq"
 
@@ -306,7 +604,7 @@ def get_db():
             password=os.getenv("DB_PASS"),
             dbname=os.getenv("DB_NAME"),
         )
-        _db_conn.autocommit = True
+        _db_conn.autocommit = False
         logger.info("Database connected")
     return _db_conn
 
@@ -346,13 +644,31 @@ def release_lock():
         pass
 
 
-def ensure_group():
+def ensure_group(stream_key=STREAM_KEY):
     try:
-        r.xgroup_create(STREAM_KEY, GROUP_NAME, id="0", mkstream=True)
+        r.xgroup_create(stream_key, GROUP_NAME, id="0", mkstream=True)
         logger.info("Redis consumer group created")
     except redis.exceptions.ResponseError as e:
         if "BUSYGROUP" not in str(e):
             raise
+
+
+def read_next_batch():
+    realtime = r.xreadgroup(
+        GROUP_NAME,
+        CONSUMER_NAME,
+        streams={REALTIME_STREAM_KEY: ">"},
+        count=50,
+    )
+    if realtime:
+        return realtime
+    return r.xreadgroup(
+        GROUP_NAME,
+        CONSUMER_NAME,
+        streams={STREAM_KEY: ">"},
+        count=10,
+        block=1000,
+    )
 
 
 def upsert_folder(cur, path):
@@ -407,6 +723,140 @@ def get_image_dims(path, mime):
         return None, None
 
 
+def path_is_missing(path):
+    try:
+        os.stat(path)
+        return False
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+
+
+def get_file_by_path(cur, path):
+    cur.execute(
+        "SELECT id, path, deleted_at FROM files WHERE path = %s",
+        (path,),
+    )
+    return cur.fetchone()
+
+
+def classify_path_mutation(existing_file):
+    if not existing_file:
+        return "CREATED"
+    if existing_file["deleted_at"] is not None:
+        return "RESTORED"
+    return "MODIFIED"
+
+
+def classify_rename_mutation(old_path, new_path):
+    if os.path.dirname(old_path) == os.path.dirname(new_path):
+        return "RENAMED"
+    return "MOVED"
+
+
+def identity_confidence(candidate, filesystem_device, inode, size_bytes, modified_at_fs, content_hash):
+    signals = {
+        "filesystem_device_match": candidate.get("filesystem_device") == filesystem_device,
+        "inode_match": candidate.get("inode") == inode,
+        "size_match": candidate.get("size_bytes") == size_bytes,
+        "mtime_match": candidate.get("modified_at_fs") == modified_at_fs,
+        "content_hash_match": bool(content_hash) and candidate.get("hash_content") == content_hash,
+        "old_path_missing": path_is_missing(candidate["path"]),
+    }
+    weights = {
+        "filesystem_device_match": 20,
+        "inode_match": 20,
+        "size_match": 10,
+        "mtime_match": 10,
+        "content_hash_match": 30,
+        "old_path_missing": 10,
+    }
+    score = sum(weights[name] for name, matched in signals.items() if matched)
+    level = "high" if score >= 90 else "medium" if score >= 65 else "low"
+    return score, level, signals
+
+
+def insert_file_event(cur, *, file_id, event_type, source, old_path=None,
+                      new_path=None, candidate_file_id=None, score=None,
+                      level=None, decision=None, signals=None, reason=None,
+                      scan_session_id=None):
+    scan_session_id = scan_session_id or None
+    cur.execute("""
+        INSERT INTO file_events (
+            file_id, candidate_file_id, event_type, old_path, new_path,
+            confidence_score, confidence_level, decision, signals, reason,
+            scan_session_id, source
+        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s)
+    """, (
+        file_id, candidate_file_id, event_type, old_path, new_path,
+        score, level, decision, json.dumps(signals or {}), reason,
+        scan_session_id, source,
+    ))
+
+
+def evaluate_identity_match(cur, path, filesystem_device, inode, size_bytes, modified_at_fs, content_hash):
+    cur.execute("""
+        SELECT id, path, filesystem_device, inode, size_bytes, modified_at_fs, hash_content
+        FROM files
+        WHERE filesystem_device = %s
+          AND inode = %s
+          AND path <> %s
+          AND deleted_at IS NULL
+        ORDER BY id
+    """, (filesystem_device, inode, path))
+
+    rows = cur.fetchall()
+    existing_paths = [row for row in rows if not path_is_missing(row["path"])]
+    missing_candidates = [row for row in rows if row not in existing_paths]
+
+    if existing_paths:
+        return {
+            "candidate": existing_paths[0],
+            "event_type": "HARDLINK_DETECTED",
+            "level": "ambiguous",
+            "score": None,
+            "signals": {"candidate_count": len(rows), "old_path_missing": False},
+            "decision": "created_separate",
+            "reason": "same inode is still active at another path",
+        }
+
+    if len(missing_candidates) != 1:
+        return {
+            "candidate": missing_candidates[0] if missing_candidates else None,
+            "event_type": "IDENTITY_AMBIGUOUS" if missing_candidates else None,
+            "level": "ambiguous" if missing_candidates else None,
+            "score": None,
+            "signals": {"candidate_count": len(missing_candidates)},
+            "decision": "created_separate",
+            "reason": "multiple missing candidates" if missing_candidates else "no candidate",
+        }
+
+    candidate = missing_candidates[0]
+    score, level, signals = identity_confidence(
+        candidate, filesystem_device, inode, size_bytes, modified_at_fs, content_hash
+    )
+    signals["candidate_count"] = 1
+    matched = level == "high"
+    return {
+        "candidate": candidate,
+        "event_type": "IDENTITY_MATCHED" if matched else "IDENTITY_REJECTED",
+        "level": level,
+        "score": score,
+        "signals": signals,
+        "decision": "auto_linked" if matched else "created_separate",
+        "reason": "unique high-confidence match" if matched else "confidence below automatic threshold",
+    }
+
+
+def find_rename_candidate(cur, path, inode, size_bytes, modified_at_fs,
+                          content_hash=None, filesystem_device=None):
+    result = evaluate_identity_match(
+        cur, path, filesystem_device, inode, size_bytes, modified_at_fs, content_hash
+    )
+    return result["candidate"] if result["decision"] == "auto_linked" else None
+
+
 def process_event(cur, data):
     event = str(data.get("event", "")).lower()
     path = data.get("path")
@@ -417,12 +867,41 @@ def process_event(cur, data):
     path = os.path.normpath(str(path))
 
     if "delete" in event:
-        cur.execute("UPDATE files SET deleted_at = NOW() WHERE path = %s", (path,))
+        cur.execute("""
+            UPDATE files SET
+                deleted_at = NOW(),
+                updated_at = NOW(),
+                last_mutation_type = 'DELETED'
+            WHERE path = %s
+            RETURNING id
+        """, (path,))
+        row = cur.fetchone()
+        if row:
+            insert_file_event(
+                cur, file_id=row["id"], event_type="DELETED",
+                source=data.get("source", "polling_scanner"),
+                old_path=path, scan_session_id=data.get("scan_session_id"),
+            )
         logger.info("Deleted: %s", path)
         return
 
     if not os.path.exists(path):
-        cur.execute("UPDATE files SET deleted_at = NOW() WHERE path = %s", (path,))
+        cur.execute("""
+            UPDATE files SET
+                deleted_at = NOW(),
+                updated_at = NOW(),
+                last_mutation_type = 'DELETED'
+            WHERE path = %s
+            RETURNING id
+        """, (path,))
+        row = cur.fetchone()
+        if row:
+            insert_file_event(
+                cur, file_id=row["id"], event_type="DELETED",
+                source=data.get("source", "polling_scanner"),
+                old_path=path, reason="path_missing",
+                scan_session_id=data.get("scan_session_id"),
+            )
         logger.warning("Missing file, marked deleted: %s", path)
         return
 
@@ -439,74 +918,157 @@ def process_event(cur, data):
     size_bytes = stat.st_size
     modified_at_fs = int(stat.st_mtime)
     inode = stat.st_ino
+    filesystem_device = stat.st_dev
 
     hash_path = xxhash.xxh64(path).hexdigest()
     hash_content = hash_first_1024(path)
     mime = get_mime(path)
 
-    cur.execute("""
-        INSERT INTO files (
-            folder_id, filename, extension, size_bytes,
-            modified_at_fs, inode, xxhash,
-            path, source, hash_path, hash_content,
-            mime_type, deleted_at
-        )
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL)
-        ON CONFLICT (path) DO UPDATE SET
-            folder_id       = EXCLUDED.folder_id,
-            filename        = EXCLUDED.filename,
-            extension       = EXCLUDED.extension,
-            size_bytes      = EXCLUDED.size_bytes,
-            modified_at_fs  = EXCLUDED.modified_at_fs,
-            inode           = EXCLUDED.inode,
-            xxhash          = EXCLUDED.xxhash,
-            source          = EXCLUDED.source,
-            hash_path       = EXCLUDED.hash_path,
-            hash_content    = EXCLUDED.hash_content,
-            mime_type       = EXCLUDED.mime_type,
-            updated_at      = NOW(),
-            deleted_at      = NULL
-        RETURNING id
-    """, (
+    values = (
         folder_id,
         filename,
         extension,
         size_bytes,
         modified_at_fs,
+        filesystem_device,
         inode,
-        hash_path,
         path,
         data.get("source", "polling_scanner"),
         hash_path,
         hash_content,
         mime,
-    ))
+    )
 
+    existing_file = get_file_by_path(cur, path)
+    rename_candidate = None
+    identity_match = None
+    if not existing_file:
+        identity_match = evaluate_identity_match(
+            cur, path, filesystem_device, inode, size_bytes, modified_at_fs, hash_content
+        )
+        if identity_match["decision"] == "auto_linked":
+            rename_candidate = identity_match["candidate"]
+
+    if rename_candidate:
+        mutation_type = classify_rename_mutation(rename_candidate["path"], path)
+        cur.execute("""
+            UPDATE files SET
+                folder_id          = %s,
+                filename           = %s,
+                extension          = %s,
+                size_bytes         = %s,
+                modified_at_fs     = %s,
+                filesystem_device  = %s,
+                inode              = %s,
+                path               = %s,
+                source             = %s,
+                hash_path          = %s,
+                hash_content       = %s,
+                mime_type          = %s,
+                last_mutation_type = %s,
+                updated_at         = NOW(),
+                deleted_at         = NULL
+            WHERE id = %s
+            RETURNING id
+        """, values + (mutation_type, rename_candidate["id"]))
+        logger.info(
+            "%s: %s -> %s",
+            mutation_type.title(),
+            rename_candidate["path"],
+            path,
+        )
+    else:
+        mutation_type = classify_path_mutation(existing_file)
+        cur.execute("""
+            INSERT INTO files (
+                folder_id, filename, extension, size_bytes,
+                modified_at_fs, filesystem_device, inode,
+                path, source, hash_path, hash_content,
+                mime_type, deleted_at,
+                last_mutation_type
+            )
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,%s)
+            ON CONFLICT (path) DO UPDATE SET
+                folder_id          = EXCLUDED.folder_id,
+                filename           = EXCLUDED.filename,
+                extension          = EXCLUDED.extension,
+                size_bytes         = EXCLUDED.size_bytes,
+                modified_at_fs     = EXCLUDED.modified_at_fs,
+                filesystem_device  = EXCLUDED.filesystem_device,
+                inode              = EXCLUDED.inode,
+                source             = EXCLUDED.source,
+                hash_path          = EXCLUDED.hash_path,
+                hash_content       = EXCLUDED.hash_content,
+                mime_type          = EXCLUDED.mime_type,
+                last_mutation_type = EXCLUDED.last_mutation_type,
+                updated_at         = NOW(),
+                deleted_at         = NULL
+            RETURNING id
+        """, values + (mutation_type,))
     file_id = cur.fetchone()["id"]
+    insert_file_event(
+        cur,
+        file_id=file_id,
+        candidate_file_id=rename_candidate["id"] if rename_candidate else None,
+        event_type=mutation_type,
+        source=data.get("source", "polling_scanner"),
+        old_path=rename_candidate["path"] if rename_candidate else None,
+        new_path=path,
+        decision="auto_linked" if rename_candidate else "state_updated",
+        scan_session_id=data.get("scan_session_id"),
+    )
+    if identity_match and identity_match["event_type"]:
+        insert_file_event(
+            cur,
+            file_id=file_id,
+            candidate_file_id=(
+                identity_match["candidate"]["id"]
+                if identity_match["candidate"] else None
+            ),
+            event_type=identity_match["event_type"],
+            source=data.get("source", "polling_scanner"),
+            old_path=(
+                identity_match["candidate"]["path"]
+                if identity_match["candidate"] else None
+            ),
+            new_path=path,
+            score=identity_match["score"],
+            level=identity_match["level"],
+            decision=identity_match["decision"],
+            signals=identity_match["signals"],
+            reason=identity_match["reason"],
+            scan_session_id=data.get("scan_session_id"),
+        )
 
     if FORCE_FULL:
         cur.execute("DELETE FROM metadata WHERE file_id = %s", (file_id,))
 
-    cur.execute("SELECT 1 FROM metadata WHERE file_id = %s", (file_id,))
-    exists = cur.fetchone()
+    width, height = get_image_dims(path, mime)
 
-    if not exists:
-        width, height = get_image_dims(path, mime)
-
-        cur.execute("""
-            INSERT INTO metadata (
-                file_id, mime_type, width, height, duration, missing
-            )
-            VALUES (%s,%s,%s,%s,NULL,false)
-            ON CONFLICT (file_id) DO UPDATE SET
-                mime_type = EXCLUDED.mime_type,
-                width     = EXCLUDED.width,
-                height    = EXCLUDED.height,
-                missing   = false
-        """, (file_id, mime, width, height))
+    cur.execute("""
+        INSERT INTO metadata (
+            file_id, width, height, duration, missing
+        )
+        VALUES (%s,%s,%s,NULL,false)
+        ON CONFLICT (file_id) DO UPDATE SET
+            width     = EXCLUDED.width,
+            height    = EXCLUDED.height,
+            missing   = false
+    """, (file_id, width, height))
 
     r.set(LAST_EVENT_KEY, utc_now(), ex=HEARTBEAT_TTL * 4)
     logger.info("Processed: %s", path)
+
+
+def mark_session_job_processed(cur, data):
+    session_id = data.get("scan_session_id")
+    if session_id:
+        try:
+            cur.execute("SELECT increment_jobs_processed(%s)", (session_id,))
+        except Exception as exc:
+            # Session accounting must never turn an otherwise valid legacy
+            # metadata event into a DLQ entry.
+            logger.warning("Scan session update failed: %s", exc)
 
 
 def main():
@@ -517,7 +1079,8 @@ def main():
     conn = get_db()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    ensure_group()
+    ensure_group(STREAM_KEY)
+    ensure_group(REALTIME_STREAM_KEY)
     logger.info("Worker started")
 
     try:
@@ -526,17 +1089,12 @@ def main():
             heartbeat("waiting")
 
             try:
-                resp = r.xreadgroup(
-                    GROUP_NAME,
-                    CONSUMER_NAME,
-                    streams={STREAM_KEY: ">"},
-                    count=50,
-                    block=5000,
-                )
+                resp = read_next_batch()
             except redis.exceptions.ResponseError as e:
                 if "NOGROUP" in str(e):
                     logger.warning("NOGROUP detected, recreating group")
-                    ensure_group()
+                    ensure_group(STREAM_KEY)
+                    ensure_group(REALTIME_STREAM_KEY)
                     continue
                 raise
 
@@ -545,20 +1103,24 @@ def main():
 
             heartbeat("processing")
 
-            for _, msgs in resp:
+            for source_stream, msgs in resp:
                 for msg_id, data in msgs:
                     try:
                         process_event(cur, data)
+                        mark_session_job_processed(cur, data)
+                        conn.commit()
                     except Exception as e:
+                        conn.rollback()
                         logger.error("DLQ msg=%s: %s", msg_id, e, exc_info=True)
                         r.xadd(DLQ_STREAM, {
                             "original_id": msg_id,
+                            "original_stream": source_stream,
                             "data": json.dumps(data),
                             "error": str(e),
                             "ts": utc_now(),
                         })
                     finally:
-                        r.xack(STREAM_KEY, GROUP_NAME, msg_id)
+                        r.xack(source_stream, GROUP_NAME, msg_id)
 
     finally:
         heartbeat("stopped")
@@ -1168,6 +1730,26 @@ core runtime logs
 core runtime status
 ```
 
+## Realtime watcher ontbreekt of is unhealthy
+
+```bash
+core runtime health
+core runtime status
+/usr/local/bin/docker compose logs --tail=200 watcher
+```
+
+Controleer in `core runtime status` de watcher-heartbeat, `watcher:last_event` en `scanner:dirty_roots`. Een ontbrekende heartbeat betekent dat de watcher niet actief is of Redis niet kan bereiken. Herstel eerst de watcher en laat de dirty-root reconciliation afronden voordat u een opschoning start.
+
+## Container Manager toont een ID-prefix
+
+Controleer de echte Dockernaam:
+
+```bash
+docker ps --format '{{.Names}}'
+```
+
+Als Docker `nas-scanner-1`, `nas-metadata_worker-1` en `nas-watcher-1` toont, is alleen de Synology-interface uit sync. Sluit Container Manager voordat containers met Compose worden gerecreëerd en open de GUI pas nadat de containers stabiel en gezond zijn.
+
 ## Worker zegt dat er al een worker draait
 
 Controleer locks en heartbeats:
@@ -1413,8 +1995,32 @@ services:
     volumes: ["/volume1:/volume1:ro"]
     environment:
       - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - DB_NAME=${DB_NAME}
       - REDIS_HOST=redis
       - SCAN_ROOT=${SCAN_ROOT:-/volume1}
+      - SCAN_INTERVAL=${SCAN_INTERVAL:-600}
+      - FULL_SCAN_INTERVAL=${FULL_SCAN_INTERVAL:-3600}
+      - MISSING_SCAN_THRESHOLD=${MISSING_SCAN_THRESHOLD:-2}
+
+  watcher:
+    build: { context: ., dockerfile: Dockerfile.watcher }
+    restart: unless-stopped
+    depends_on: { redis: { condition: service_healthy } }
+    volumes: ["/volume1:/volume1:ro"]
+    environment:
+      - REDIS_HOST=redis
+      - SCAN_ROOT=${SCAN_ROOT:-/volume1}
+      - WATCH_ROOTS=${WATCH_ROOTS:-/volume1/data}
+      - STREAM_KEY=${REALTIME_STREAM_KEY:-scan_stream_realtime}
+      - WATCHER_DEBOUNCE_SECONDS=${WATCHER_DEBOUNCE_SECONDS:-2}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import redis; r=redis.Redis(host='redis', decode_responses=True); assert r.get('watcher:heartbeat')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   metadata_worker:
     build: { context: ., dockerfile: Dockerfile.metadata }
@@ -1428,6 +2034,7 @@ services:
       - DB_PASS=${DB_PASS}
       - DB_NAME=${DB_NAME}
       - REDIS_HOST=redis
+      - REALTIME_STREAM_KEY=${REALTIME_STREAM_KEY:-scan_stream_realtime}
       - FORCE_FULL_METADATA=${FORCE_FULL_METADATA:-false}
 
     healthcheck:
@@ -1523,455 +2130,230 @@ COMMENT ON EXTENSION vector IS 'vector data type and ivfflat and hnsw access met
 CREATE PROCEDURE public.cleanup_all_execute()
     LANGUAGE plpgsql
     AS $_$
-
 DECLARE
-
     dir_folders INT := 0;
-
     dir_files INT := 0;
-
     dir_meta INT := 0;
-
     dir_emb INT := 0;
-
     dir_ai INT := 0;
 
-
-
     file_files INT := 0;
-
     file_meta INT := 0;
-
     file_emb INT := 0;
-
     file_ai INT := 0;
 
-
-
     orphan_metadata INT := 0;
-
     orphan_embeddings INT := 0;
-
     orphan_ai INT := 0;
-
     orphan_files INT := 0;
-
     orphan_folders INT := 0;
-
 BEGIN
-
     RAISE NOTICE '=== CLEANUP START ===';
 
-
-
     --------------------------------------------------------------------
-
     -- 1. SYSTEM FOLDERS (@eaDir, @tmp, @appstore, @*)
-
     --------------------------------------------------------------------
-
     WITH excluded_folders AS (
-
         SELECT id FROM folders
-
         WHERE path LIKE '%/@eaDir%'
-
            OR path LIKE '%/@appstore%'
-
            OR path LIKE '%/@tmp%'
-
            OR path LIKE '%/@%'
-
     ),
-
     files_to_delete AS (
-
         SELECT id AS file_id FROM files
-
         WHERE folder_id IN (SELECT id FROM excluded_folders)
-
     )
-
     SELECT
-
         (SELECT COUNT(*) FROM excluded_folders),
-
         (SELECT COUNT(*) FROM files_to_delete),
-
         (SELECT COUNT(*) FROM metadata WHERE file_id IN (SELECT file_id FROM files_to_delete)),
-
         (SELECT COUNT(*) FROM embeddings WHERE file_id IN (SELECT file_id FROM files_to_delete)),
-
         (SELECT COUNT(*) FROM ai_output WHERE file_id IN (SELECT file_id FROM files_to_delete))
-
     INTO dir_folders, dir_files, dir_meta, dir_emb, dir_ai;
 
-
-
     RAISE NOTICE 'DIRS → removing % folders, % files, % metadata, % embeddings, % ai_output',
-
         dir_folders, dir_files, dir_meta, dir_emb, dir_ai;
 
-
-
     -- DELETE using fresh CTE
-
     WITH files_to_delete AS (
-
         SELECT id AS file_id FROM files
-
         WHERE folder_id IN (
-
             SELECT id FROM folders
-
             WHERE path LIKE '%/@eaDir%'
-
                OR path LIKE '%/@appstore%'
-
                OR path LIKE '%/@tmp%'
-
                OR path LIKE '%/@%'
-
         )
-
     )
-
     DELETE FROM metadata WHERE file_id IN (SELECT file_id FROM files_to_delete);
 
-
-
     WITH files_to_delete AS (
-
         SELECT id AS file_id FROM files
-
         WHERE folder_id IN (
-
             SELECT id FROM folders
-
             WHERE path LIKE '%/@eaDir%'
-
                OR path LIKE '%/@appstore%'
-
                OR path LIKE '%/@tmp%'
-
                OR path LIKE '%/@%'
-
         )
-
     )
-
     DELETE FROM embeddings WHERE file_id IN (SELECT file_id FROM files_to_delete);
 
-
-
     WITH files_to_delete AS (
-
         SELECT id AS file_id FROM files
-
         WHERE folder_id IN (
-
             SELECT id FROM folders
-
             WHERE path LIKE '%/@eaDir%'
-
                OR path LIKE '%/@appstore%'
-
                OR path LIKE '%/@tmp%'
-
                OR path LIKE '%/@%'
-
         )
-
     )
-
     DELETE FROM ai_output WHERE file_id IN (SELECT file_id FROM files_to_delete);
 
-
-
     WITH files_to_delete AS (
-
         SELECT id AS file_id FROM files
-
         WHERE folder_id IN (
-
             SELECT id FROM folders
-
             WHERE path LIKE '%/@eaDir%'
-
                OR path LIKE '%/@appstore%'
-
                OR path LIKE '%/@tmp%'
-
                OR path LIKE '%/@%'
-
         )
-
     )
-
     DELETE FROM files WHERE id IN (SELECT file_id FROM files_to_delete);
 
-
-
     DELETE FROM folders
-
     WHERE path LIKE '%/@eaDir%'
-
        OR path LIKE '%/@appstore%'
-
        OR path LIKE '%/@tmp%'
-
        OR path LIKE '%/@%';
 
-
-
     --------------------------------------------------------------------
-
     -- 2. SYSTEM FILES (~$, ._, .DS_Store, Thumbs.db, *.tmp, *.swp, *.bak)
-
     --------------------------------------------------------------------
-
     WITH excluded_files AS (
-
         SELECT id AS file_id FROM files
-
         WHERE filename LIKE '~$%'
-
            OR filename LIKE '._%'
-
            OR filename = '.DS_Store'
-
            OR filename = 'Thumbs.db'
-
            OR filename LIKE '%.tmp'
-
            OR filename LIKE '%.swp'
-
            OR filename LIKE '%.bak'
-
     )
-
     SELECT
-
         (SELECT COUNT(*) FROM excluded_files),
-
         (SELECT COUNT(*) FROM metadata WHERE file_id IN (SELECT file_id FROM excluded_files)),
-
         (SELECT COUNT(*) FROM embeddings WHERE file_id IN (SELECT file_id FROM excluded_files)),
-
         (SELECT COUNT(*) FROM ai_output WHERE file_id IN (SELECT file_id FROM excluded_files))
-
     INTO file_files, file_meta, file_emb, file_ai;
 
-
-
     RAISE NOTICE 'FILES → removing % files, % metadata, % embeddings, % ai_output',
-
         file_files, file_meta, file_emb, file_ai;
 
-
-
     -- DELETE using fresh CTE
-
     WITH excluded_files AS (
-
         SELECT id AS file_id FROM files
-
         WHERE filename LIKE '~$%'
-
            OR filename LIKE '._%'
-
            OR filename = '.DS_Store'
-
            OR filename = 'Thumbs.db'
-
            OR filename LIKE '%.tmp'
-
            OR filename LIKE '%.swp'
-
            OR filename LIKE '%.bak'
-
     )
-
     DELETE FROM metadata WHERE file_id IN (SELECT file_id FROM excluded_files);
 
-
-
     WITH excluded_files AS (
-
         SELECT id AS file_id FROM files
-
         WHERE filename LIKE '~$%'
-
            OR filename LIKE '._%'
-
            OR filename = '.DS_Store'
-
            OR filename = 'Thumbs.db'
-
            OR filename LIKE '%.tmp'
-
            OR filename LIKE '%.swp'
-
            OR filename LIKE '%.bak'
-
     )
-
     DELETE FROM embeddings WHERE file_id IN (SELECT file_id FROM excluded_files);
 
-
-
     WITH excluded_files AS (
-
         SELECT id AS file_id FROM files
-
         WHERE filename LIKE '~$%'
-
            OR filename LIKE '._%'
-
            OR filename = '.DS_Store'
-
            OR filename = 'Thumbs.db'
-
            OR filename LIKE '%.tmp'
-
            OR filename LIKE '%.swp'
-
            OR filename LIKE '%.bak'
-
     )
-
     DELETE FROM ai_output WHERE file_id IN (SELECT file_id FROM excluded_files);
 
-
-
     WITH excluded_files AS (
-
         SELECT id AS file_id FROM files
-
         WHERE filename LIKE '~$%'
-
            OR filename LIKE '._%'
-
            OR filename = '.DS_Store'
-
            OR filename = 'Thumbs.db'
-
            OR filename LIKE '%.tmp'
-
            OR filename LIKE '%.swp'
-
            OR filename LIKE '%.bak'
-
     )
-
     DELETE FROM files WHERE id IN (SELECT file_id FROM excluded_files);
 
-
-
     --------------------------------------------------------------------
-
     -- 3. ORPHANS (metadata, embeddings, ai_output, files, folders)
-
     --------------------------------------------------------------------
-
     SELECT COUNT(*) INTO orphan_metadata
-
     FROM metadata m LEFT JOIN files f ON f.id = m.file_id
-
     WHERE f.id IS NULL;
-
-
 
     RAISE NOTICE 'ORPHANS → removing % orphaned metadata', orphan_metadata;
 
-
-
     DELETE FROM metadata m
-
     WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.id = m.file_id);
 
-
-
     SELECT COUNT(*) INTO orphan_embeddings
-
     FROM embeddings e LEFT JOIN files f ON f.id = e.file_id
-
     WHERE f.id IS NULL;
-
-
 
     RAISE NOTICE 'ORPHANS → removing % orphaned embeddings', orphan_embeddings;
 
-
-
     DELETE FROM embeddings e
-
     WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.id = e.file_id);
 
-
-
     SELECT COUNT(*) INTO orphan_ai
-
     FROM ai_output a LEFT JOIN files f ON f.id = a.file_id
-
     WHERE f.id IS NULL;
-
-
 
     RAISE NOTICE 'ORPHANS → removing % orphaned ai_output', orphan_ai;
 
-
-
     DELETE FROM ai_output a
-
     WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.id = a.file_id);
 
-
-
     SELECT COUNT(*) INTO orphan_files
-
     FROM files fl LEFT JOIN folders fo ON fo.id = fl.folder_id
-
     WHERE fo.id IS NULL;
-
-
 
     RAISE NOTICE 'ORPHANS → removing % orphaned files', orphan_files;
 
-
-
     DELETE FROM files fl
-
     WHERE NOT EXISTS (SELECT 1 FROM folders fo WHERE fo.id = fl.folder_id);
 
-
-
     SELECT COUNT(*) INTO orphan_folders
-
     FROM folders f LEFT JOIN folders p ON p.id = f.parent_id
-
     WHERE f.parent_id IS NOT NULL AND p.id IS NULL;
-
-
 
     RAISE NOTICE 'ORPHANS → removing % orphaned folders', orphan_folders;
 
-
-
     DELETE FROM folders f
-
     WHERE f.parent_id IS NOT NULL
-
       AND NOT EXISTS (SELECT 1 FROM folders p WHERE p.id = f.parent_id);
 
-
-
     --------------------------------------------------------------------
-
     RAISE NOTICE '=== CLEANUP COMPLETE ===';
-
 END;
-
 $_$;
 
 
@@ -1984,21 +2366,13 @@ ALTER PROCEDURE public.cleanup_all_execute() OWNER TO hugo;
 CREATE FUNCTION public.create_scan_session(scan_type text) RETURNS uuid
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
-
     sid UUID := gen_random_uuid();
-
 BEGIN
-
     INSERT INTO scan_sessions(id, type)
-
     VALUES (sid, scan_type);
-
     RETURN sid;
-
 END;
-
 $$;
 
 
@@ -2011,19 +2385,12 @@ ALTER FUNCTION public.create_scan_session(scan_type text) OWNER TO hugo;
 CREATE FUNCTION public.finish_scan_session(sid uuid) RETURNS void
     LANGUAGE plpgsql
     AS $$
-
 BEGIN
-
     UPDATE scan_sessions
-
     SET finished_at = NOW(),
-
         status = 'done'
-
     WHERE id = sid;
-
 END;
-
 $$;
 
 
@@ -2036,17 +2403,11 @@ ALTER FUNCTION public.finish_scan_session(sid uuid) OWNER TO hugo;
 CREATE FUNCTION public.increment_files_discovered(sid uuid, cnt integer) RETURNS void
     LANGUAGE plpgsql
     AS $$
-
 BEGIN
-
     UPDATE scan_sessions
-
     SET files_discovered = files_discovered + cnt
-
     WHERE id = sid;
-
 END;
-
 $$;
 
 
@@ -2059,17 +2420,11 @@ ALTER FUNCTION public.increment_files_discovered(sid uuid, cnt integer) OWNER TO
 CREATE FUNCTION public.increment_jobs_enqueued(sid uuid, cnt integer) RETURNS void
     LANGUAGE plpgsql
     AS $$
-
 BEGIN
-
     UPDATE scan_sessions
-
     SET jobs_enqueued = jobs_enqueued + cnt
-
     WHERE id = sid;
-
 END;
-
 $$;
 
 
@@ -2082,17 +2437,11 @@ ALTER FUNCTION public.increment_jobs_enqueued(sid uuid, cnt integer) OWNER TO hu
 CREATE FUNCTION public.increment_jobs_processed(sid uuid) RETURNS void
     LANGUAGE plpgsql
     AS $$
-
 BEGIN
-
     UPDATE scan_sessions
-
     SET jobs_processed = jobs_processed + 1
-
     WHERE id = sid;
-
 END;
-
 $$;
 
 
@@ -2105,21 +2454,13 @@ ALTER FUNCTION public.increment_jobs_processed(sid uuid) OWNER TO hugo;
 CREATE FUNCTION public.is_scan_complete(sid uuid) RETURNS boolean
     LANGUAGE plpgsql
     AS $$
-
 DECLARE done BOOLEAN;
-
 BEGIN
-
     SELECT (status='done' AND jobs_enqueued>0 AND jobs_processed>=jobs_enqueued)
-
     INTO done
-
     FROM scan_sessions WHERE id=sid;
-
     RETURN COALESCE(done, FALSE);
-
 END;
-
 $$;
 
 
@@ -2218,13 +2559,14 @@ CREATE TABLE public.files (
     updated_at timestamp without time zone DEFAULT now(),
     modified_at_fs bigint,
     inode bigint,
-    xxhash text,
     path text,
     mime_type text,
     deleted_at timestamp without time zone,
     hash_content text,
     hash_path text,
-    source text
+    source text,
+    last_mutation_type text DEFAULT 'UNKNOWN'::text NOT NULL,
+    CONSTRAINT files_last_mutation_type_check CHECK ((last_mutation_type = ANY (ARRAY['UNKNOWN'::text, 'CREATED'::text, 'MODIFIED'::text, 'RENAMED'::text, 'MOVED'::text, 'RESTORED'::text, 'DELETED'::text])))
 );
 
 
@@ -2296,7 +2638,6 @@ CREATE TABLE public.metadata (
     id integer NOT NULL,
     file_id bigint NOT NULL,
     created_at timestamp without time zone DEFAULT now(),
-    mime_type text,
     width integer,
     height integer,
     duration double precision,
@@ -2431,7 +2772,7 @@ CREATE VIEW public.v_test_documents AS
     f.updated_at,
     f.modified_at_fs,
     f.inode,
-    f.xxhash,
+    f.hash_path AS xxhash,
     fo.path
    FROM (public.files f
      JOIN public.folders fo ON ((fo.id = f.folder_id)))
@@ -2562,13 +2903,6 @@ CREATE INDEX idx_files_inode_mtime ON public.files USING btree (inode, modified_
 
 
 --
--- Name: idx_files_xxhash; Type: INDEX; Schema: public; Owner: hugo
---
-
-CREATE INDEX idx_files_xxhash ON public.files USING btree (xxhash);
-
-
---
 -- Name: idx_folders_parent_id; Type: INDEX; Schema: public; Owner: hugo
 --
 
@@ -2580,13 +2914,6 @@ CREATE INDEX idx_folders_parent_id ON public.folders USING btree (parent_id);
 --
 
 CREATE INDEX idx_metadata_file_id ON public.metadata USING btree (file_id);
-
-
---
--- Name: idx_metadata_mime_type; Type: INDEX; Schema: public; Owner: hugo
---
-
-CREATE INDEX idx_metadata_mime_type ON public.metadata USING btree (mime_type);
 
 
 --
@@ -2706,6 +3033,7 @@ docker compose ps
 echo
 echo "========== HEALTH =========="
 docker inspect nas-scanner-1 --format 'scanner: {{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' 2>/dev/null || true
+docker inspect nas-watcher-1 --format 'watcher: {{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' 2>/dev/null || true
 docker inspect nas-metadata_worker-1 --format 'metadata_worker: {{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' 2>/dev/null || true
 docker inspect nas-redis-1 --format 'redis: {{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' 2>/dev/null || true
 
@@ -2713,6 +3041,10 @@ echo
 echo "========== HEARTBEATS =========="
 echo -n "scanner: "
 docker exec nas-redis-1 redis-cli GET scanner:heartbeat 2>/dev/null || true
+echo -n "watcher: "
+docker exec nas-redis-1 redis-cli GET watcher:heartbeat 2>/dev/null || true
+echo -n "watcher status: "
+docker exec nas-redis-1 redis-cli GET watcher:heartbeat:status 2>/dev/null || true
 echo -n "metadata_worker: "
 docker exec nas-redis-1 redis-cli GET metadata_worker:heartbeat 2>/dev/null || true
 
@@ -2720,8 +3052,30 @@ echo
 echo "========== LAST ACTIVITY =========="
 echo -n "scanner:last_scan = "
 docker exec nas-redis-1 redis-cli GET scanner:last_scan 2>/dev/null || true
+echo -n "scanner:last_full_scan = "
+docker exec nas-redis-1 redis-cli GET scanner:last_full_scan 2>/dev/null || true
+echo -n "scanner:last_interval_scan = "
+docker exec nas-redis-1 redis-cli GET scanner:last_interval_scan 2>/dev/null || true
+echo -n "scanner:last_interval_root = "
+docker exec nas-redis-1 redis-cli GET scanner:last_interval_root 2>/dev/null || true
 echo -n "metadata_worker:last_event = "
 docker exec nas-redis-1 redis-cli GET metadata_worker:last_event 2>/dev/null || true
+echo -n "watcher:last_event = "
+docker exec nas-redis-1 redis-cli GET watcher:last_event 2>/dev/null || true
+echo -n "watcher:startup_recovery_roots = "
+docker exec nas-redis-1 redis-cli GET watcher:recovery_roots 2>/dev/null || true
+
+echo
+echo "========== DIRTY ROOTS =========="
+echo -n "pending = "
+docker exec nas-redis-1 redis-cli HLEN scanner:dirty_roots 2>/dev/null || true
+docker exec nas-redis-1 redis-cli HGETALL scanner:dirty_roots 2>/dev/null || true
+
+echo
+echo "========== SCAN SESSIONS =========="
+docker exec nas-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -P pager=off -c "SELECT id, type, status, started_at, finished_at, files_discovered, jobs_enqueued, jobs_processed FROM public.v_scan_status LIMIT 5"' 2>/dev/null \
+  || docker exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -P pager=off -c "SELECT id, type, status, started_at, finished_at, files_discovered, jobs_enqueued, jobs_processed FROM public.v_scan_status LIMIT 5"' 2>/dev/null \
+  || echo "scan sessions niet beschikbaar"
 
 echo
 echo "========== LOCKS =========="
@@ -2729,11 +3083,17 @@ docker exec nas-redis-1 redis-cli KEYS "*lock*" 2>/dev/null || true
 
 echo
 echo "========== STREAM =========="
+echo -n "polling = "
 docker exec nas-redis-1 redis-cli XLEN scan_stream 2>/dev/null || true
+echo -n "realtime = "
+docker exec nas-redis-1 redis-cli XLEN scan_stream_realtime 2>/dev/null || true
 
 echo
-echo "========== GROUPS =========="
+echo "========== POLLING GROUPS =========="
 docker exec nas-redis-1 redis-cli XINFO GROUPS scan_stream 2>/dev/null || true
+echo
+echo "========== REALTIME GROUPS =========="
+docker exec nas-redis-1 redis-cli XINFO GROUPS scan_stream_realtime 2>/dev/null || true
 
 echo
 echo "========== DLQ =========="
@@ -2769,6 +3129,7 @@ check_container() {
 
 check_container nas-redis-1
 check_container nas-scanner-1
+check_container nas-watcher-1
 check_container nas-metadata_worker-1
 
 echo
@@ -2778,12 +3139,15 @@ docker exec nas-redis-1 redis-cli ping || fail=1
 echo
 echo "========== HEARTBEATS =========="
 scanner_hb=$(docker exec nas-redis-1 redis-cli GET scanner:heartbeat 2>/dev/null)
+watcher_hb=$(docker exec nas-redis-1 redis-cli GET watcher:heartbeat 2>/dev/null)
 worker_hb=$(docker exec nas-redis-1 redis-cli GET metadata_worker:heartbeat 2>/dev/null)
 
 echo "scanner: ${scanner_hb:-missing}"
+echo "watcher: ${watcher_hb:-missing}"
 echo "metadata_worker: ${worker_hb:-missing}"
 
 [ -n "$scanner_hb" ] || fail=1
+[ -n "$watcher_hb" ] || fail=1
 [ -n "$worker_hb" ] || fail=1
 
 echo
@@ -2792,11 +3156,17 @@ echo -n "scanner:last_scan = "
 docker exec nas-redis-1 redis-cli GET scanner:last_scan 2>/dev/null || true
 echo -n "metadata_worker:last_event = "
 docker exec nas-redis-1 redis-cli GET metadata_worker:last_event 2>/dev/null || true
+echo -n "watcher:last_event = "
+docker exec nas-redis-1 redis-cli GET watcher:last_event 2>/dev/null || true
+echo -n "dirty roots pending = "
+docker exec nas-redis-1 redis-cli HLEN scanner:dirty_roots 2>/dev/null || true
 
 echo
 echo "========== STREAM =========="
 docker exec nas-redis-1 redis-cli XLEN scan_stream || fail=1
 docker exec nas-redis-1 redis-cli XINFO GROUPS scan_stream || true
+docker exec nas-redis-1 redis-cli XLEN scan_stream_realtime || fail=1
+docker exec nas-redis-1 redis-cli XINFO GROUPS scan_stream_realtime || true
 
 echo
 echo "========== DLQ =========="

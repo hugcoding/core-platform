@@ -72,7 +72,7 @@ Toont status, locks, heartbeats en streaminfo.
 
 - CORE command: `core runtime status`
 - Bestaat: `True`
-- Regels: `45`
+- Regels: `78`
 - Gebruikt docker compose: `True`
 - Gebruikt Redis: `True`
 
@@ -86,6 +86,7 @@ docker compose ps
 echo
 echo "========== HEALTH =========="
 docker inspect nas-scanner-1 --format 'scanner: {{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' 2>/dev/null || true
+docker inspect nas-watcher-1 --format 'watcher: {{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' 2>/dev/null || true
 docker inspect nas-metadata_worker-1 --format 'metadata_worker: {{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' 2>/dev/null || true
 docker inspect nas-redis-1 --format 'redis: {{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' 2>/dev/null || true
 
@@ -93,6 +94,10 @@ echo
 echo "========== HEARTBEATS =========="
 echo -n "scanner: "
 docker exec nas-redis-1 redis-cli GET scanner:heartbeat 2>/dev/null || true
+echo -n "watcher: "
+docker exec nas-redis-1 redis-cli GET watcher:heartbeat 2>/dev/null || true
+echo -n "watcher status: "
+docker exec nas-redis-1 redis-cli GET watcher:heartbeat:status 2>/dev/null || true
 echo -n "metadata_worker: "
 docker exec nas-redis-1 redis-cli GET metadata_worker:heartbeat 2>/dev/null || true
 
@@ -100,8 +105,30 @@ echo
 echo "========== LAST ACTIVITY =========="
 echo -n "scanner:last_scan = "
 docker exec nas-redis-1 redis-cli GET scanner:last_scan 2>/dev/null || true
+echo -n "scanner:last_full_scan = "
+docker exec nas-redis-1 redis-cli GET scanner:last_full_scan 2>/dev/null || true
+echo -n "scanner:last_interval_scan = "
+docker exec nas-redis-1 redis-cli GET scanner:last_interval_scan 2>/dev/null || true
+echo -n "scanner:last_interval_root = "
+docker exec nas-redis-1 redis-cli GET scanner:last_interval_root 2>/dev/null || true
 echo -n "metadata_worker:last_event = "
 docker exec nas-redis-1 redis-cli GET metadata_worker:last_event 2>/dev/null || true
+echo -n "watcher:last_event = "
+docker exec nas-redis-1 redis-cli GET watcher:last_event 2>/dev/null || true
+echo -n "watcher:startup_recovery_roots = "
+docker exec nas-redis-1 redis-cli GET watcher:recovery_roots 2>/dev/null || true
+
+echo
+echo "========== DIRTY ROOTS =========="
+echo -n "pending = "
+docker exec nas-redis-1 redis-cli HLEN scanner:dirty_roots 2>/dev/null || true
+docker exec nas-redis-1 redis-cli HGETALL scanner:dirty_roots 2>/dev/null || true
+
+echo
+echo "========== SCAN SESSIONS =========="
+docker exec nas-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -P pager=off -c "SELECT id, type, status, started_at, finished_at, files_discovered, jobs_enqueued, jobs_processed FROM public.v_scan_status LIMIT 5"' 2>/dev/null \
+  || docker exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -P pager=off -c "SELECT id, type, status, started_at, finished_at, files_discovered, jobs_enqueued, jobs_processed FROM public.v_scan_status LIMIT 5"' 2>/dev/null \
+  || echo "scan sessions niet beschikbaar"
 
 echo
 echo "========== LOCKS =========="
@@ -109,11 +136,17 @@ docker exec nas-redis-1 redis-cli KEYS "*lock*" 2>/dev/null || true
 
 echo
 echo "========== STREAM =========="
+echo -n "polling = "
 docker exec nas-redis-1 redis-cli XLEN scan_stream 2>/dev/null || true
+echo -n "realtime = "
+docker exec nas-redis-1 redis-cli XLEN scan_stream_realtime 2>/dev/null || true
 
 echo
-echo "========== GROUPS =========="
+echo "========== POLLING GROUPS =========="
 docker exec nas-redis-1 redis-cli XINFO GROUPS scan_stream 2>/dev/null || true
+echo
+echo "========== REALTIME GROUPS =========="
+docker exec nas-redis-1 redis-cli XINFO GROUPS scan_stream_realtime 2>/dev/null || true
 
 echo
 echo "========== DLQ =========="
@@ -130,7 +163,7 @@ Toont runtime health, Redis en heartbeat status.
 
 - CORE command: `core runtime health`
 - Bestaat: `True`
-- Regels: `63`
+- Regels: `73`
 - Gebruikt docker compose: `False`
 - Gebruikt Redis: `True`
 
@@ -157,6 +190,7 @@ check_container() {
 
 check_container nas-redis-1
 check_container nas-scanner-1
+check_container nas-watcher-1
 check_container nas-metadata_worker-1
 
 echo
@@ -166,12 +200,15 @@ docker exec nas-redis-1 redis-cli ping || fail=1
 echo
 echo "========== HEARTBEATS =========="
 scanner_hb=$(docker exec nas-redis-1 redis-cli GET scanner:heartbeat 2>/dev/null)
+watcher_hb=$(docker exec nas-redis-1 redis-cli GET watcher:heartbeat 2>/dev/null)
 worker_hb=$(docker exec nas-redis-1 redis-cli GET metadata_worker:heartbeat 2>/dev/null)
 
 echo "scanner: ${scanner_hb:-missing}"
+echo "watcher: ${watcher_hb:-missing}"
 echo "metadata_worker: ${worker_hb:-missing}"
 
 [ -n "$scanner_hb" ] || fail=1
+[ -n "$watcher_hb" ] || fail=1
 [ -n "$worker_hb" ] || fail=1
 
 echo
@@ -180,11 +217,17 @@ echo -n "scanner:last_scan = "
 docker exec nas-redis-1 redis-cli GET scanner:last_scan 2>/dev/null || true
 echo -n "metadata_worker:last_event = "
 docker exec nas-redis-1 redis-cli GET metadata_worker:last_event 2>/dev/null || true
+echo -n "watcher:last_event = "
+docker exec nas-redis-1 redis-cli GET watcher:last_event 2>/dev/null || true
+echo -n "dirty roots pending = "
+docker exec nas-redis-1 redis-cli HLEN scanner:dirty_roots 2>/dev/null || true
 
 echo
 echo "========== STREAM =========="
 docker exec nas-redis-1 redis-cli XLEN scan_stream || fail=1
 docker exec nas-redis-1 redis-cli XINFO GROUPS scan_stream || true
+docker exec nas-redis-1 redis-cli XLEN scan_stream_realtime || fail=1
+docker exec nas-redis-1 redis-cli XINFO GROUPS scan_stream_realtime || true
 
 echo
 echo "========== DLQ =========="
