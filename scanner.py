@@ -207,11 +207,15 @@ def mark_seen(path, scan_id):
         r.set(key, encode_file_state(signature, scan_id))
 
 
-def reconcile_missing(scan_id, session_id=None):
+def reconcile_missing(scan_id, session_id=None, root_scope=None, threshold=None):
     checked = 0
     deleted = 0
+    threshold = MISSING_SCAN_THRESHOLD if threshold is None else max(1, threshold)
+    pattern = SIGNATURE_PREFIX + "*"
+    if root_scope:
+        pattern = SIGNATURE_PREFIX + root_scope.rstrip("/") + "/" + "*"
 
-    for key in r.scan_iter(match=SIGNATURE_PREFIX + "*", count=1000):
+    for key in r.scan_iter(match=pattern, count=1000):
         raw = r.get(key)
         signature, last_seen_scan, missing_scans = parse_file_state(raw)
 
@@ -221,7 +225,7 @@ def reconcile_missing(scan_id, session_id=None):
         checked += 1
         missing_scans += 1
 
-        if missing_scans < MISSING_SCAN_THRESHOLD:
+        if missing_scans < threshold:
             r.set(key, encode_file_state(signature, last_seen_scan, missing_scans))
             continue
 
@@ -264,12 +268,31 @@ def select_dirty_root(roots):
         if root in allowed
     ]
     if not candidates:
-        return None
-    return min(candidates)[1]
+        return None, None
+    marked_at, root = min(candidates)
+    return root, marked_at
 
 
-def _scan_roots(roots, scan_id, session_id, full_sweep):
-    scan_type = "full" if full_sweep else "interval"
+def clear_dirty_root(root, expected_marker):
+    script = """
+    if redis.call('HGET', KEYS[1], ARGV[1]) == ARGV[2] then
+        return redis.call('HDEL', KEYS[1], ARGV[1])
+    end
+    return 0
+    """
+    return bool(r.eval(script, 1, DIRTY_ROOTS_KEY, root, expected_marker))
+
+
+def _scan_roots(
+    roots,
+    scan_id,
+    session_id,
+    full_sweep,
+    scan_type=None,
+    reconcile_scope=None,
+    missing_threshold=None,
+):
+    scan_type = scan_type or ("full" if full_sweep else "interval")
     logger.info("Starting %s scan roots=%s", scan_type, ", ".join(roots))
 
     discovered = 0
@@ -344,7 +367,12 @@ def _scan_roots(roots, scan_id, session_id, full_sweep):
         )
 
     if full_sweep:
-        missing, deleted = reconcile_missing(scan_id, session_id=session_id)
+        missing, deleted = reconcile_missing(
+            scan_id,
+            session_id=session_id,
+            root_scope=reconcile_scope,
+            threshold=missing_threshold,
+        )
     else:
         missing, deleted = 0, 0
 
@@ -355,7 +383,7 @@ def _scan_roots(roots, scan_id, session_id, full_sweep):
 
     finished_at = utc_now()
     r.set(LAST_SCAN_KEY, finished_at, ex=HEARTBEAT_TTL * 4)
-    if full_sweep:
+    if scan_type == "full":
         r.set(LAST_FULL_SCAN_KEY, finished_at)
     else:
         r.set(LAST_INTERVAL_SCAN_KEY, finished_at)
@@ -363,11 +391,28 @@ def _scan_roots(roots, scan_id, session_id, full_sweep):
     return discovered, enqueued, missing, deleted
 
 
-def run_scan(scan_type, roots):
+def run_scan(
+    scan_type,
+    roots,
+    *,
+    full_sweep=None,
+    reconcile_scope=None,
+    missing_threshold=None,
+):
     scan_id = uuid.uuid4().hex
     session_id = session_call("SELECT create_scan_session(%s)", (scan_type,), fetch=True)
+    if full_sweep is None:
+        full_sweep = scan_type == "full"
     try:
-        return _scan_roots(roots, scan_id, session_id, full_sweep=(scan_type == "full"))
+        return _scan_roots(
+            roots,
+            scan_id,
+            session_id,
+            full_sweep=full_sweep,
+            scan_type=scan_type,
+            reconcile_scope=reconcile_scope,
+            missing_threshold=missing_threshold,
+        )
     except Exception:
         if session_id:
             session_call(
@@ -387,12 +432,23 @@ def scan_once():
 
 def scan_interval_once():
     roots = discover_roots()
-    dirty_root = select_dirty_root(roots)
+    dirty_root, dirty_marker = select_dirty_root(roots)
     root = dirty_root or select_interval_root(roots)
-    result = run_scan("interval", [root] if root else [])
     if dirty_root:
-        r.hdel(DIRTY_ROOTS_KEY, dirty_root)
-        logger.info("Dirty root reconciled: %s", dirty_root)
+        result = run_scan(
+            "interval",
+            [dirty_root],
+            full_sweep=True,
+            reconcile_scope=dirty_root,
+            missing_threshold=1,
+        )
+    else:
+        result = run_scan("interval", [root] if root else [])
+    if dirty_root:
+        if clear_dirty_root(dirty_root, dirty_marker):
+            logger.info("Dirty root reconciled: %s", dirty_root)
+        else:
+            logger.info("Dirty root changed during reconciliation; keeping marker: %s", dirty_root)
     return result
 
 
