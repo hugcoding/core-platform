@@ -19,6 +19,7 @@ REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
 STREAM_KEY = "scan_stream"
+REALTIME_STREAM_KEY = os.getenv("REALTIME_STREAM_KEY", "scan_stream_realtime")
 GROUP_NAME = "metadata_group"
 DLQ_STREAM = "scan_stream_dlq"
 
@@ -107,13 +108,31 @@ def release_lock():
         pass
 
 
-def ensure_group():
+def ensure_group(stream_key=STREAM_KEY):
     try:
-        r.xgroup_create(STREAM_KEY, GROUP_NAME, id="0", mkstream=True)
+        r.xgroup_create(stream_key, GROUP_NAME, id="0", mkstream=True)
         logger.info("Redis consumer group created")
     except redis.exceptions.ResponseError as e:
         if "BUSYGROUP" not in str(e):
             raise
+
+
+def read_next_batch():
+    realtime = r.xreadgroup(
+        GROUP_NAME,
+        CONSUMER_NAME,
+        streams={REALTIME_STREAM_KEY: ">"},
+        count=50,
+    )
+    if realtime:
+        return realtime
+    return r.xreadgroup(
+        GROUP_NAME,
+        CONSUMER_NAME,
+        streams={STREAM_KEY: ">"},
+        count=10,
+        block=1000,
+    )
 
 
 def upsert_folder(cur, path):
@@ -524,7 +543,8 @@ def main():
     conn = get_db()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    ensure_group()
+    ensure_group(STREAM_KEY)
+    ensure_group(REALTIME_STREAM_KEY)
     logger.info("Worker started")
 
     try:
@@ -533,17 +553,12 @@ def main():
             heartbeat("waiting")
 
             try:
-                resp = r.xreadgroup(
-                    GROUP_NAME,
-                    CONSUMER_NAME,
-                    streams={STREAM_KEY: ">"},
-                    count=50,
-                    block=5000,
-                )
+                resp = read_next_batch()
             except redis.exceptions.ResponseError as e:
                 if "NOGROUP" in str(e):
                     logger.warning("NOGROUP detected, recreating group")
-                    ensure_group()
+                    ensure_group(STREAM_KEY)
+                    ensure_group(REALTIME_STREAM_KEY)
                     continue
                 raise
 
@@ -552,7 +567,7 @@ def main():
 
             heartbeat("processing")
 
-            for _, msgs in resp:
+            for source_stream, msgs in resp:
                 for msg_id, data in msgs:
                     try:
                         process_event(cur, data)
@@ -563,12 +578,13 @@ def main():
                         logger.error("DLQ msg=%s: %s", msg_id, e, exc_info=True)
                         r.xadd(DLQ_STREAM, {
                             "original_id": msg_id,
+                            "original_stream": source_stream,
                             "data": json.dumps(data),
                             "error": str(e),
                             "ts": utc_now(),
                         })
                     finally:
-                        r.xack(STREAM_KEY, GROUP_NAME, msg_id)
+                        r.xack(source_stream, GROUP_NAME, msg_id)
 
     finally:
         heartbeat("stopped")

@@ -124,6 +124,8 @@ De status toont:
 - aantal roots dat na watcherstart voor herstel is ingepland;
 - huidige dirty roots die nog op gerichte reconciliation wachten.
 
+Realtime watcher-events gebruiken `scan_stream_realtime`. De metadata-worker controleert deze prioriteitsstream vóór iedere kleine batch uit de pollingstream `scan_stream`. Daardoor blijven create, modify, move, rename en delete realtime verwerkbaar wanneer een full scan duizenden achtergrondjobs heeft ingepland.
+
 Bij iedere watcherstart worden de toegestane hoofdroots als dirty gemarkeerd. De scanner behandelt deze roots één voor één vóór de gewone intervalrotatie. Een marker wordt alleen verwijderd wanneer de controle slaagt en er tijdens die controle geen nieuwer event voor dezelfde root is geregistreerd.
 
 Maak voor de eerste acceptatietest uitsluitend een tijdelijke map onder `/volume1/data` en test daar create, modify, rename, move en delete. Gebruik geen productie- of legacybestanden voor deze test.
