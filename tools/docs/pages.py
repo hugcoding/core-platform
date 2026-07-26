@@ -256,6 +256,16 @@ core runtime logs
 core runtime status
 ```
 
+## Realtime watcher ontbreekt of is unhealthy
+
+```bash
+core runtime health
+core runtime status
+/usr/local/bin/docker compose logs --tail=200 watcher
+```
+
+Controleer in `core runtime status` de watcher-heartbeat, `watcher:last_event` en `scanner:dirty_roots`. Een ontbrekende heartbeat betekent dat de watcher niet actief is of Redis niet kan bereiken. Herstel eerst de watcher en laat de dirty-root reconciliation afronden voordat u een opschoning start.
+
 ## Worker zegt dat er al een worker draait
 
 Controleer locks en heartbeats:

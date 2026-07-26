@@ -7,6 +7,7 @@ docker compose ps
 echo
 echo "========== HEALTH =========="
 docker inspect nas-scanner-1 --format 'scanner: {{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' 2>/dev/null || true
+docker inspect nas-watcher-1 --format 'watcher: {{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' 2>/dev/null || true
 docker inspect nas-metadata_worker-1 --format 'metadata_worker: {{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' 2>/dev/null || true
 docker inspect nas-redis-1 --format 'redis: {{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' 2>/dev/null || true
 
@@ -14,6 +15,10 @@ echo
 echo "========== HEARTBEATS =========="
 echo -n "scanner: "
 docker exec nas-redis-1 redis-cli GET scanner:heartbeat 2>/dev/null || true
+echo -n "watcher: "
+docker exec nas-redis-1 redis-cli GET watcher:heartbeat 2>/dev/null || true
+echo -n "watcher status: "
+docker exec nas-redis-1 redis-cli GET watcher:heartbeat:status 2>/dev/null || true
 echo -n "metadata_worker: "
 docker exec nas-redis-1 redis-cli GET metadata_worker:heartbeat 2>/dev/null || true
 
@@ -29,6 +34,16 @@ echo -n "scanner:last_interval_root = "
 docker exec nas-redis-1 redis-cli GET scanner:last_interval_root 2>/dev/null || true
 echo -n "metadata_worker:last_event = "
 docker exec nas-redis-1 redis-cli GET metadata_worker:last_event 2>/dev/null || true
+echo -n "watcher:last_event = "
+docker exec nas-redis-1 redis-cli GET watcher:last_event 2>/dev/null || true
+echo -n "watcher:startup_recovery_roots = "
+docker exec nas-redis-1 redis-cli GET watcher:recovery_roots 2>/dev/null || true
+
+echo
+echo "========== DIRTY ROOTS =========="
+echo -n "pending = "
+docker exec nas-redis-1 redis-cli HLEN scanner:dirty_roots 2>/dev/null || true
+docker exec nas-redis-1 redis-cli HGETALL scanner:dirty_roots 2>/dev/null || true
 
 echo
 echo "========== SCAN SESSIONS =========="
