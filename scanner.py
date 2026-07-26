@@ -31,6 +31,7 @@ LAST_FULL_SCAN_KEY = "scanner:last_full_scan"
 LAST_INTERVAL_SCAN_KEY = "scanner:last_interval_scan"
 LAST_INTERVAL_ROOT_KEY = "scanner:last_interval_root"
 INTERVAL_ROOT_INDEX_KEY = "scanner:interval:root_index"
+FULL_SCAN_REQUEST_KEY = "scanner:request:full"
 HEARTBEAT_TTL = 120
 
 CONSUMER_NAME = socket.gethostname()
@@ -376,6 +377,26 @@ def scan_interval_once():
     return run_scan("interval", [root] if root else [])
 
 
+def consume_full_scan_request():
+    requested_at = r.get(FULL_SCAN_REQUEST_KEY)
+    if not requested_at:
+        return False
+    r.delete(FULL_SCAN_REQUEST_KEY)
+    logger.info("Manual full scan requested at %s", requested_at)
+    return True
+
+
+def wait_for_next_scan(seconds):
+    """Wait interruptibly so a manual full request is picked up promptly."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if r.get(FULL_SCAN_REQUEST_KEY):
+            return
+        heartbeat("idle")
+        refresh_lock()
+        time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+
+
 def main():
     if not acquire_lock():
         return
@@ -396,7 +417,7 @@ def main():
 
             started = time.time()
             try:
-                full_sweep = time.monotonic() >= next_full_at
+                full_sweep = consume_full_scan_request() or time.monotonic() >= next_full_at
                 if full_sweep:
                     discovered, enqueued, missing, deleted = scan_once()
                     next_full_at = time.monotonic() + FULL_SCAN_INTERVAL
@@ -419,7 +440,7 @@ def main():
                 heartbeat("error")
                 logger.exception("Scan loop failed: %s", e)
 
-            time.sleep(SCAN_INTERVAL)
+            wait_for_next_scan(SCAN_INTERVAL)
 
     finally:
         heartbeat("stopped")

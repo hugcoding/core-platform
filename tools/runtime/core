@@ -32,6 +32,7 @@ show_help() {
     printf '%s\n' "  core runtime start"
     printf '%s\n' "  core runtime stop"
     printf '%s\n' "  core runtime restart"
+    printf '%s\n' "  core scanner full"
     printf '%s\n' "  core git status"
     printf '%s\n' "  core git push"
     printf '%s\n' "  core version"
@@ -129,6 +130,18 @@ case "$command_domain" in
             *)
                 echo "Unknown runtime command."
                 echo "Use: core runtime status | health | logs | dlq | cleanlocks | watch | start | stop | restart"
+                exit 1
+                ;;
+        esac
+        ;;
+    scanner)
+        case "$command_action" in
+            full)
+                sh ./tools/runtime/scanner-full
+                ;;
+            *)
+                echo "Unknown scanner command."
+                echo "Use: core scanner full"
                 exit 1
                 ;;
         esac

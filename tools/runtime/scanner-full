@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+
+REDIS_CONTAINER=${REDIS_CONTAINER:-nas-redis-1}
+REQUEST_KEY=scanner:request:full
+
+if ! docker inspect "$REDIS_CONTAINER" >/dev/null 2>&1; then
+    echo "Redis container is not available: $REDIS_CONTAINER" >&2
+    exit 1
+fi
+
+if ! docker exec "$REDIS_CONTAINER" redis-cli EXISTS scanner:heartbeat | grep -q '^1$'; then
+    echo "Scanner heartbeat is missing; full scan was not requested." >&2
+    exit 1
+fi
+
+requested_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+result=$(docker exec "$REDIS_CONTAINER" redis-cli SET "$REQUEST_KEY" "$requested_at" NX)
+
+if [ "$result" = "OK" ]; then
+    echo "Full scan requested at $requested_at."
+    echo "Follow with: core runtime logs"
+else
+    echo "A full scan request is already pending."
+fi
