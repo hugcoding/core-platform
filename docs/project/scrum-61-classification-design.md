@@ -116,6 +116,34 @@ Before adding a classification table:
 
 No physical migration to `/volume1/data` starts in this phase.
 
+## Read-only migration manifest
+
+For the first document source, generate one row per exact content group:
+
+```bash
+core cleanup migration-inventory \
+  --source /volume1/backup/NITRO/D/data/hugo/Documents \
+  --dry-run
+```
+
+The command writes a Markdown report and CSV files below
+`project/exports/migration-inventory/`. It does not copy, move, delete, or
+update files or database records.
+
+The manifest records a representative file, every matching path within the
+source, exact-content copy counts, sensitivity, classification, action, and
+decision reason. A backup wrapper in the source path is context only:
+personal content below it can remain a migration candidate.
+
+Known system artifacts, temporary data, secrets, and software artifacts are
+excluded from migration while remaining in the general scanner inventory.
+Unknown and unhashed content requires review. Sensitive personal documents
+may remain migration candidates, but require a separate policy before
+semantic indexing.
+
+This phase intentionally does not propose the final directory structure
+inside `/volume1/data`; that decision follows content review.
+
 ## Source-map assessment
 
 After the baseline classification assessment, run:

@@ -23,6 +23,7 @@ show_help() {
     printf '%s\n' "  core cleanup assess"
     printf '%s\n' "  core cleanup legacy-duplicates --dry-run"
     printf '%s\n' "  core cleanup legacy-duplicates --apply --confirm-delete-legacy-duplicates"
+    printf '%s\n' "  core cleanup migration-inventory --source PATH --dry-run"
     printf '%s\n' "  core runtime status"
     printf '%s\n' "  core runtime health"
     printf '%s\n' "  core runtime logs"
@@ -90,9 +91,13 @@ case "$command_domain" in
                 shift 2
                 sh ./tools/runtime/legacy-duplicates "$@"
                 ;;
+            migration-inventory)
+                shift 2
+                sh ./tools/runtime/migration-inventory "$@"
+                ;;
             *)
                 echo "Unknown cleanup command."
-                echo "Use: core cleanup assess | legacy-duplicates --dry-run | legacy-duplicates --apply --confirm-delete-legacy-duplicates"
+                echo "Use: core cleanup assess | legacy-duplicates ... | migration-inventory --source PATH --dry-run"
                 exit 1
                 ;;
         esac

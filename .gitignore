@@ -156,3 +156,4 @@ core/cache/
 project/exports/legacy-assessment/
 project/exports/controlled-cleanup/
 project/exports/db-backups/
+project/exports/migration-inventory/
