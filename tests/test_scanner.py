@@ -38,6 +38,13 @@ class FakeRedis:
     def hdel(self, key, field):
         self.values.get(key, {}).pop(field, None)
 
+    def eval(self, script, numkeys, key, field, expected):
+        values = self.values.get(key, {})
+        if values.get(field) != expected:
+            return 0
+        values.pop(field, None)
+        return 1
+
     def scan_iter(self, match=None, count=None):
         prefix = match[:-1] if match and match.endswith("*") else match
         return iter([key for key in list(self.values) if not prefix or key.startswith(prefix)])
@@ -140,7 +147,13 @@ class ScannerStateTests(unittest.TestCase):
             result = scanner.scan_interval_once()
 
         self.assertEqual((1, 1, 0, 0), result)
-        run_scan.assert_called_once_with("interval", ["/volume1/b"])
+        run_scan.assert_called_once_with(
+            "interval",
+            ["/volume1/b"],
+            full_sweep=True,
+            reconcile_scope="/volume1/b",
+            missing_threshold=1,
+        )
         self.assertEqual({}, scanner.r.values[scanner.DIRTY_ROOTS_KEY])
 
     def test_failed_dirty_root_scan_keeps_recovery_marker(self):
@@ -156,6 +169,48 @@ class ScannerStateTests(unittest.TestCase):
                 scanner.scan_interval_once()
 
         self.assertIn("/volume1/b", scanner.r.values[scanner.DIRTY_ROOTS_KEY])
+
+    def test_dirty_marker_changed_during_scan_is_not_removed(self):
+        scanner.r.values[scanner.DIRTY_ROOTS_KEY] = {
+            "/volume1/b": "old-marker",
+        }
+
+        def run_scan(*args, **kwargs):
+            scanner.r.values[scanner.DIRTY_ROOTS_KEY]["/volume1/b"] = "new-marker"
+            return 1, 1, 0, 0
+
+        with (
+            mock.patch.object(scanner, "discover_roots", return_value=["/volume1/b"]),
+            mock.patch.object(scanner, "run_scan", side_effect=run_scan),
+        ):
+            scanner.scan_interval_once()
+
+        self.assertEqual(
+            "new-marker",
+            scanner.r.values[scanner.DIRTY_ROOTS_KEY]["/volume1/b"],
+        )
+
+    def test_scoped_reconciliation_does_not_delete_outside_root(self):
+        inside = "/volume1/data/missing.txt"
+        outside = "/volume1/homes/keep.txt"
+        scanner.r.set(
+            scanner.SIGNATURE_PREFIX + inside,
+            scanner.encode_file_state("sig", "older"),
+        )
+        scanner.r.set(
+            scanner.SIGNATURE_PREFIX + outside,
+            scanner.encode_file_state("sig", "older"),
+        )
+
+        checked, deleted = scanner.reconcile_missing(
+            "current",
+            root_scope="/volume1/data",
+            threshold=1,
+        )
+
+        self.assertEqual((1, 1), (checked, deleted))
+        self.assertEqual(inside, scanner.r.events[0][1]["path"])
+        self.assertIn(scanner.SIGNATURE_PREFIX + outside, scanner.r.values)
 
     def test_manual_full_request_is_consumed_once(self):
         scanner.r.set(scanner.FULL_SCAN_REQUEST_KEY, "2026-07-21T17:00:00Z")
