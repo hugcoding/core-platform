@@ -48,22 +48,22 @@ Voer deze commands op de NAS uit vanuit de repository:
 cd /volume1/docker/nas-stack
 ```
 
-Voor de realtime watcher moet eerst het gedeelde basisimage worden vernieuwd. Bouw daarna scanner, watcher en worker en maak de containers opnieuw aan:
+De realtime watcher installeert zijn eigen lichte dependency bovenop het bestaande basisimage. Bouw en start alleen de watcher voor de eerste uitrol:
 
 ```bash
-/usr/local/bin/docker build --no-cache -f Dockerfile.base -t nas-base:v1 .
-/usr/local/bin/docker compose rm -sf scanner watcher metadata_worker
-/usr/local/bin/docker compose build --no-cache scanner watcher metadata_worker
-/usr/local/bin/docker compose up -d --force-recreate scanner watcher metadata_worker
+/usr/local/bin/docker compose build watcher
+/usr/local/bin/docker compose up -d watcher
 ```
 
 Controleer daarna status en logs:
 
 ```bash
 /usr/local/bin/docker compose ps
-/usr/local/bin/docker compose logs --tail=100 scanner watcher metadata_worker
+/usr/local/bin/docker compose logs --tail=100 watcher
 ./tools/runtime/status
 ```
+
+Scanner, metadata-worker, Redis en PostgreSQL hoeven voor deze eerste watcheruitrol niet opnieuw te worden gebouwd of gestart.
 
 Voor een normale rebuild zonder eerst containers te verwijderen:
 

@@ -1,4 +1,5 @@
 FROM nas-base:v1
 WORKDIR /app
+RUN pip3 install --break-system-packages watchdog
 COPY watcher.py .
 CMD ["python3", "watcher.py"]
