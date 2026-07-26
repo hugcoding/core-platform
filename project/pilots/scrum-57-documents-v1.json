@@ -1,0 +1,57 @@
+{
+  "pilot": "scrum-57-documents-v1",
+  "processing": "local_only",
+  "embedding_enabled": false,
+  "files": [
+    {
+      "file_id": 2556163,
+      "approval": "approved",
+      "path": "/volume1/backup/NITRO/D/data/hugo/Documents/CloudStation/studie/NCOI HBO Management Zorg Welzijn/Mod. Organisatiegedrag/7 MANIEREN OM UW BEDRIJF OP EEN HELDERE MANIER TE PROFILEREN.docx"
+    },
+    {
+      "file_id": 2555884,
+      "approval": "approved",
+      "path": "/volume1/backup/NITRO/D/data/hugo/Documents/CloudStation/studie/NCOI Software development/Module 3 - Databases/M4L2O1.docx"
+    },
+    {
+      "file_id": 2545341,
+      "approval": "approved",
+      "path": "/volume1/backup/NITRO/D/data/hugo/Documents/Studie/NCOI Software development/Les 1.1/Module 1.1 voorber.docx"
+    },
+    {
+      "file_id": 2551444,
+      "approval": "approved",
+      "path": "/volume1/backup/NITRO/D/data/hugo/Documents/CloudStation/studie/NCOI Software development/Module 2 - Systeemontwikkeling/primaire processen.docx"
+    },
+    {
+      "file_id": 2545151,
+      "approval": "approved",
+      "path": "/volume1/backup/NITRO/D/data/hugo/Documents/Studie/NCOI HBO Management Zorg Welzijn/Mod. Management in de Zorg/Uitwerkingen/Praktijkopdracht les1 Analyse organisatie.docx"
+    },
+    {
+      "file_id": 2545055,
+      "approval": "approved",
+      "path": "/volume1/backup/NITRO/D/data/hugo/Documents/Studie/NCOI HBO Management Zorg Welzijn/Mod. Fin. management/Eigen bronnen/Jaarrekening 2011 Roads BV.pdf"
+    },
+    {
+      "file_id": 2546732,
+      "approval": "approved",
+      "path": "/volume1/backup/NITRO/D/data/hugo/Documents/Studie/NCOI Software development/Visio/UML/UML2.5-Visio2013/Visio UML 2.5 Tips.pdf"
+    },
+    {
+      "file_id": 2545381,
+      "approval": "approved",
+      "path": "/volume1/backup/NITRO/D/data/hugo/Documents/Studie/NCOI Software development/Module 1/Token_Ring.pdf"
+    },
+    {
+      "file_id": 2544986,
+      "approval": "approved",
+      "path": "/volume1/backup/NITRO/D/data/hugo/Documents/Studie/NCOI HBO Management Zorg Welzijn/De organisatie Arkin - Roads/Organogram roads apr 2012.pdf"
+    },
+    {
+      "file_id": 2549764,
+      "approval": "approved",
+      "path": "/volume1/backup/NITRO/D/data/hugo/Documents/CloudStation/studie/NCOI Software development/Module 1/mod1/vh4gfzjj2vqo.pdf"
+    }
+  ]
+}
