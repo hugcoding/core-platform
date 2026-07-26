@@ -147,13 +147,13 @@ FROM similar_names;
 
 SELECT
     COUNT(*) FILTER (
-        WHERE path = '/volume1/data' OR path LIKE '/volume1/data/%'
+        WHERE path = '/volume1/Data' OR path LIKE '/volume1/Data/%'
     ) AS active_files_already_in_target,
     pg_size_pretty(COALESCE(SUM(size_bytes) FILTER (
-        WHERE path = '/volume1/data' OR path LIKE '/volume1/data/%'
+        WHERE path = '/volume1/Data' OR path LIKE '/volume1/Data/%'
     ), 0)::bigint) AS target_size,
     COUNT(*) FILTER (
-        WHERE path <> '/volume1/data' AND path NOT LIKE '/volume1/data/%'
+        WHERE path <> '/volume1/Data' AND path NOT LIKE '/volume1/Data/%'
     ) AS active_files_outside_target
 FROM files
 WHERE deleted_at IS NULL;

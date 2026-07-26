@@ -3,7 +3,7 @@
 ## Objective
 
 CORE keeps a broad inventory of `/volume1` while separately deciding which
-files may participate in cleanup, migration to `/volume1/data`, or semantic
+files may participate in cleanup, migration to `/volume1/Data`, or semantic
 processing. Inventory membership never authorizes a physical mutation.
 
 ## Safety defaults
@@ -97,7 +97,7 @@ It reports:
 - exact content-hash duplicate groups and theoretical maximum savings;
 - roots participating in duplicate groups;
 - repeated normalized folder basenames;
-- current population inside and outside `/volume1/data`.
+- current population inside and outside `/volume1/Data`.
 
 The duplicate savings figure is theoretical only. It does not account for
 retention, backup policy, hardlinks, desired versions, restore requirements,
@@ -114,4 +114,4 @@ Before adding a classification table:
 5. approve category and scope vocabulary;
 6. document how manual overrides survive rule recalculation.
 
-No physical migration to `/volume1/data` starts in this phase.
+No physical migration to `/volume1/Data` starts in this phase.
