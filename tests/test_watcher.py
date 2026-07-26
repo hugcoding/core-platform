@@ -96,6 +96,28 @@ class WatcherTests(unittest.TestCase):
         self.assertFalse(watcher.publish("UPSERT", "/volume1/photo/@eaDir/thumb.jpg"))
         self.assertEqual([], watcher.r.events)
 
+    def test_startup_schedules_each_allowed_root_for_recovery(self):
+        entries = ["data", "homes", "@eaDir", ".hidden", "plain-file"]
+
+        with (
+            mock.patch.object(watcher.os, "listdir", return_value=entries),
+            mock.patch.object(
+                watcher.os.path,
+                "isdir",
+                side_effect=lambda path: not path.endswith("plain-file"),
+            ),
+        ):
+            roots = watcher.schedule_startup_recovery()
+
+        self.assertEqual(
+            {
+                os.path.join(watcher.SCAN_ROOT, "data"),
+                os.path.join(watcher.SCAN_ROOT, "homes"),
+            },
+            set(roots),
+        )
+        self.assertEqual(2, watcher.r.values[watcher.RECOVERY_ROOTS_KEY])
+
 
 if __name__ == "__main__":
     unittest.main()
