@@ -48,26 +48,27 @@ Voer deze commands op de NAS uit vanuit de repository:
 cd /volume1/docker/nas-stack
 ```
 
-Verwijder de scanner- en workercontainers, bouw beide images volledig opnieuw en maak de containers opnieuw aan:
+Voor de realtime watcher moet eerst het gedeelde basisimage worden vernieuwd. Bouw daarna scanner, watcher en worker en maak de containers opnieuw aan:
 
 ```bash
-/usr/local/bin/docker compose rm -sf scanner metadata_worker
-/usr/local/bin/docker compose build --no-cache scanner metadata_worker
-/usr/local/bin/docker compose up -d --force-recreate scanner metadata_worker
+/usr/local/bin/docker build --no-cache -f Dockerfile.base -t nas-base:v1 .
+/usr/local/bin/docker compose rm -sf scanner watcher metadata_worker
+/usr/local/bin/docker compose build --no-cache scanner watcher metadata_worker
+/usr/local/bin/docker compose up -d --force-recreate scanner watcher metadata_worker
 ```
 
 Controleer daarna status en logs:
 
 ```bash
 /usr/local/bin/docker compose ps
-/usr/local/bin/docker compose logs --tail=100 scanner metadata_worker
+/usr/local/bin/docker compose logs --tail=100 scanner watcher metadata_worker
 ./tools/runtime/status
 ```
 
 Voor een normale rebuild zonder eerst containers te verwijderen:
 
 ```bash
-/usr/local/bin/docker compose up -d --build scanner metadata_worker
+/usr/local/bin/docker compose up -d --build scanner watcher metadata_worker
 ```
 
 Voor de volledige stack:
@@ -99,6 +100,25 @@ Runtime-status toont afzonderlijk de laatste full scan, intervalscan en interval
  ORDER BY started_at DESC
  LIMIT 10;"
 ```
+
+### Realtime watcher controleren
+
+```bash
+core runtime health
+core runtime status
+/usr/local/bin/docker compose logs --tail=100 watcher
+```
+
+De status toont:
+
+- watcher heartbeat en status;
+- tijdstip van het laatste bestandsevent;
+- aantal roots dat na watcherstart voor herstel is ingepland;
+- huidige dirty roots die nog op gerichte reconciliation wachten.
+
+Bij iedere watcherstart worden de toegestane hoofdroots als dirty gemarkeerd. De scanner behandelt deze roots één voor één vóór de gewone intervalrotatie. Een marker wordt alleen verwijderd wanneer de controle slaagt en er tijdens die controle geen nieuwer event voor dezelfde root is geregistreerd.
+
+Maak voor de eerste acceptatietest uitsluitend een tijdelijke map onder `/volume1/data` en test daar create, modify, rename, move en delete. Gebruik geen productie- of legacybestanden voor deze test.
 
 ## NAS repository veilig bijwerken
 

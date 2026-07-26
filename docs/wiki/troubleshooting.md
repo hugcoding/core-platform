@@ -23,6 +23,22 @@ core runtime logs
 core runtime status
 ```
 
+## Realtime watcher ontbreekt of is unhealthy
+
+```bash
+core runtime health
+core runtime status
+/usr/local/bin/docker compose logs --tail=200 watcher
+```
+
+Controleer in `core runtime status`:
+
+- `watcher` heartbeat en status;
+- `watcher:last_event`;
+- het aantal `scanner:dirty_roots`.
+
+Een ontbrekende heartbeat betekent dat de watcher niet actief is of Redis niet kan bereiken. Start niet meteen een opschoning; herstel eerst de watcher en laat de ingeplande dirty-root reconciliation afronden.
+
 ## Worker zegt dat er al een worker draait
 
 Controleer locks en heartbeats:
@@ -96,4 +112,3 @@ ssh hugo@NAS "cd /volume1/docker/nas-stack && docker compose ps"
 Er staat waarschijnlijk een open quote in je command. Druk `Ctrl+C` en voer het command opnieuw uit zonder los afsluitend aanhalingsteken.
 
 PowerShell gebruikt geen Bash line continuation met `\`. Gebruik lange NAS databasecommands bij voorkeur als een enkele SSH-regel, of voer losse Bash-regels direct op de NAS uit.
-

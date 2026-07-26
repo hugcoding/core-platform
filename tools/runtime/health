@@ -20,6 +20,7 @@ check_container() {
 
 check_container nas-redis-1
 check_container nas-scanner-1
+check_container nas-watcher-1
 check_container nas-metadata_worker-1
 
 echo
@@ -29,12 +30,15 @@ docker exec nas-redis-1 redis-cli ping || fail=1
 echo
 echo "========== HEARTBEATS =========="
 scanner_hb=$(docker exec nas-redis-1 redis-cli GET scanner:heartbeat 2>/dev/null)
+watcher_hb=$(docker exec nas-redis-1 redis-cli GET watcher:heartbeat 2>/dev/null)
 worker_hb=$(docker exec nas-redis-1 redis-cli GET metadata_worker:heartbeat 2>/dev/null)
 
 echo "scanner: ${scanner_hb:-missing}"
+echo "watcher: ${watcher_hb:-missing}"
 echo "metadata_worker: ${worker_hb:-missing}"
 
 [ -n "$scanner_hb" ] || fail=1
+[ -n "$watcher_hb" ] || fail=1
 [ -n "$worker_hb" ] || fail=1
 
 echo
@@ -43,6 +47,10 @@ echo -n "scanner:last_scan = "
 docker exec nas-redis-1 redis-cli GET scanner:last_scan 2>/dev/null || true
 echo -n "metadata_worker:last_event = "
 docker exec nas-redis-1 redis-cli GET metadata_worker:last_event 2>/dev/null || true
+echo -n "watcher:last_event = "
+docker exec nas-redis-1 redis-cli GET watcher:last_event 2>/dev/null || true
+echo -n "dirty roots pending = "
+docker exec nas-redis-1 redis-cli HLEN scanner:dirty_roots 2>/dev/null || true
 
 echo
 echo "========== STREAM =========="

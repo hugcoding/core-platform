@@ -33,6 +33,11 @@ services:
       - REDIS_HOST=redis
       - SCAN_ROOT=${SCAN_ROOT:-/volume1}
       - WATCHER_DEBOUNCE_SECONDS=${WATCHER_DEBOUNCE_SECONDS:-2}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import redis; r=redis.Redis(host='redis', decode_responses=True); assert r.get('watcher:heartbeat')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   metadata_worker:
     build: { context: ., dockerfile: Dockerfile.metadata }
