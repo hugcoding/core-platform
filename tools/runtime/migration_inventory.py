@@ -162,20 +162,22 @@ def parse_csv(text: str) -> list[dict[str, str]]:
     return list(csv.DictReader(io.StringIO(text)))
 
 
+def sql_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
 def run_query(command: list[str], query: str, source: str) -> str:
     source_prefix = source.rstrip("/") + "/%"
+    rendered_query = query.replace(":'source_prefix'", sql_literal(source_prefix))
+    rendered_query = rendered_query.replace(":'source'", sql_literal(source))
     result = subprocess.run(
         command
         + [
             "-v",
             "ON_ERROR_STOP=1",
-            "-v",
-            f"source={source}",
-            "-v",
-            f"source_prefix={source_prefix}",
             "--csv",
             "-c",
-            query,
+            rendered_query,
         ],
         check=True,
         capture_output=True,
@@ -220,7 +222,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         detail_text = run_query(command, DETAIL_QUERY, source)
         summary_text = run_query(command, SUMMARY_QUERY, source)
-    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+    except subprocess.CalledProcessError as exc:
+        print("Migration inventory failed.", file=sys.stderr)
+        if exc.stderr:
+            print(exc.stderr.strip(), file=sys.stderr)
+        return 1
+    except FileNotFoundError as exc:
         print(f"Migration inventory failed: {exc}", file=sys.stderr)
         return 1
 

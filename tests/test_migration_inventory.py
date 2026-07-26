@@ -2,7 +2,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from tools.runtime.migration_inventory import DETAIL_QUERY, parse_csv, run_query
+from tools.runtime.migration_inventory import DETAIL_QUERY, parse_csv, run_query, sql_literal
 
 
 class MigrationInventoryTest(unittest.TestCase):
@@ -16,7 +16,7 @@ class MigrationInventoryTest(unittest.TestCase):
         self.assertNotIn("backup_or_archive", DETAIL_QUERY)
         self.assertIn("'personal_document_candidate'", DETAIL_QUERY)
 
-    def test_run_query_passes_source_as_psql_variables(self):
+    def test_run_query_renders_safely_quoted_source(self):
         completed = subprocess.CompletedProcess(
             args=[],
             returncode=0,
@@ -24,13 +24,19 @@ class MigrationInventoryTest(unittest.TestCase):
             stderr="",
         )
         with patch("tools.runtime.migration_inventory.subprocess.run", return_value=completed) as runner:
-            output = run_query(["docker", "exec", "postgres", "psql"], "SELECT 1", "/volume1/source")
+            output = run_query(
+                ["docker", "exec", "postgres", "psql"],
+                "SELECT :'source', :'source_prefix'",
+                "/volume1/source",
+            )
 
         command = runner.call_args.args[0]
-        self.assertIn("source=/volume1/source", command)
-        self.assertIn("source_prefix=/volume1/source/%", command)
-        self.assertEqual("SELECT 1", command[-1])
+        self.assertNotIn("source=/volume1/source", command)
+        self.assertEqual("SELECT '/volume1/source', '/volume1/source/%'", command[-1])
         self.assertEqual("/volume1/source/file.txt", parse_csv(output)[0]["path"])
+
+    def test_sql_literal_escapes_quote(self):
+        self.assertEqual("'/volume1/Hugo''s files'", sql_literal("/volume1/Hugo's files"))
 
 
 if __name__ == "__main__":
