@@ -178,6 +178,20 @@ class MutationClassificationTests(unittest.TestCase):
 
 
 class ScanSessionTests(unittest.TestCase):
+    def test_empty_scan_session_is_stored_as_null(self):
+        cursor = mock.Mock()
+
+        metadata_worker.insert_file_event(
+            cursor,
+            file_id=42,
+            event_type="CREATED",
+            source="filesystem_watcher",
+            scan_session_id="",
+        )
+
+        params = cursor.execute.call_args.args[1]
+        self.assertIsNone(params[-2])
+
     def test_processed_job_updates_its_scan_session(self):
         cursor = CandidateCursor()
 

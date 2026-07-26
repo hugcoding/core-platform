@@ -110,7 +110,6 @@ def publish(event, path, old_path=None):
         "path": path,
         "source": "filesystem_watcher",
         "ts": utc_now(),
-        "scan_session_id": "",
     }
     if old_path:
         payload["old_path"] = os.path.normpath(old_path)

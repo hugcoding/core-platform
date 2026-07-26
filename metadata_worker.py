@@ -226,6 +226,7 @@ def insert_file_event(cur, *, file_id, event_type, source, old_path=None,
                       new_path=None, candidate_file_id=None, score=None,
                       level=None, decision=None, signals=None, reason=None,
                       scan_session_id=None):
+    scan_session_id = scan_session_id or None
     cur.execute("""
         INSERT INTO file_events (
             file_id, candidate_file_id, event_type, old_path, new_path,
