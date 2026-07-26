@@ -23,6 +23,7 @@ HEARTBEAT_TTL = max(30, int(os.getenv("WATCHER_HEARTBEAT_TTL", "120")))
 HEARTBEAT_KEY = "watcher:heartbeat"
 HEARTBEAT_STATUS_KEY = "watcher:heartbeat:status"
 LAST_EVENT_KEY = "watcher:last_event"
+RECOVERY_ROOTS_KEY = "watcher:recovery_roots"
 DIRTY_ROOTS_KEY = "scanner:dirty_roots"
 DEBOUNCE_PREFIX = "watcher:dedupe:"
 
@@ -72,6 +73,18 @@ def mark_dirty(path):
     root = root_for_path(path)
     if root:
         r.hset(DIRTY_ROOTS_KEY, root, utc_now())
+
+
+def schedule_startup_recovery():
+    roots = []
+    for name in sorted(os.listdir(SCAN_ROOT)):
+        path = os.path.join(SCAN_ROOT, name)
+        if not os.path.isdir(path) or should_skip_path(path):
+            continue
+        roots.append(path)
+        r.hset(DIRTY_ROOTS_KEY, path, utc_now())
+    r.set(RECOVERY_ROOTS_KEY, len(roots))
+    return roots
 
 
 def publish(event, path, old_path=None):
@@ -138,6 +151,8 @@ def main():
     if not os.path.isdir(SCAN_ROOT):
         raise RuntimeError(f"Watcher root does not exist: {SCAN_ROOT}")
 
+    recovery_roots = schedule_startup_recovery()
+    heartbeat("recovering")
     observer = Observer()
     observer.schedule(CoreEventHandler(), SCAN_ROOT, recursive=True)
     observer.start()
@@ -147,6 +162,7 @@ def main():
         SCAN_ROOT,
         DEBOUNCE_SECONDS,
     )
+    logger.info("Startup recovery scheduled for %s roots", len(recovery_roots))
 
     try:
         while observer.is_alive():

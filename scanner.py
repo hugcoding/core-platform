@@ -31,6 +31,7 @@ LAST_FULL_SCAN_KEY = "scanner:last_full_scan"
 LAST_INTERVAL_SCAN_KEY = "scanner:last_interval_scan"
 LAST_INTERVAL_ROOT_KEY = "scanner:last_interval_root"
 INTERVAL_ROOT_INDEX_KEY = "scanner:interval:root_index"
+DIRTY_ROOTS_KEY = "scanner:dirty_roots"
 FULL_SCAN_REQUEST_KEY = "scanner:request:full"
 HEARTBEAT_TTL = 120
 
@@ -254,6 +255,19 @@ def select_interval_root(roots):
     return root
 
 
+def select_dirty_root(roots):
+    allowed = set(roots)
+    dirty = r.hgetall(DIRTY_ROOTS_KEY)
+    candidates = [
+        (marked_at, root)
+        for root, marked_at in dirty.items()
+        if root in allowed
+    ]
+    if not candidates:
+        return None
+    return min(candidates)[1]
+
+
 def _scan_roots(roots, scan_id, session_id, full_sweep):
     scan_type = "full" if full_sweep else "interval"
     logger.info("Starting %s scan roots=%s", scan_type, ", ".join(roots))
@@ -373,8 +387,13 @@ def scan_once():
 
 def scan_interval_once():
     roots = discover_roots()
-    root = select_interval_root(roots)
-    return run_scan("interval", [root] if root else [])
+    dirty_root = select_dirty_root(roots)
+    root = dirty_root or select_interval_root(roots)
+    result = run_scan("interval", [root] if root else [])
+    if dirty_root:
+        r.hdel(DIRTY_ROOTS_KEY, dirty_root)
+        logger.info("Dirty root reconciled: %s", dirty_root)
+    return result
 
 
 def consume_full_scan_request():

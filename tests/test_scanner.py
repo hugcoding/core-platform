@@ -32,6 +32,12 @@ class FakeRedis:
     def delete(self, key):
         self.values.pop(key, None)
 
+    def hgetall(self, key):
+        return dict(self.values.get(key, {}))
+
+    def hdel(self, key, field):
+        self.values.get(key, {}).pop(field, None)
+
     def scan_iter(self, match=None, count=None):
         prefix = match[:-1] if match and match.endswith("*") else match
         return iter([key for key in list(self.values) if not prefix or key.startswith(prefix)])
@@ -121,6 +127,35 @@ class ScannerStateTests(unittest.TestCase):
         self.assertEqual("/volume1/a", scanner.select_interval_root(roots))
         self.assertEqual("/volume1/b", scanner.select_interval_root(roots))
         self.assertEqual("/volume1/a", scanner.select_interval_root(roots))
+
+    def test_dirty_root_takes_priority_and_is_removed_after_success(self):
+        scanner.r.values[scanner.DIRTY_ROOTS_KEY] = {
+            "/volume1/b": "2026-07-26T10:00:00+00:00",
+        }
+
+        with (
+            mock.patch.object(scanner, "discover_roots", return_value=["/volume1/a", "/volume1/b"]),
+            mock.patch.object(scanner, "run_scan", return_value=(1, 1, 0, 0)) as run_scan,
+        ):
+            result = scanner.scan_interval_once()
+
+        self.assertEqual((1, 1, 0, 0), result)
+        run_scan.assert_called_once_with("interval", ["/volume1/b"])
+        self.assertEqual({}, scanner.r.values[scanner.DIRTY_ROOTS_KEY])
+
+    def test_failed_dirty_root_scan_keeps_recovery_marker(self):
+        scanner.r.values[scanner.DIRTY_ROOTS_KEY] = {
+            "/volume1/b": "2026-07-26T10:00:00+00:00",
+        }
+
+        with (
+            mock.patch.object(scanner, "discover_roots", return_value=["/volume1/b"]),
+            mock.patch.object(scanner, "run_scan", side_effect=OSError("mount unavailable")),
+        ):
+            with self.assertRaises(OSError):
+                scanner.scan_interval_once()
+
+        self.assertIn("/volume1/b", scanner.r.values[scanner.DIRTY_ROOTS_KEY])
 
     def test_manual_full_request_is_consumed_once(self):
         scanner.r.set(scanner.FULL_SCAN_REQUEST_KEY, "2026-07-21T17:00:00Z")
