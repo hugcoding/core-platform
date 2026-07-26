@@ -32,6 +32,7 @@ services:
     environment:
       - REDIS_HOST=redis
       - SCAN_ROOT=${SCAN_ROOT:-/volume1}
+      - WATCH_ROOTS=${WATCH_ROOTS:-/volume1/data}
       - WATCHER_DEBOUNCE_SECONDS=${WATCHER_DEBOUNCE_SECONDS:-2}
     healthcheck:
       test: ["CMD", "python3", "-c", "import redis; r=redis.Redis(host='redis', decode_responses=True); assert r.get('watcher:heartbeat')"]

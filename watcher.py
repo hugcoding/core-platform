@@ -2,6 +2,7 @@
 import logging
 import os
 import socket
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -16,6 +17,11 @@ logger = logging.getLogger("watcher")
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 SCAN_ROOT = os.path.normpath(os.getenv("SCAN_ROOT", "/volume1"))
+WATCH_ROOTS = tuple(
+    os.path.normpath(path.strip())
+    for path in os.getenv("WATCH_ROOTS", "/volume1/data").split(",")
+    if path.strip()
+)
 STREAM_KEY = os.getenv("STREAM_KEY", "scan_stream")
 DEBOUNCE_SECONDS = max(1, int(os.getenv("WATCHER_DEBOUNCE_SECONDS", "2")))
 HEARTBEAT_TTL = max(30, int(os.getenv("WATCHER_HEARTBEAT_TTL", "120")))
@@ -77,9 +83,12 @@ def mark_dirty(path):
 
 def schedule_startup_recovery():
     roots = []
-    for name in sorted(os.listdir(SCAN_ROOT)):
-        path = os.path.join(SCAN_ROOT, name)
-        if not os.path.isdir(path) or should_skip_path(path):
+    for path in WATCH_ROOTS:
+        if (
+            os.path.commonpath((SCAN_ROOT, path)) != SCAN_ROOT
+            or not os.path.isdir(path)
+            or should_skip_path(path)
+        ):
             continue
         roots.append(path)
         r.hset(DIRTY_ROOTS_KEY, path, utc_now())
@@ -152,14 +161,33 @@ def main():
         raise RuntimeError(f"Watcher root does not exist: {SCAN_ROOT}")
 
     recovery_roots = schedule_startup_recovery()
+    if not recovery_roots:
+        raise RuntimeError(f"No valid watcher roots found within {SCAN_ROOT}: {WATCH_ROOTS}")
+
     heartbeat("recovering")
     observer = Observer()
-    observer.schedule(CoreEventHandler(), SCAN_ROOT, recursive=True)
-    observer.start()
+    handler = CoreEventHandler()
+    for root in recovery_roots:
+        observer.schedule(handler, root, recursive=True)
+
+    startup_done = threading.Event()
+
+    def startup_heartbeat():
+        while not startup_done.wait(10):
+            heartbeat("recovering")
+
+    heartbeat_thread = threading.Thread(target=startup_heartbeat, daemon=True)
+    heartbeat_thread.start()
+    try:
+        observer.start()
+    finally:
+        startup_done.set()
+        heartbeat_thread.join(timeout=1)
+
     logger.info(
-        "Realtime watcher started host=%s root=%s debounce=%ss",
+        "Realtime watcher started host=%s roots=%s debounce=%ss",
         socket.gethostname(),
-        SCAN_ROOT,
+        ", ".join(recovery_roots),
         DEBOUNCE_SECONDS,
     )
     logger.info("Startup recovery scheduled for %s roots", len(recovery_roots))
