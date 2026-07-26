@@ -182,17 +182,13 @@ function Invoke-Git {
             Set-Location $ProjectRoot
             git status
         }
-        "push" {
-            Set-Location $ProjectRoot
-            git push
-        }
         "pull" {
             & (Join-Path $PSScriptRoot "nas-pull.ps1") -Repository $ProjectRoot
             exit $LASTEXITCODE
         }
         default {
             Write-Host "Unknown git command." -ForegroundColor Yellow
-            Write-Host "Use: core git status | pull | push"
+            Write-Host "Use: core git status | pull"
         }
     }
 }
