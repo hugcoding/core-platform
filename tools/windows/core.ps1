@@ -37,6 +37,7 @@ function Show-Help {
     Write-Host "  core cleanup assess"
     Write-Host "  core cleanup legacy-duplicates --dry-run"
     Write-Host "  core cleanup legacy-duplicates --apply --confirm-delete-legacy-duplicates"
+    Write-Host "  core cleanup migration-inventory --source PATH --dry-run"
     Write-Host "  core runtime status"
     Write-Host "  core runtime health"
     Write-Host "  core runtime logs"
@@ -115,9 +116,13 @@ function Invoke-Cleanup {
             }
             Invoke-Nas "sh ./tools/runtime/legacy-duplicates $CleanupArgs"
         }
+        "migration-inventory" {
+            $CleanupArgs = @($Arguments) -join " "
+            Invoke-Nas "sh ./tools/runtime/migration-inventory $CleanupArgs"
+        }
         default {
             Write-Host "Unknown cleanup command." -ForegroundColor Yellow
-            Write-Host "Use: core cleanup assess | legacy-duplicates --dry-run | legacy-duplicates --apply --confirm-delete-legacy-duplicates"
+            Write-Host "Use: core cleanup assess | legacy-duplicates ... | migration-inventory --source PATH --dry-run"
         }
     }
 }
