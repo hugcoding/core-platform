@@ -25,6 +25,7 @@ show_help() {
     printf '%s\n' "  core cleanup legacy-duplicates --apply --confirm-delete-legacy-duplicates"
     printf '%s\n' "  core cleanup migration-inventory --source PATH --dry-run"
     printf '%s\n' "  core cleanup migration-review --manifest latest --dry-run"
+    printf '%s\n' "  core cleanup migration-proposal --manifest latest --dry-run"
     printf '%s\n' "  core runtime status"
     printf '%s\n' "  core runtime health"
     printf '%s\n' "  core runtime logs"
@@ -99,6 +100,10 @@ case "$command_domain" in
             migration-review)
                 shift 2
                 sh ./tools/runtime/migration-review "$@"
+                ;;
+            migration-proposal)
+                shift 2
+                sh ./tools/runtime/migration-proposal "$@"
                 ;;
             *)
                 echo "Unknown cleanup command."

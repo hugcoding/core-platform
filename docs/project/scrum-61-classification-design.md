@@ -164,6 +164,22 @@ this class. Archives, cloud-document pointers, credentials, and unknown
 formats remain manual-review items. The command is read-only and does not
 propose target paths.
 
+Create the non-mutating migration proposal:
+
+```bash
+core cleanup migration-proposal --manifest latest --dry-run
+```
+
+This separates standard and sensitive document waves, retains project and
+technical content in the inventory, and creates focused review lists for
+archives, cloud pointers, credentials, and unresolved formats. Missing
+content hashes block copy planning. Cisco icon-library EPS assets are retained
+as technical data based on their specific content path; a generic `backup`
+folder name never affects the proposal.
+
+The proposal still contains no target paths and cannot copy, move, update, or
+delete anything.
+
 ## Source-map assessment
 
 After the baseline classification assessment, run:
