@@ -144,6 +144,26 @@ semantic indexing.
 This phase intentionally does not propose the final directory structure
 inside `/volume1/data`; that decision follows content review.
 
+Create the second, document-focused manifest from the latest exact-content
+manifest:
+
+```bash
+core cleanup migration-review --manifest latest --dry-run
+```
+
+Every exact-content group remains represented. The second manifest assigns a
+review class:
+
+- `personal_document`;
+- `project_or_technical`;
+- `manual_review`;
+- `deferred_media`.
+
+Folder names such as `backup`, `archive`, or `CloudStation` never determine
+this class. Archives, cloud-document pointers, credentials, and unknown
+formats remain manual-review items. The command is read-only and does not
+propose target paths.
+
 ## Source-map assessment
 
 After the baseline classification assessment, run:
