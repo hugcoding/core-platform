@@ -62,6 +62,7 @@ class WatcherTests(unittest.TestCase):
         _, payload = watcher.r.events[0]
         self.assertEqual("filesystem_watcher", payload["source"])
         self.assertEqual(os.path.normpath("/volume1/data/document.txt"), payload["path"])
+        self.assertNotIn("scan_session_id", payload)
         self.assertIn(
             os.path.normpath("/volume1/data"),
             watcher.r.hashes[watcher.DIRTY_ROOTS_KEY],
