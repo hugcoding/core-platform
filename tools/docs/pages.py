@@ -266,6 +266,16 @@ core runtime status
 
 Controleer in `core runtime status` de watcher-heartbeat, `watcher:last_event` en `scanner:dirty_roots`. Een ontbrekende heartbeat betekent dat de watcher niet actief is of Redis niet kan bereiken. Herstel eerst de watcher en laat de dirty-root reconciliation afronden voordat u een opschoning start.
 
+## Container Manager toont een ID-prefix
+
+Controleer de echte Dockernaam:
+
+```bash
+docker ps --format '{{.Names}}'
+```
+
+Als Docker `nas-scanner-1`, `nas-metadata_worker-1` en `nas-watcher-1` toont, is alleen de Synology-interface uit sync. Sluit Container Manager voordat containers met Compose worden gerecreëerd en open de GUI pas nadat de containers stabiel en gezond zijn.
+
 ## Worker zegt dat er al een worker draait
 
 Controleer locks en heartbeats:

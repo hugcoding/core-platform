@@ -31,13 +31,17 @@ core runtime status
 /usr/local/bin/docker compose logs --tail=200 watcher
 ```
 
-Controleer in `core runtime status`:
+Controleer in `core runtime status` de watcher-heartbeat, `watcher:last_event` en `scanner:dirty_roots`. Een ontbrekende heartbeat betekent dat de watcher niet actief is of Redis niet kan bereiken. Herstel eerst de watcher en laat de dirty-root reconciliation afronden voordat u een opschoning start.
 
-- `watcher` heartbeat en status;
-- `watcher:last_event`;
-- het aantal `scanner:dirty_roots`.
+## Container Manager toont een ID-prefix
 
-Een ontbrekende heartbeat betekent dat de watcher niet actief is of Redis niet kan bereiken. Start niet meteen een opschoning; herstel eerst de watcher en laat de ingeplande dirty-root reconciliation afronden.
+Controleer de echte Dockernaam:
+
+```bash
+docker ps --format '{{.Names}}'
+```
+
+Als Docker `nas-scanner-1`, `nas-metadata_worker-1` en `nas-watcher-1` toont, is alleen de Synology-interface uit sync. Sluit Container Manager voordat containers met Compose worden gerecreëerd en open de GUI pas nadat de containers stabiel en gezond zijn.
 
 ## Worker zegt dat er al een worker draait
 
@@ -71,44 +75,3 @@ core runtime watch
 .\tools\windows\core.ps1 runtime status
 .\tools\windows\core.ps1 runtime dlq
 ```
-
-## Docs build op NAS zegt dat MkDocs ontbreekt
-
-Controleer eerst of MkDocs op dezelfde machine staat als waar je `core docs build` draait:
-
-```bash
-python3 -m mkdocs --version
-```
-
-Als MkDocs ontbreekt op de NAS:
-
-```bash
-python3 -m pip install --user mkdocs-material
-core docs build
-```
-
-CORE probeert eerst `mkdocs` op `PATH` en valt daarna terug op `python3 -m mkdocs`.
-
-## `core` niet herkend in Windows PowerShell
-
-Gebruik de Windows wrapper vanuit de repository:
-
-```powershell
-.\tools\windows\core.ps1 docs build
-```
-
-Of voeg een Windows `core` wrapper toe aan je PATH.
-
-## Docker command gebruikt Docker Desktop in plaats van NAS
-
-Als je in Windows PowerShell `docker ...` draait, praat je met Docker Desktop. Gebruik voor NAS Docker commands SSH of draai het command direct op de NAS:
-
-```powershell
-ssh hugo@NAS "cd /volume1/docker/nas-stack && docker compose ps"
-```
-
-## Bash prompt blijft hangen op `>`
-
-Er staat waarschijnlijk een open quote in je command. Druk `Ctrl+C` en voer het command opnieuw uit zonder los afsluitend aanhalingsteken.
-
-PowerShell gebruikt geen Bash line continuation met `\`. Gebruik lange NAS databasecommands bij voorkeur als een enkele SSH-regel, of voer losse Bash-regels direct op de NAS uit.

@@ -2,8 +2,8 @@
 
 Bronbestand: `metadata_worker.py`
 
-- Regels: `330`
-- Functies: `13`
+- Regels: `595`
+- Functies: `23`
 - Classes: `0`
 - Imports: `12`
 
@@ -24,16 +24,17 @@ Bronbestand: `metadata_worker.py`
 
 ## Constanten
 
-- `CONSUMER_NAME` op regel `33`
-- `DLQ_STREAM` op regel `23`
-- `FORCE_FULL` op regel `34`
-- `GROUP_NAME` op regel `22`
-- `HEARTBEAT_KEY` op regel `28`
-- `HEARTBEAT_STATUS_KEY` op regel `29`
-- `HEARTBEAT_TTL` op regel `31`
-- `LAST_EVENT_KEY` op regel `30`
-- `LOCK_KEY` op regel `25`
-- `LOCK_TTL` op regel `26`
+- `CONSUMER_NAME` op regel `34`
+- `DLQ_STREAM` op regel `24`
+- `FORCE_FULL` op regel `35`
+- `GROUP_NAME` op regel `23`
+- `HEARTBEAT_KEY` op regel `29`
+- `HEARTBEAT_STATUS_KEY` op regel `30`
+- `HEARTBEAT_TTL` op regel `32`
+- `LAST_EVENT_KEY` op regel `31`
+- `LOCK_KEY` op regel `26`
+- `LOCK_TTL` op regel `27`
+- `REALTIME_STREAM_KEY` op regel `22`
 - `REDIS_HOST` op regel `18`
 - `REDIS_PORT` op regel `19`
 - `STREAM_KEY` op regel `21`
@@ -50,78 +51,128 @@ Bronbestand: `metadata_worker.py`
 
 ### `utc_now()`
 
-- Regel: `48`
+- Regel: `49`
 - Docstring: _niet aanwezig_
 
 ### `heartbeat(status)`
 
-- Regel: `52`
+- Regel: `53`
 - Docstring: _niet aanwezig_
 
 ### `get_db()`
 
-- Regel: `60`
+- Regel: `61`
 - Docstring: _niet aanwezig_
 
 ### `acquire_lock()`
 
-- Regel: `75`
+- Regel: `76`
 - Docstring: _niet aanwezig_
 
 ### `refresh_lock()`
 
-- Regel: `94`
+- Regel: `95`
 - Docstring: _niet aanwezig_
 
 ### `release_lock()`
 
-- Regel: `102`
+- Regel: `103`
 - Docstring: _niet aanwezig_
 
-### `ensure_group()`
+### `ensure_group(stream_key)`
 
-- Regel: `110`
+- Regel: `111`
+- Docstring: _niet aanwezig_
+
+### `read_next_batch()`
+
+- Regel: `120`
 - Docstring: _niet aanwezig_
 
 ### `upsert_folder(cur, path)`
 
-- Regel: `119`
+- Regel: `138`
 - Docstring: _niet aanwezig_
 
 ### `hash_first_1024(path)`
 
-- Regel: `143`
+- Regel: `162`
 - Docstring: _niet aanwezig_
 
 ### `get_mime(path)`
 
-- Regel: `151`
+- Regel: `170`
 - Docstring: _niet aanwezig_
 
 ### `get_image_dims(path, mime)`
 
-- Regel: `159`
+- Regel: `178`
+- Docstring: _niet aanwezig_
+
+### `path_is_missing(path)`
+
+- Regel: `190`
+- Docstring: _niet aanwezig_
+
+### `get_file_by_path(cur, path)`
+
+- Regel: `200`
+- Docstring: _niet aanwezig_
+
+### `classify_path_mutation(existing_file)`
+
+- Regel: `208`
+- Docstring: _niet aanwezig_
+
+### `classify_rename_mutation(old_path, new_path)`
+
+- Regel: `216`
+- Docstring: _niet aanwezig_
+
+### `identity_confidence(candidate, filesystem_device, inode, size_bytes, modified_at_fs, content_hash)`
+
+- Regel: `222`
+- Docstring: _niet aanwezig_
+
+### `insert_file_event(cur)`
+
+- Regel: `244`
+- Docstring: _niet aanwezig_
+
+### `evaluate_identity_match(cur, path, filesystem_device, inode, size_bytes, modified_at_fs, content_hash)`
+
+- Regel: `262`
+- Docstring: _niet aanwezig_
+
+### `find_rename_candidate(cur, path, inode, size_bytes, modified_at_fs, content_hash, filesystem_device)`
+
+- Regel: `316`
 - Docstring: _niet aanwezig_
 
 ### `process_event(cur, data)`
 
-- Regel: `171`
+- Regel: `324`
+- Docstring: _niet aanwezig_
+
+### `mark_session_job_processed(cur, data)`
+
+- Regel: `527`
 - Docstring: _niet aanwezig_
 
 ### `main()`
 
-- Regel: `273`
+- Regel: `538`
 - Docstring: _niet aanwezig_
 
 ## SQL statements
 
-### Statement regel `124`
+### Statement regel `143`
 
 ```sql
 SELECT id FROM folders WHERE path = %s
 ```
 
-### Statement regel `132`
+### Statement regel `151`
 
 ```sql
 INSERT INTO folders (path, parent_id)
@@ -131,59 +182,119 @@ INSERT INTO folders (path, parent_id)
         RETURNING id
 ```
 
-### Statement regel `208`
+### Statement regel `202`
 
 ```sql
-INSERT INTO files (
-            folder_id, filename, extension, size_bytes,
-            modified_at_fs, inode, xxhash,
-            path, source, hash_path, hash_content,
-            mime_type, deleted_at
-        )
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL)
-        ON CONFLICT (path) DO UPDATE SET
-            folder_id       = EXCLUDED.folder_id,
-            filename        = EXCLUDED.filename,
-            extension       = EXCLUDED.extension,
-            size_bytes      = EXCLUDED
-```
-
-### Statement regel `251`
-
-```sql
-SELECT 1 FROM metadata WHERE file_id = %s
-```
-
-### Statement regel `181`
-
-```sql
-UPDATE files SET deleted_at = NOW() WHERE path = %s
-```
-
-### Statement regel `186`
-
-```sql
-UPDATE files SET deleted_at = NOW() WHERE path = %s
+SELECT id, path, deleted_at FROM files WHERE path = %s
 ```
 
 ### Statement regel `249`
 
 ```sql
-DELETE FROM metadata WHERE file_id = %s
+INSERT INTO file_events (
+            file_id, candidate_file_id, event_type, old_path, new_path,
+            confidence_score, confidence_level, decision, signals, reason,
+            scan_session_id, source
+        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s)
 ```
 
-### Statement regel `257`
+### Statement regel `263`
+
+```sql
+SELECT id, path, filesystem_device, inode, size_bytes, modified_at_fs, hash_content
+        FROM files
+        WHERE filesystem_device = %s
+          AND inode = %s
+          AND path <> %s
+          AND deleted_at IS NULL
+        ORDER BY id
+```
+
+### Statement regel `512`
 
 ```sql
 INSERT INTO metadata (
-                file_id, mime_type, width, height, duration, missing
+            file_id, width, height, duration, missing
+        )
+        VALUES (%s,%s,%s,NULL,false)
+        ON CONFLICT (file_id) DO UPDATE SET
+            width     = EXCLUDED.width,
+            height    = EXCLUDED.height,
+            missing   = false
+```
+
+### Statement regel `334`
+
+```sql
+UPDATE files SET
+                deleted_at = NOW(),
+                updated_at = NOW(),
+                last_mutation_type = 'DELETED'
+            WHERE path = %s
+            RETURNING id
+```
+
+### Statement regel `353`
+
+```sql
+UPDATE files SET
+                deleted_at = NOW(),
+                updated_at = NOW(),
+                last_mutation_type = 'DELETED'
+            WHERE path = %s
+            RETURNING id
+```
+
+### Statement regel `418`
+
+```sql
+UPDATE files SET
+                folder_id          = %s,
+                filename           = %s,
+                extension          = %s,
+                size_bytes         = %s,
+                modified_at_fs     = %s,
+                filesystem_device  = %s,
+                inode              = %s,
+                path               = %s,
+                source             = %s,
+                hash_path          = %s,
+                hash_content       = %s,
+                mime_type
+```
+
+### Statement regel `446`
+
+```sql
+INSERT INTO files (
+                folder_id, filename, extension, size_bytes,
+                modified_at_fs, filesystem_device, inode,
+                path, source, hash_path, hash_content,
+                mime_type, deleted_at,
+                last_mutation_type
             )
-            VALUES (%s,%s,%s,%s,NULL,false)
-            ON CONFLICT (file_id) DO UPDATE SET
-                mime_type = EXCLUDED.mime_type,
-                width     = EXCLUDED.width,
-                height    = EXCLUDED.height,
-                missing   = false
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,%s)
+            ON CONFLICT (path) DO UPDATE SET
+                folder_id          = EXCLUDED.folder_id,
+                filename           = EXCLUDED.filena
+```
+
+### Statement regel `508`
+
+```sql
+DELETE FROM metadata WHERE file_id = %s
+```
+
+### Statement regel `531`
+
+```sql
+SELECT increment_jobs_processed(%s)
+```
+
+### Statement regel `535`
+
+```sql
+Scan session update failed: %s
 ```
 
 ## Broncode
@@ -210,6 +321,7 @@ REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
 STREAM_KEY = "scan_stream"
+REALTIME_STREAM_KEY = os.getenv("REALTIME_STREAM_KEY", "scan_stream_realtime")
 GROUP_NAME = "metadata_group"
 DLQ_STREAM = "scan_stream_dlq"
 
@@ -258,7 +370,7 @@ def get_db():
             password=os.getenv("DB_PASS"),
             dbname=os.getenv("DB_NAME"),
         )
-        _db_conn.autocommit = True
+        _db_conn.autocommit = False
         logger.info("Database connected")
     return _db_conn
 
@@ -298,13 +410,31 @@ def release_lock():
         pass
 
 
-def ensure_group():
+def ensure_group(stream_key=STREAM_KEY):
     try:
-        r.xgroup_create(STREAM_KEY, GROUP_NAME, id="0", mkstream=True)
+        r.xgroup_create(stream_key, GROUP_NAME, id="0", mkstream=True)
         logger.info("Redis consumer group created")
     except redis.exceptions.ResponseError as e:
         if "BUSYGROUP" not in str(e):
             raise
+
+
+def read_next_batch():
+    realtime = r.xreadgroup(
+        GROUP_NAME,
+        CONSUMER_NAME,
+        streams={REALTIME_STREAM_KEY: ">"},
+        count=50,
+    )
+    if realtime:
+        return realtime
+    return r.xreadgroup(
+        GROUP_NAME,
+        CONSUMER_NAME,
+        streams={STREAM_KEY: ">"},
+        count=10,
+        block=1000,
+    )
 
 
 def upsert_folder(cur, path):
@@ -359,6 +489,140 @@ def get_image_dims(path, mime):
         return None, None
 
 
+def path_is_missing(path):
+    try:
+        os.stat(path)
+        return False
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+
+
+def get_file_by_path(cur, path):
+    cur.execute(
+        "SELECT id, path, deleted_at FROM files WHERE path = %s",
+        (path,),
+    )
+    return cur.fetchone()
+
+
+def classify_path_mutation(existing_file):
+    if not existing_file:
+        return "CREATED"
+    if existing_file["deleted_at"] is not None:
+        return "RESTORED"
+    return "MODIFIED"
+
+
+def classify_rename_mutation(old_path, new_path):
+    if os.path.dirname(old_path) == os.path.dirname(new_path):
+        return "RENAMED"
+    return "MOVED"
+
+
+def identity_confidence(candidate, filesystem_device, inode, size_bytes, modified_at_fs, content_hash):
+    signals = {
+        "filesystem_device_match": candidate.get("filesystem_device") == filesystem_device,
+        "inode_match": candidate.get("inode") == inode,
+        "size_match": candidate.get("size_bytes") == size_bytes,
+        "mtime_match": candidate.get("modified_at_fs") == modified_at_fs,
+        "content_hash_match": bool(content_hash) and candidate.get("hash_content") == content_hash,
+        "old_path_missing": path_is_missing(candidate["path"]),
+    }
+    weights = {
+        "filesystem_device_match": 20,
+        "inode_match": 20,
+        "size_match": 10,
+        "mtime_match": 10,
+        "content_hash_match": 30,
+        "old_path_missing": 10,
+    }
+    score = sum(weights[name] for name, matched in signals.items() if matched)
+    level = "high" if score >= 90 else "medium" if score >= 65 else "low"
+    return score, level, signals
+
+
+def insert_file_event(cur, *, file_id, event_type, source, old_path=None,
+                      new_path=None, candidate_file_id=None, score=None,
+                      level=None, decision=None, signals=None, reason=None,
+                      scan_session_id=None):
+    scan_session_id = scan_session_id or None
+    cur.execute("""
+        INSERT INTO file_events (
+            file_id, candidate_file_id, event_type, old_path, new_path,
+            confidence_score, confidence_level, decision, signals, reason,
+            scan_session_id, source
+        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s)
+    """, (
+        file_id, candidate_file_id, event_type, old_path, new_path,
+        score, level, decision, json.dumps(signals or {}), reason,
+        scan_session_id, source,
+    ))
+
+
+def evaluate_identity_match(cur, path, filesystem_device, inode, size_bytes, modified_at_fs, content_hash):
+    cur.execute("""
+        SELECT id, path, filesystem_device, inode, size_bytes, modified_at_fs, hash_content
+        FROM files
+        WHERE filesystem_device = %s
+          AND inode = %s
+          AND path <> %s
+          AND deleted_at IS NULL
+        ORDER BY id
+    """, (filesystem_device, inode, path))
+
+    rows = cur.fetchall()
+    existing_paths = [row for row in rows if not path_is_missing(row["path"])]
+    missing_candidates = [row for row in rows if row not in existing_paths]
+
+    if existing_paths:
+        return {
+            "candidate": existing_paths[0],
+            "event_type": "HARDLINK_DETECTED",
+            "level": "ambiguous",
+            "score": None,
+            "signals": {"candidate_count": len(rows), "old_path_missing": False},
+            "decision": "created_separate",
+            "reason": "same inode is still active at another path",
+        }
+
+    if len(missing_candidates) != 1:
+        return {
+            "candidate": missing_candidates[0] if missing_candidates else None,
+            "event_type": "IDENTITY_AMBIGUOUS" if missing_candidates else None,
+            "level": "ambiguous" if missing_candidates else None,
+            "score": None,
+            "signals": {"candidate_count": len(missing_candidates)},
+            "decision": "created_separate",
+            "reason": "multiple missing candidates" if missing_candidates else "no candidate",
+        }
+
+    candidate = missing_candidates[0]
+    score, level, signals = identity_confidence(
+        candidate, filesystem_device, inode, size_bytes, modified_at_fs, content_hash
+    )
+    signals["candidate_count"] = 1
+    matched = level == "high"
+    return {
+        "candidate": candidate,
+        "event_type": "IDENTITY_MATCHED" if matched else "IDENTITY_REJECTED",
+        "level": level,
+        "score": score,
+        "signals": signals,
+        "decision": "auto_linked" if matched else "created_separate",
+        "reason": "unique high-confidence match" if matched else "confidence below automatic threshold",
+    }
+
+
+def find_rename_candidate(cur, path, inode, size_bytes, modified_at_fs,
+                          content_hash=None, filesystem_device=None):
+    result = evaluate_identity_match(
+        cur, path, filesystem_device, inode, size_bytes, modified_at_fs, content_hash
+    )
+    return result["candidate"] if result["decision"] == "auto_linked" else None
+
+
 def process_event(cur, data):
     event = str(data.get("event", "")).lower()
     path = data.get("path")
@@ -369,12 +633,41 @@ def process_event(cur, data):
     path = os.path.normpath(str(path))
 
     if "delete" in event:
-        cur.execute("UPDATE files SET deleted_at = NOW() WHERE path = %s", (path,))
+        cur.execute("""
+            UPDATE files SET
+                deleted_at = NOW(),
+                updated_at = NOW(),
+                last_mutation_type = 'DELETED'
+            WHERE path = %s
+            RETURNING id
+        """, (path,))
+        row = cur.fetchone()
+        if row:
+            insert_file_event(
+                cur, file_id=row["id"], event_type="DELETED",
+                source=data.get("source", "polling_scanner"),
+                old_path=path, scan_session_id=data.get("scan_session_id"),
+            )
         logger.info("Deleted: %s", path)
         return
 
     if not os.path.exists(path):
-        cur.execute("UPDATE files SET deleted_at = NOW() WHERE path = %s", (path,))
+        cur.execute("""
+            UPDATE files SET
+                deleted_at = NOW(),
+                updated_at = NOW(),
+                last_mutation_type = 'DELETED'
+            WHERE path = %s
+            RETURNING id
+        """, (path,))
+        row = cur.fetchone()
+        if row:
+            insert_file_event(
+                cur, file_id=row["id"], event_type="DELETED",
+                source=data.get("source", "polling_scanner"),
+                old_path=path, reason="path_missing",
+                scan_session_id=data.get("scan_session_id"),
+            )
         logger.warning("Missing file, marked deleted: %s", path)
         return
 
@@ -391,74 +684,157 @@ def process_event(cur, data):
     size_bytes = stat.st_size
     modified_at_fs = int(stat.st_mtime)
     inode = stat.st_ino
+    filesystem_device = stat.st_dev
 
     hash_path = xxhash.xxh64(path).hexdigest()
     hash_content = hash_first_1024(path)
     mime = get_mime(path)
 
-    cur.execute("""
-        INSERT INTO files (
-            folder_id, filename, extension, size_bytes,
-            modified_at_fs, inode, xxhash,
-            path, source, hash_path, hash_content,
-            mime_type, deleted_at
-        )
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL)
-        ON CONFLICT (path) DO UPDATE SET
-            folder_id       = EXCLUDED.folder_id,
-            filename        = EXCLUDED.filename,
-            extension       = EXCLUDED.extension,
-            size_bytes      = EXCLUDED.size_bytes,
-            modified_at_fs  = EXCLUDED.modified_at_fs,
-            inode           = EXCLUDED.inode,
-            xxhash          = EXCLUDED.xxhash,
-            source          = EXCLUDED.source,
-            hash_path       = EXCLUDED.hash_path,
-            hash_content    = EXCLUDED.hash_content,
-            mime_type       = EXCLUDED.mime_type,
-            updated_at      = NOW(),
-            deleted_at      = NULL
-        RETURNING id
-    """, (
+    values = (
         folder_id,
         filename,
         extension,
         size_bytes,
         modified_at_fs,
+        filesystem_device,
         inode,
-        hash_path,
         path,
         data.get("source", "polling_scanner"),
         hash_path,
         hash_content,
         mime,
-    ))
+    )
 
+    existing_file = get_file_by_path(cur, path)
+    rename_candidate = None
+    identity_match = None
+    if not existing_file:
+        identity_match = evaluate_identity_match(
+            cur, path, filesystem_device, inode, size_bytes, modified_at_fs, hash_content
+        )
+        if identity_match["decision"] == "auto_linked":
+            rename_candidate = identity_match["candidate"]
+
+    if rename_candidate:
+        mutation_type = classify_rename_mutation(rename_candidate["path"], path)
+        cur.execute("""
+            UPDATE files SET
+                folder_id          = %s,
+                filename           = %s,
+                extension          = %s,
+                size_bytes         = %s,
+                modified_at_fs     = %s,
+                filesystem_device  = %s,
+                inode              = %s,
+                path               = %s,
+                source             = %s,
+                hash_path          = %s,
+                hash_content       = %s,
+                mime_type          = %s,
+                last_mutation_type = %s,
+                updated_at         = NOW(),
+                deleted_at         = NULL
+            WHERE id = %s
+            RETURNING id
+        """, values + (mutation_type, rename_candidate["id"]))
+        logger.info(
+            "%s: %s -> %s",
+            mutation_type.title(),
+            rename_candidate["path"],
+            path,
+        )
+    else:
+        mutation_type = classify_path_mutation(existing_file)
+        cur.execute("""
+            INSERT INTO files (
+                folder_id, filename, extension, size_bytes,
+                modified_at_fs, filesystem_device, inode,
+                path, source, hash_path, hash_content,
+                mime_type, deleted_at,
+                last_mutation_type
+            )
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,%s)
+            ON CONFLICT (path) DO UPDATE SET
+                folder_id          = EXCLUDED.folder_id,
+                filename           = EXCLUDED.filename,
+                extension          = EXCLUDED.extension,
+                size_bytes         = EXCLUDED.size_bytes,
+                modified_at_fs     = EXCLUDED.modified_at_fs,
+                filesystem_device  = EXCLUDED.filesystem_device,
+                inode              = EXCLUDED.inode,
+                source             = EXCLUDED.source,
+                hash_path          = EXCLUDED.hash_path,
+                hash_content       = EXCLUDED.hash_content,
+                mime_type          = EXCLUDED.mime_type,
+                last_mutation_type = EXCLUDED.last_mutation_type,
+                updated_at         = NOW(),
+                deleted_at         = NULL
+            RETURNING id
+        """, values + (mutation_type,))
     file_id = cur.fetchone()["id"]
+    insert_file_event(
+        cur,
+        file_id=file_id,
+        candidate_file_id=rename_candidate["id"] if rename_candidate else None,
+        event_type=mutation_type,
+        source=data.get("source", "polling_scanner"),
+        old_path=rename_candidate["path"] if rename_candidate else None,
+        new_path=path,
+        decision="auto_linked" if rename_candidate else "state_updated",
+        scan_session_id=data.get("scan_session_id"),
+    )
+    if identity_match and identity_match["event_type"]:
+        insert_file_event(
+            cur,
+            file_id=file_id,
+            candidate_file_id=(
+                identity_match["candidate"]["id"]
+                if identity_match["candidate"] else None
+            ),
+            event_type=identity_match["event_type"],
+            source=data.get("source", "polling_scanner"),
+            old_path=(
+                identity_match["candidate"]["path"]
+                if identity_match["candidate"] else None
+            ),
+            new_path=path,
+            score=identity_match["score"],
+            level=identity_match["level"],
+            decision=identity_match["decision"],
+            signals=identity_match["signals"],
+            reason=identity_match["reason"],
+            scan_session_id=data.get("scan_session_id"),
+        )
 
     if FORCE_FULL:
         cur.execute("DELETE FROM metadata WHERE file_id = %s", (file_id,))
 
-    cur.execute("SELECT 1 FROM metadata WHERE file_id = %s", (file_id,))
-    exists = cur.fetchone()
+    width, height = get_image_dims(path, mime)
 
-    if not exists:
-        width, height = get_image_dims(path, mime)
-
-        cur.execute("""
-            INSERT INTO metadata (
-                file_id, mime_type, width, height, duration, missing
-            )
-            VALUES (%s,%s,%s,%s,NULL,false)
-            ON CONFLICT (file_id) DO UPDATE SET
-                mime_type = EXCLUDED.mime_type,
-                width     = EXCLUDED.width,
-                height    = EXCLUDED.height,
-                missing   = false
-        """, (file_id, mime, width, height))
+    cur.execute("""
+        INSERT INTO metadata (
+            file_id, width, height, duration, missing
+        )
+        VALUES (%s,%s,%s,NULL,false)
+        ON CONFLICT (file_id) DO UPDATE SET
+            width     = EXCLUDED.width,
+            height    = EXCLUDED.height,
+            missing   = false
+    """, (file_id, width, height))
 
     r.set(LAST_EVENT_KEY, utc_now(), ex=HEARTBEAT_TTL * 4)
     logger.info("Processed: %s", path)
+
+
+def mark_session_job_processed(cur, data):
+    session_id = data.get("scan_session_id")
+    if session_id:
+        try:
+            cur.execute("SELECT increment_jobs_processed(%s)", (session_id,))
+        except Exception as exc:
+            # Session accounting must never turn an otherwise valid legacy
+            # metadata event into a DLQ entry.
+            logger.warning("Scan session update failed: %s", exc)
 
 
 def main():
@@ -469,7 +845,8 @@ def main():
     conn = get_db()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    ensure_group()
+    ensure_group(STREAM_KEY)
+    ensure_group(REALTIME_STREAM_KEY)
     logger.info("Worker started")
 
     try:
@@ -478,17 +855,12 @@ def main():
             heartbeat("waiting")
 
             try:
-                resp = r.xreadgroup(
-                    GROUP_NAME,
-                    CONSUMER_NAME,
-                    streams={STREAM_KEY: ">"},
-                    count=50,
-                    block=5000,
-                )
+                resp = read_next_batch()
             except redis.exceptions.ResponseError as e:
                 if "NOGROUP" in str(e):
                     logger.warning("NOGROUP detected, recreating group")
-                    ensure_group()
+                    ensure_group(STREAM_KEY)
+                    ensure_group(REALTIME_STREAM_KEY)
                     continue
                 raise
 
@@ -497,20 +869,24 @@ def main():
 
             heartbeat("processing")
 
-            for _, msgs in resp:
+            for source_stream, msgs in resp:
                 for msg_id, data in msgs:
                     try:
                         process_event(cur, data)
+                        mark_session_job_processed(cur, data)
+                        conn.commit()
                     except Exception as e:
+                        conn.rollback()
                         logger.error("DLQ msg=%s: %s", msg_id, e, exc_info=True)
                         r.xadd(DLQ_STREAM, {
                             "original_id": msg_id,
+                            "original_stream": source_stream,
                             "data": json.dumps(data),
                             "error": str(e),
                             "ts": utc_now(),
                         })
                     finally:
-                        r.xack(STREAM_KEY, GROUP_NAME, msg_id)
+                        r.xack(source_stream, GROUP_NAME, msg_id)
 
     finally:
         heartbeat("stopped")

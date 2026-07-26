@@ -1,56 +1,10 @@
 # Docker
 
-## Beheercommands
-
-Gebruik op de Synology NAS het volledige Docker-pad:
-
-```bash
-cd /volume1/docker/nas-stack
-/usr/local/bin/docker compose ps
-```
-
-### Scanner en metadata-worker volledig herbouwen
-
-Gebruik deze procedure wanneer nieuwe broncode ondanks een eerdere rebuild niet in de containers zichtbaar is:
-
-```bash
-/usr/local/bin/docker compose rm -sf scanner metadata_worker
-/usr/local/bin/docker compose build --no-cache scanner metadata_worker
-/usr/local/bin/docker compose up -d --force-recreate scanner metadata_worker
-```
-
-### Normale build en deployment
-
-```bash
-/usr/local/bin/docker compose build scanner metadata_worker
-/usr/local/bin/docker compose up -d scanner metadata_worker
-```
-
-Of gecombineerd:
-
-```bash
-/usr/local/bin/docker compose up -d --build scanner metadata_worker
-```
-
-### Volledige stack
-
-```bash
-/usr/local/bin/docker compose up -d --build
-/usr/local/bin/docker compose down
-```
-
-### Status en logs
-
-```bash
-/usr/local/bin/docker compose ps
-/usr/local/bin/docker compose logs --tail=100 scanner metadata_worker
-/usr/local/bin/docker compose logs -f --tail=50 scanner metadata_worker
-```
-
 ## Services
 
 - `redis`
 - `scanner`
+- `watcher`
 - `metadata_worker`
 - `redis_data`
 
@@ -62,8 +16,15 @@ Of gecombineerd:
 - `DB_PORT`
 - `DB_USER`
 - `FORCE_FULL_METADATA`
+- `FULL_SCAN_INTERVAL`
+- `MISSING_SCAN_THRESHOLD`
+- `REALTIME_STREAM_KEY`
 - `REDIS_HOST`
+- `SCAN_INTERVAL`
 - `SCAN_ROOT`
+- `STREAM_KEY`
+- `WATCHER_DEBOUNCE_SECONDS`
+- `WATCH_ROOTS`
 
 ## docker-compose.yml
 
@@ -84,8 +45,32 @@ services:
     volumes: ["/volume1:/volume1:ro"]
     environment:
       - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - DB_NAME=${DB_NAME}
       - REDIS_HOST=redis
       - SCAN_ROOT=${SCAN_ROOT:-/volume1}
+      - SCAN_INTERVAL=${SCAN_INTERVAL:-600}
+      - FULL_SCAN_INTERVAL=${FULL_SCAN_INTERVAL:-3600}
+      - MISSING_SCAN_THRESHOLD=${MISSING_SCAN_THRESHOLD:-2}
+
+  watcher:
+    build: { context: ., dockerfile: Dockerfile.watcher }
+    restart: unless-stopped
+    depends_on: { redis: { condition: service_healthy } }
+    volumes: ["/volume1:/volume1:ro"]
+    environment:
+      - REDIS_HOST=redis
+      - SCAN_ROOT=${SCAN_ROOT:-/volume1}
+      - WATCH_ROOTS=${WATCH_ROOTS:-/volume1/data}
+      - STREAM_KEY=${REALTIME_STREAM_KEY:-scan_stream_realtime}
+      - WATCHER_DEBOUNCE_SECONDS=${WATCHER_DEBOUNCE_SECONDS:-2}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import redis; r=redis.Redis(host='redis', decode_responses=True); assert r.get('watcher:heartbeat')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   metadata_worker:
     build: { context: ., dockerfile: Dockerfile.metadata }
@@ -99,6 +84,7 @@ services:
       - DB_PASS=${DB_PASS}
       - DB_NAME=${DB_NAME}
       - REDIS_HOST=redis
+      - REALTIME_STREAM_KEY=${REALTIME_STREAM_KEY:-scan_stream_realtime}
       - FORCE_FULL_METADATA=${FORCE_FULL_METADATA:-false}
 
     healthcheck:

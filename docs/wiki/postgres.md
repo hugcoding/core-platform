@@ -20,48 +20,6 @@
 - `folder_id`
 - `parent_id`
 
-## Backup before cleanup
-
-Maak altijd een databasebackup voordat je cleanup-commands met apply-mode draait. De cleanup verwijdert geen bestanden van disk, maar kan wel database-rijen verwijderen en via `ON DELETE CASCADE` gekoppelde metadata-rijen opruimen.
-
-Run Docker databasecommands op de NAS, niet vanuit Windows Docker Desktop. Vanuit Windows PowerShell kan dat via SSH:
-
-```powershell
-ssh hugo@NAS "cd /volume1/docker/nas-stack && mkdir -p project/exports/db-backups && /usr/local/bin/docker exec postgres pg_dump -U hugo -d nasdb_test -Fc > project/exports/db-backups/nasdb_test-before-cleanup-$(date +%Y%m%d-%H%M%S).dump && ls -lh project/exports/db-backups | tail -5"
-```
-
-Als je al op de NAS bent:
-
-```bash
-cd /volume1/docker/nas-stack
-mkdir -p project/exports/db-backups
-docker exec postgres pg_dump -U hugo -d nasdb_test -Fc > project/exports/db-backups/nasdb_test-before-cleanup-$(date +%Y%m%d-%H%M%S).dump
-ls -lh project/exports/db-backups | tail -5
-```
-
-Gebruik `/usr/local/bin/docker` als `docker` niet op `PATH` staat:
-
-```bash
-/usr/local/bin/docker exec postgres pg_dump -U hugo -d nasdb_test -Fc > project/exports/db-backups/nasdb_test-before-cleanup-$(date +%Y%m%d-%H%M%S).dump
-```
-
-Controleer dat de dump bestaat en niet leeg is voordat je cleanup uitvoert.
-
-## Restore from backup
-
-Restore is destructief voor de database-inhoud. Gebruik dit alleen als je bewust terug wilt naar een backup:
-
-```bash
-cd /volume1/docker/nas-stack
-docker exec -i postgres pg_restore -U hugo -d nasdb_test --clean --if-exists < project/exports/db-backups/NAAM-VAN-BACKUP.dump
-```
-
-## Command pitfalls
-
-Als de NAS-shell blijft hangen op een `>` prompt, staat er meestal een open quote in je command. Druk `Ctrl+C` en voer het command opnieuw uit zonder los afsluitend aanhalingsteken.
-
-Windows PowerShell gebruikt geen Bash line continuation met `\`. Gebruik voor lange databasecommands bij voorkeur één SSH-regel, of voer de losse Bash-regels direct uit op de NAS.
-
 ## schema.sql
 
 ```sql
@@ -106,455 +64,230 @@ COMMENT ON EXTENSION vector IS 'vector data type and ivfflat and hnsw access met
 CREATE PROCEDURE public.cleanup_all_execute()
     LANGUAGE plpgsql
     AS $_$
-
 DECLARE
-
     dir_folders INT := 0;
-
     dir_files INT := 0;
-
     dir_meta INT := 0;
-
     dir_emb INT := 0;
-
     dir_ai INT := 0;
 
-
-
     file_files INT := 0;
-
     file_meta INT := 0;
-
     file_emb INT := 0;
-
     file_ai INT := 0;
 
-
-
     orphan_metadata INT := 0;
-
     orphan_embeddings INT := 0;
-
     orphan_ai INT := 0;
-
     orphan_files INT := 0;
-
     orphan_folders INT := 0;
-
 BEGIN
-
     RAISE NOTICE '=== CLEANUP START ===';
 
-
-
     --------------------------------------------------------------------
-
     -- 1. SYSTEM FOLDERS (@eaDir, @tmp, @appstore, @*)
-
     --------------------------------------------------------------------
-
     WITH excluded_folders AS (
-
         SELECT id FROM folders
-
         WHERE path LIKE '%/@eaDir%'
-
            OR path LIKE '%/@appstore%'
-
            OR path LIKE '%/@tmp%'
-
            OR path LIKE '%/@%'
-
     ),
-
     files_to_delete AS (
-
         SELECT id AS file_id FROM files
-
         WHERE folder_id IN (SELECT id FROM excluded_folders)
-
     )
-
     SELECT
-
         (SELECT COUNT(*) FROM excluded_folders),
-
         (SELECT COUNT(*) FROM files_to_delete),
-
         (SELECT COUNT(*) FROM metadata WHERE file_id IN (SELECT file_id FROM files_to_delete)),
-
         (SELECT COUNT(*) FROM embeddings WHERE file_id IN (SELECT file_id FROM files_to_delete)),
-
         (SELECT COUNT(*) FROM ai_output WHERE file_id IN (SELECT file_id FROM files_to_delete))
-
     INTO dir_folders, dir_files, dir_meta, dir_emb, dir_ai;
 
-
-
     RAISE NOTICE 'DIRS → removing % folders, % files, % metadata, % embeddings, % ai_output',
-
         dir_folders, dir_files, dir_meta, dir_emb, dir_ai;
 
-
-
     -- DELETE using fresh CTE
-
     WITH files_to_delete AS (
-
         SELECT id AS file_id FROM files
-
         WHERE folder_id IN (
-
             SELECT id FROM folders
-
             WHERE path LIKE '%/@eaDir%'
-
                OR path LIKE '%/@appstore%'
-
                OR path LIKE '%/@tmp%'
-
                OR path LIKE '%/@%'
-
         )
-
     )
-
     DELETE FROM metadata WHERE file_id IN (SELECT file_id FROM files_to_delete);
 
-
-
     WITH files_to_delete AS (
-
         SELECT id AS file_id FROM files
-
         WHERE folder_id IN (
-
             SELECT id FROM folders
-
             WHERE path LIKE '%/@eaDir%'
-
                OR path LIKE '%/@appstore%'
-
                OR path LIKE '%/@tmp%'
-
                OR path LIKE '%/@%'
-
         )
-
     )
-
     DELETE FROM embeddings WHERE file_id IN (SELECT file_id FROM files_to_delete);
 
-
-
     WITH files_to_delete AS (
-
         SELECT id AS file_id FROM files
-
         WHERE folder_id IN (
-
             SELECT id FROM folders
-
             WHERE path LIKE '%/@eaDir%'
-
                OR path LIKE '%/@appstore%'
-
                OR path LIKE '%/@tmp%'
-
                OR path LIKE '%/@%'
-
         )
-
     )
-
     DELETE FROM ai_output WHERE file_id IN (SELECT file_id FROM files_to_delete);
 
-
-
     WITH files_to_delete AS (
-
         SELECT id AS file_id FROM files
-
         WHERE folder_id IN (
-
             SELECT id FROM folders
-
             WHERE path LIKE '%/@eaDir%'
-
                OR path LIKE '%/@appstore%'
-
                OR path LIKE '%/@tmp%'
-
                OR path LIKE '%/@%'
-
         )
-
     )
-
     DELETE FROM files WHERE id IN (SELECT file_id FROM files_to_delete);
 
-
-
     DELETE FROM folders
-
     WHERE path LIKE '%/@eaDir%'
-
        OR path LIKE '%/@appstore%'
-
        OR path LIKE '%/@tmp%'
-
        OR path LIKE '%/@%';
 
-
-
     --------------------------------------------------------------------
-
     -- 2. SYSTEM FILES (~$, ._, .DS_Store, Thumbs.db, *.tmp, *.swp, *.bak)
-
     --------------------------------------------------------------------
-
     WITH excluded_files AS (
-
         SELECT id AS file_id FROM files
-
         WHERE filename LIKE '~$%'
-
            OR filename LIKE '._%'
-
            OR filename = '.DS_Store'
-
            OR filename = 'Thumbs.db'
-
            OR filename LIKE '%.tmp'
-
            OR filename LIKE '%.swp'
-
            OR filename LIKE '%.bak'
-
     )
-
     SELECT
-
         (SELECT COUNT(*) FROM excluded_files),
-
         (SELECT COUNT(*) FROM metadata WHERE file_id IN (SELECT file_id FROM excluded_files)),
-
         (SELECT COUNT(*) FROM embeddings WHERE file_id IN (SELECT file_id FROM excluded_files)),
-
         (SELECT COUNT(*) FROM ai_output WHERE file_id IN (SELECT file_id FROM excluded_files))
-
     INTO file_files, file_meta, file_emb, file_ai;
 
-
-
     RAISE NOTICE 'FILES → removing % files, % metadata, % embeddings, % ai_output',
-
         file_files, file_meta, file_emb, file_ai;
 
-
-
     -- DELETE using fresh CTE
-
     WITH excluded_files AS (
-
         SELECT id AS file_id FROM files
-
         WHERE filename LIKE '~$%'
-
            OR filename LIKE '._%'
-
            OR filename = '.DS_Store'
-
            OR filename = 'Thumbs.db'
-
            OR filename LIKE '%.tmp'
-
            OR filename LIKE '%.swp'
-
            OR filename LIKE '%.bak'
-
     )
-
     DELETE FROM metadata WHERE file_id IN (SELECT file_id FROM excluded_files);
 
-
-
     WITH excluded_files AS (
-
         SELECT id AS file_id FROM files
-
         WHERE filename LIKE '~$%'
-
            OR filename LIKE '._%'
-
            OR filename = '.DS_Store'
-
            OR filename = 'Thumbs.db'
-
            OR filename LIKE '%.tmp'
-
            OR filename LIKE '%.swp'
-
            OR filename LIKE '%.bak'
-
     )
-
     DELETE FROM embeddings WHERE file_id IN (SELECT file_id FROM excluded_files);
 
-
-
     WITH excluded_files AS (
-
         SELECT id AS file_id FROM files
-
         WHERE filename LIKE '~$%'
-
            OR filename LIKE '._%'
-
            OR filename = '.DS_Store'
-
            OR filename = 'Thumbs.db'
-
            OR filename LIKE '%.tmp'
-
            OR filename LIKE '%.swp'
-
            OR filename LIKE '%.bak'
-
     )
-
     DELETE FROM ai_output WHERE file_id IN (SELECT file_id FROM excluded_files);
 
-
-
     WITH excluded_files AS (
-
         SELECT id AS file_id FROM files
-
         WHERE filename LIKE '~$%'
-
            OR filename LIKE '._%'
-
            OR filename = '.DS_Store'
-
            OR filename = 'Thumbs.db'
-
            OR filename LIKE '%.tmp'
-
            OR filename LIKE '%.swp'
-
            OR filename LIKE '%.bak'
-
     )
-
     DELETE FROM files WHERE id IN (SELECT file_id FROM excluded_files);
 
-
-
     --------------------------------------------------------------------
-
     -- 3. ORPHANS (metadata, embeddings, ai_output, files, folders)
-
     --------------------------------------------------------------------
-
     SELECT COUNT(*) INTO orphan_metadata
-
     FROM metadata m LEFT JOIN files f ON f.id = m.file_id
-
     WHERE f.id IS NULL;
-
-
 
     RAISE NOTICE 'ORPHANS → removing % orphaned metadata', orphan_metadata;
 
-
-
     DELETE FROM metadata m
-
     WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.id = m.file_id);
 
-
-
     SELECT COUNT(*) INTO orphan_embeddings
-
     FROM embeddings e LEFT JOIN files f ON f.id = e.file_id
-
     WHERE f.id IS NULL;
-
-
 
     RAISE NOTICE 'ORPHANS → removing % orphaned embeddings', orphan_embeddings;
 
-
-
     DELETE FROM embeddings e
-
     WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.id = e.file_id);
 
-
-
     SELECT COUNT(*) INTO orphan_ai
-
     FROM ai_output a LEFT JOIN files f ON f.id = a.file_id
-
     WHERE f.id IS NULL;
-
-
 
     RAISE NOTICE 'ORPHANS → removing % orphaned ai_output', orphan_ai;
 
-
-
     DELETE FROM ai_output a
-
     WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.id = a.file_id);
 
-
-
     SELECT COUNT(*) INTO orphan_files
-
     FROM files fl LEFT JOIN folders fo ON fo.id = fl.folder_id
-
     WHERE fo.id IS NULL;
-
-
 
     RAISE NOTICE 'ORPHANS → removing % orphaned files', orphan_files;
 
-
-
     DELETE FROM files fl
-
     WHERE NOT EXISTS (SELECT 1 FROM folders fo WHERE fo.id = fl.folder_id);
 
-
-
     SELECT COUNT(*) INTO orphan_folders
-
     FROM folders f LEFT JOIN folders p ON p.id = f.parent_id
-
     WHERE f.parent_id IS NOT NULL AND p.id IS NULL;
-
-
 
     RAISE NOTICE 'ORPHANS → removing % orphaned folders', orphan_folders;
 
-
-
     DELETE FROM folders f
-
     WHERE f.parent_id IS NOT NULL
-
       AND NOT EXISTS (SELECT 1 FROM folders p WHERE p.id = f.parent_id);
 
-
-
     --------------------------------------------------------------------
-
     RAISE NOTICE '=== CLEANUP COMPLETE ===';
-
 END;
-
 $_$;
 
 
@@ -567,21 +300,13 @@ ALTER PROCEDURE public.cleanup_all_execute() OWNER TO hugo;
 CREATE FUNCTION public.create_scan_session(scan_type text) RETURNS uuid
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
-
     sid UUID := gen_random_uuid();
-
 BEGIN
-
     INSERT INTO scan_sessions(id, type)
-
     VALUES (sid, scan_type);
-
     RETURN sid;
-
 END;
-
 $$;
 
 
@@ -594,19 +319,12 @@ ALTER FUNCTION public.create_scan_session(scan_type text) OWNER TO hugo;
 CREATE FUNCTION public.finish_scan_session(sid uuid) RETURNS void
     LANGUAGE plpgsql
     AS $$
-
 BEGIN
-
     UPDATE scan_sessions
-
     SET finished_at = NOW(),
-
         status = 'done'
-
     WHERE id = sid;
-
 END;
-
 $$;
 
 
@@ -619,17 +337,11 @@ ALTER FUNCTION public.finish_scan_session(sid uuid) OWNER TO hugo;
 CREATE FUNCTION public.increment_files_discovered(sid uuid, cnt integer) RETURNS void
     LANGUAGE plpgsql
     AS $$
-
 BEGIN
-
     UPDATE scan_sessions
-
     SET files_discovered = files_discovered + cnt
-
     WHERE id = sid;
-
 END;
-
 $$;
 
 
@@ -642,17 +354,11 @@ ALTER FUNCTION public.increment_files_discovered(sid uuid, cnt integer) OWNER TO
 CREATE FUNCTION public.increment_jobs_enqueued(sid uuid, cnt integer) RETURNS void
     LANGUAGE plpgsql
     AS $$
-
 BEGIN
-
     UPDATE scan_sessions
-
     SET jobs_enqueued = jobs_enqueued + cnt
-
     WHERE id = sid;
-
 END;
-
 $$;
 
 
@@ -665,17 +371,11 @@ ALTER FUNCTION public.increment_jobs_enqueued(sid uuid, cnt integer) OWNER TO hu
 CREATE FUNCTION public.increment_jobs_processed(sid uuid) RETURNS void
     LANGUAGE plpgsql
     AS $$
-
 BEGIN
-
     UPDATE scan_sessions
-
     SET jobs_processed = jobs_processed + 1
-
     WHERE id = sid;
-
 END;
-
 $$;
 
 
@@ -688,21 +388,13 @@ ALTER FUNCTION public.increment_jobs_processed(sid uuid) OWNER TO hugo;
 CREATE FUNCTION public.is_scan_complete(sid uuid) RETURNS boolean
     LANGUAGE plpgsql
     AS $$
-
 DECLARE done BOOLEAN;
-
 BEGIN
-
     SELECT (status='done' AND jobs_enqueued>0 AND jobs_processed>=jobs_enqueued)
-
     INTO done
-
     FROM scan_sessions WHERE id=sid;
-
     RETURN COALESCE(done, FALSE);
-
 END;
-
 $$;
 
 
@@ -801,13 +493,14 @@ CREATE TABLE public.files (
     updated_at timestamp without time zone DEFAULT now(),
     modified_at_fs bigint,
     inode bigint,
-    xxhash text,
     path text,
     mime_type text,
     deleted_at timestamp without time zone,
     hash_content text,
     hash_path text,
-    source text
+    source text,
+    last_mutation_type text DEFAULT 'UNKNOWN'::text NOT NULL,
+    CONSTRAINT files_last_mutation_type_check CHECK ((last_mutation_type = ANY (ARRAY['UNKNOWN'::text, 'CREATED'::text, 'MODIFIED'::text, 'RENAMED'::text, 'MOVED'::text, 'RESTORED'::text, 'DELETED'::text])))
 );
 
 
@@ -879,7 +572,6 @@ CREATE TABLE public.metadata (
     id integer NOT NULL,
     file_id bigint NOT NULL,
     created_at timestamp without time zone DEFAULT now(),
-    mime_type text,
     width integer,
     height integer,
     duration double precision,
@@ -1014,7 +706,7 @@ CREATE VIEW public.v_test_documents AS
     f.updated_at,
     f.modified_at_fs,
     f.inode,
-    f.xxhash,
+    f.hash_path AS xxhash,
     fo.path
    FROM (public.files f
      JOIN public.folders fo ON ((fo.id = f.folder_id)))
@@ -1145,13 +837,6 @@ CREATE INDEX idx_files_inode_mtime ON public.files USING btree (inode, modified_
 
 
 --
--- Name: idx_files_xxhash; Type: INDEX; Schema: public; Owner: hugo
---
-
-CREATE INDEX idx_files_xxhash ON public.files USING btree (xxhash);
-
-
---
 -- Name: idx_folders_parent_id; Type: INDEX; Schema: public; Owner: hugo
 --
 
@@ -1163,13 +848,6 @@ CREATE INDEX idx_folders_parent_id ON public.folders USING btree (parent_id);
 --
 
 CREATE INDEX idx_metadata_file_id ON public.metadata USING btree (file_id);
-
-
---
--- Name: idx_metadata_mime_type; Type: INDEX; Schema: public; Owner: hugo
---
-
-CREATE INDEX idx_metadata_mime_type ON public.metadata USING btree (mime_type);
 
 
 --

@@ -130,6 +130,18 @@ Bij iedere watcherstart worden de toegestane hoofdroots als dirty gemarkeerd. De
 
 Maak voor de eerste acceptatietest uitsluitend een tijdelijke map onder `/volume1/data` en test daar create, modify, rename, move en delete. Gebruik geen productie- of legacybestanden voor deze test.
 
+De live acceptatietest van 2026-07-26 verwerkte create en modify binnen 2 seconden, rename en move binnen 4 seconden en delete binnen 2 seconden. Zie [SCRUM-55 Realtime Scanning](../project/scrum-55-realtime-scanning.md).
+
+### Container Manager-namen
+
+Sluit Synology Container Manager voordat services met `docker compose up -d --force-recreate` opnieuw worden aangemaakt. Wanneer de GUI tijdens een recreatie geopend blijft, kan Container Manager een oude container-ID als prefix tonen terwijl Docker zelf nog de juiste naam gebruikt.
+
+Controleer altijd de werkelijke namen met:
+
+```bash
+docker ps --format '{{.Names}}'
+```
+
 ## NAS repository veilig bijwerken
 
 Gebruik vanuit Windows PowerShell het wrapper-script. Het controleert op lokale NAS-wijzigingen, schakelt automatisch Git-onderhoud op de SMB-share uit en staat alleen een fast-forward toe:

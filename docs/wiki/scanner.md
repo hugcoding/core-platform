@@ -2,10 +2,10 @@
 
 Bronbestand: `scanner.py`
 
-- Regels: `229`
-- Functies: `11`
+- Regels: `526`
+- Functies: `26`
 - Classes: `0`
-- Imports: `7`
+- Imports: `9`
 
 ## Imports
 
@@ -13,27 +13,39 @@ Bronbestand: `scanner.py`
 - `datetime.timezone`
 - `logging`
 - `os`
+- `psycopg2`
 - `redis`
 - `socket`
 - `time`
+- `uuid`
 
 ## Constanten
 
-- `CONSUMER_NAME` op regel `28`
-- `HEARTBEAT_KEY` op regel `23`
-- `HEARTBEAT_STATUS_KEY` op regel `24`
-- `HEARTBEAT_TTL` op regel `26`
-- `IGNORE_CONTAINS` op regel `32`
-- `IGNORE_NAMES` op regel `31`
-- `IGNORE_PREFIXES` op regel `30`
-- `LAST_SCAN_KEY` op regel `25`
-- `LOCK_KEY` op regel `20`
-- `LOCK_TTL` op regel `21`
-- `REDIS_HOST` op regel `13`
-- `REDIS_PORT` op regel `14`
-- `SCAN_INTERVAL` op regel `17`
-- `SCAN_ROOT` op regel `16`
-- `STREAM_KEY` op regel `19`
+- `CONSUMER_NAME` op regel `38`
+- `DIRTY_ROOTS_KEY` op regel `34`
+- `FULL_SCAN_INTERVAL` op regel `20`
+- `FULL_SCAN_REQUEST_KEY` op regel `35`
+- `HEARTBEAT_KEY` op regel `27`
+- `HEARTBEAT_STATUS_KEY` op regel `28`
+- `HEARTBEAT_TTL` op regel `36`
+- `IGNORE_CONTAINS` op regel `44`
+- `IGNORE_NAMES` op regel `43`
+- `IGNORE_PREFIXES` op regel `42`
+- `INTERVAL_ROOT_INDEX_KEY` op regel `33`
+- `LAST_FULL_SCAN_KEY` op regel `30`
+- `LAST_INTERVAL_ROOT_KEY` op regel `32`
+- `LAST_INTERVAL_SCAN_KEY` op regel `31`
+- `LAST_SCAN_KEY` op regel `29`
+- `LOCK_KEY` op regel `24`
+- `LOCK_TTL` op regel `25`
+- `MISSING_SCAN_THRESHOLD` op regel `21`
+- `REDIS_HOST` op regel `15`
+- `REDIS_PORT` op regel `16`
+- `SCAN_INTERVAL` op regel `19`
+- `SCAN_ROOT` op regel `18`
+- `SIGNATURE_PREFIX` op regel `39`
+- `STATE_SEPARATOR` op regel `40`
+- `STREAM_KEY` op regel `23`
 
 ## Redis keys / streams
 
@@ -43,64 +55,173 @@ Bronbestand: `scanner.py`
 
 ## Functies
 
+### `get_db()`
+
+- Regel: `64`
+- Docstring: _niet aanwezig_
+
+### `session_call(query, params, fetch)`
+
+- Regel: `78`
+- Docstring: Run scan bookkeeping without making PostgreSQL a scanner dependency.
+
 ### `utc_now()`
 
-- Regel: `50`
+- Regel: `90`
 - Docstring: _niet aanwezig_
 
 ### `should_skip_path(path)`
 
-- Regel: `54`
+- Regel: `94`
 - Docstring: _niet aanwezig_
 
 ### `heartbeat(status)`
 
-- Regel: `66`
+- Regel: `106`
 - Docstring: _niet aanwezig_
 
 ### `acquire_lock()`
 
-- Regel: `74`
+- Regel: `114`
 - Docstring: _niet aanwezig_
 
 ### `refresh_lock()`
 
-- Regel: `93`
+- Regel: `133`
 - Docstring: _niet aanwezig_
 
 ### `release_lock()`
 
-- Regel: `101`
+- Regel: `141`
 - Docstring: _niet aanwezig_
 
 ### `discover_roots()`
 
-- Regel: `109`
+- Regel: `149`
 - Docstring: _niet aanwezig_
 
 ### `file_signature(path, st)`
 
-- Regel: `129`
+- Regel: `169`
 - Docstring: _niet aanwezig_
 
-### `changed(path, signature)`
+### `parse_file_state(raw)`
 
-- Regel: `133`
+- Regel: `173`
+- Docstring: _niet aanwezig_
+
+### `encode_file_state(signature, scan_id, missing_scans)`
+
+- Regel: `189`
+- Docstring: _niet aanwezig_
+
+### `changed(path, signature, scan_id, full_sweep)`
+
+- Regel: `193`
+- Docstring: _niet aanwezig_
+
+### `mark_seen(path, scan_id)`
+
+- Regel: `203`
+- Docstring: _niet aanwezig_
+
+### `reconcile_missing(scan_id, session_id, root_scope, threshold)`
+
+- Regel: `210`
+- Docstring: _niet aanwezig_
+
+### `raise_walk_error(error)`
+
+- Regel: `246`
+- Docstring: _niet aanwezig_
+
+### `select_interval_root(roots)`
+
+- Regel: `250`
+- Docstring: _niet aanwezig_
+
+### `select_dirty_root(roots)`
+
+- Regel: `262`
+- Docstring: _niet aanwezig_
+
+### `clear_dirty_root(root, expected_marker)`
+
+- Regel: `276`
+- Docstring: _niet aanwezig_
+
+### `_scan_roots(roots, scan_id, session_id, full_sweep, scan_type, reconcile_scope, missing_threshold)`
+
+- Regel: `286`
+- Docstring: _niet aanwezig_
+
+### `run_scan(scan_type, roots)`
+
+- Regel: `394`
 - Docstring: _niet aanwezig_
 
 ### `scan_once()`
 
-- Regel: `142`
+- Regel: `425`
+- Docstring: Run a complete reconciliation sweep (backward-compatible entry point).
+
+### `scan_interval_once()`
+
+- Regel: `433`
 - Docstring: _niet aanwezig_
+
+### `consume_full_scan_request()`
+
+- Regel: `455`
+- Docstring: _niet aanwezig_
+
+### `wait_for_next_scan(seconds)`
+
+- Regel: `464`
+- Docstring: Wait interruptibly so a manual full request is picked up promptly.
 
 ### `main()`
 
-- Regel: `199`
+- Regel: `475`
 - Docstring: _niet aanwezig_
 
 ## SQL statements
 
-_Geen SQL-statements automatisch herkend._
+### Statement regel `403`
+
+```sql
+SELECT create_scan_session(%s)
+```
+
+### Statement regel `380`
+
+```sql
+SELECT increment_files_discovered(%s, %s)
+```
+
+### Statement regel `381`
+
+```sql
+SELECT increment_jobs_enqueued(%s, %s)
+```
+
+### Statement regel `382`
+
+```sql
+SELECT finish_scan_session(%s)
+```
+
+### Statement regel `86`
+
+```sql
+Scan session update failed: %s
+```
+
+### Statement regel `419`
+
+```sql
+UPDATE scan_sessions SET status = 'failed', finished_at = NOW() WHERE id = %s
+```
 
 ## Broncode
 
@@ -110,9 +231,11 @@ import os
 import time
 import socket
 import logging
+import uuid
 from datetime import datetime, timezone
 
 import redis
+import psycopg2
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("scanner")
@@ -121,7 +244,9 @@ REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
 SCAN_ROOT = os.getenv("SCAN_ROOT", "/volume1")
-SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", "30"))
+SCAN_INTERVAL = max(1, int(os.getenv("SCAN_INTERVAL", "600")))
+FULL_SCAN_INTERVAL = max(SCAN_INTERVAL, int(os.getenv("FULL_SCAN_INTERVAL", "3600")))
+MISSING_SCAN_THRESHOLD = max(1, int(os.getenv("MISSING_SCAN_THRESHOLD", "2")))
 
 STREAM_KEY = os.getenv("STREAM_KEY", "scan_stream")
 LOCK_KEY = "scanner:lock:event"
@@ -130,9 +255,17 @@ LOCK_TTL = 90
 HEARTBEAT_KEY = "scanner:heartbeat"
 HEARTBEAT_STATUS_KEY = "scanner:heartbeat:status"
 LAST_SCAN_KEY = "scanner:last_scan"
+LAST_FULL_SCAN_KEY = "scanner:last_full_scan"
+LAST_INTERVAL_SCAN_KEY = "scanner:last_interval_scan"
+LAST_INTERVAL_ROOT_KEY = "scanner:last_interval_root"
+INTERVAL_ROOT_INDEX_KEY = "scanner:interval:root_index"
+DIRTY_ROOTS_KEY = "scanner:dirty_roots"
+FULL_SCAN_REQUEST_KEY = "scanner:request:full"
 HEARTBEAT_TTL = 120
 
 CONSUMER_NAME = socket.gethostname()
+SIGNATURE_PREFIX = "scanner:sig:"
+STATE_SEPARATOR = "\n"
 
 IGNORE_PREFIXES = ("@", ".", "#")
 IGNORE_NAMES = {"tmp", "lost+found"}
@@ -152,6 +285,34 @@ r = redis.Redis(
     socket_connect_timeout=10,
     retry_on_timeout=True,
 )
+
+_db_conn = None
+
+
+def get_db():
+    global _db_conn
+    if _db_conn is None or _db_conn.closed:
+        _db_conn = psycopg2.connect(
+            host=os.getenv("DB_HOST"),
+            port=int(os.getenv("DB_PORT", "5432")),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASS"),
+            dbname=os.getenv("DB_NAME"),
+        )
+        _db_conn.autocommit = True
+    return _db_conn
+
+
+def session_call(query, params=(), fetch=False):
+    """Run scan bookkeeping without making PostgreSQL a scanner dependency."""
+    try:
+        with get_db().cursor() as cur:
+            cur.execute(query, params)
+            row = cur.fetchone() if fetch else None
+            return row[0] if row else None
+    except Exception as exc:
+        logger.warning("Scan session update failed: %s", exc)
+        return None
 
 
 def utc_now():
@@ -237,27 +398,142 @@ def file_signature(path, st):
     return f"{int(st.st_mtime)}:{st.st_size}:{st.st_ino}"
 
 
-def changed(path, signature):
-    key = "scanner:sig:" + path
-    old = r.get(key)
-    if old == signature:
-        return False
-    r.set(key, signature)
-    return True
+def parse_file_state(raw):
+    if not raw:
+        return None, None, 0
+
+    parts = str(raw).split(STATE_SEPARATOR, 2)
+    signature = parts[0]
+    scan_id = (parts[1] or None) if len(parts) > 1 else None
+
+    try:
+        missing_scans = int(parts[2]) if len(parts) > 2 else 0
+    except ValueError:
+        missing_scans = 0
+
+    return signature, scan_id, missing_scans
 
 
-def scan_once():
-    roots = discover_roots()
-    logger.info("Discovered scan roots: %s", ", ".join(roots))
+def encode_file_state(signature, scan_id, missing_scans=0):
+    return STATE_SEPARATOR.join((signature, scan_id or "", str(missing_scans)))
+
+
+def changed(path, signature, scan_id, full_sweep=True):
+    key = SIGNATURE_PREFIX + path
+    old_signature, last_full_sweep, missing_sweeps = parse_file_state(r.get(key))
+    if full_sweep:
+        last_full_sweep = scan_id
+        missing_sweeps = 0
+    r.set(key, encode_file_state(signature, last_full_sweep, missing_sweeps))
+    return old_signature != signature
+
+
+def mark_seen(path, scan_id):
+    key = SIGNATURE_PREFIX + path
+    signature, _, _ = parse_file_state(r.get(key))
+    if signature is not None:
+        r.set(key, encode_file_state(signature, scan_id))
+
+
+def reconcile_missing(scan_id, session_id=None, root_scope=None, threshold=None):
+    checked = 0
+    deleted = 0
+    threshold = MISSING_SCAN_THRESHOLD if threshold is None else max(1, threshold)
+    pattern = SIGNATURE_PREFIX + "*"
+    if root_scope:
+        pattern = SIGNATURE_PREFIX + root_scope.rstrip("/") + "/" + "*"
+
+    for key in r.scan_iter(match=pattern, count=1000):
+        raw = r.get(key)
+        signature, last_seen_scan, missing_scans = parse_file_state(raw)
+
+        if signature is None or last_seen_scan == scan_id:
+            continue
+
+        checked += 1
+        missing_scans += 1
+
+        if missing_scans < threshold:
+            r.set(key, encode_file_state(signature, last_seen_scan, missing_scans))
+            continue
+
+        path = key[len(SIGNATURE_PREFIX):]
+        r.xadd(STREAM_KEY, {
+            "event": "DELETE",
+            "path": path,
+            "source": "polling_scanner",
+            "ts": utc_now(),
+            "scan_session_id": str(session_id or ""),
+        })
+        r.delete(key)
+        deleted += 1
+
+    return checked, deleted
+
+
+def raise_walk_error(error):
+    raise error
+
+
+def select_interval_root(roots):
+    if not roots:
+        return None
+    try:
+        index = int(r.get(INTERVAL_ROOT_INDEX_KEY) or 0)
+    except (TypeError, ValueError):
+        index = 0
+    root = roots[index % len(roots)]
+    r.set(INTERVAL_ROOT_INDEX_KEY, str((index + 1) % len(roots)))
+    return root
+
+
+def select_dirty_root(roots):
+    allowed = set(roots)
+    dirty = r.hgetall(DIRTY_ROOTS_KEY)
+    candidates = [
+        (marked_at, root)
+        for root, marked_at in dirty.items()
+        if root in allowed
+    ]
+    if not candidates:
+        return None, None
+    marked_at, root = min(candidates)
+    return root, marked_at
+
+
+def clear_dirty_root(root, expected_marker):
+    script = """
+    if redis.call('HGET', KEYS[1], ARGV[1]) == ARGV[2] then
+        return redis.call('HDEL', KEYS[1], ARGV[1])
+    end
+    return 0
+    """
+    return bool(r.eval(script, 1, DIRTY_ROOTS_KEY, root, expected_marker))
+
+
+def _scan_roots(
+    roots,
+    scan_id,
+    session_id,
+    full_sweep,
+    scan_type=None,
+    reconcile_scope=None,
+    missing_threshold=None,
+):
+    scan_type = scan_type or ("full" if full_sweep else "interval")
+    logger.info("Starting %s scan roots=%s", scan_type, ", ".join(roots))
 
     discovered = 0
     enqueued = 0
 
     for root_base in roots:
+        root_started = time.time()
+        root_discovered = 0
+        root_enqueued = 0
         heartbeat("scanning")
         refresh_lock()
 
-        for root, dirs, files in os.walk(root_base):
+        for root, dirs, files in os.walk(root_base, onerror=raise_walk_error):
             dirs[:] = [
                 d for d in dirs
                 if d not in IGNORE_NAMES
@@ -276,16 +552,24 @@ def scan_once():
                 except FileNotFoundError:
                     continue
                 except PermissionError:
+                    if full_sweep:
+                        mark_seen(path, scan_id)
                     logger.warning("Permission denied: %s", path)
                     continue
                 except Exception as e:
+                    if full_sweep:
+                        mark_seen(path, scan_id)
                     logger.warning("stat failed: %s err=%s", path, e)
                     continue
 
                 discovered += 1
+                root_discovered += 1
+                if root_discovered % 1000 == 0:
+                    heartbeat("scanning")
+                    refresh_lock()
                 sig = file_signature(path, st)
 
-                if not changed(path, sig):
+                if not changed(path, sig, scan_id, full_sweep=full_sweep):
                     continue
 
                 r.xadd(STREAM_KEY, {
@@ -296,11 +580,124 @@ def scan_once():
                     "size": str(st.st_size),
                     "inode": str(st.st_ino),
                     "ts": utc_now(),
+                    "scan_session_id": str(session_id or ""),
                 })
                 enqueued += 1
+                root_enqueued += 1
 
-    r.set(LAST_SCAN_KEY, utc_now(), ex=HEARTBEAT_TTL * 4)
-    return discovered, enqueued
+        logger.info(
+            "Root done: type=%s root=%s discovered=%s enqueued=%s elapsed=%.1fs",
+            scan_type,
+            root_base,
+            root_discovered,
+            root_enqueued,
+            time.time() - root_started,
+        )
+
+    if full_sweep:
+        missing, deleted = reconcile_missing(
+            scan_id,
+            session_id=session_id,
+            root_scope=reconcile_scope,
+            threshold=missing_threshold,
+        )
+    else:
+        missing, deleted = 0, 0
+
+    if session_id:
+        session_call("SELECT increment_files_discovered(%s, %s)", (session_id, discovered))
+        session_call("SELECT increment_jobs_enqueued(%s, %s)", (session_id, enqueued + deleted))
+        session_call("SELECT finish_scan_session(%s)", (session_id,))
+
+    finished_at = utc_now()
+    r.set(LAST_SCAN_KEY, finished_at, ex=HEARTBEAT_TTL * 4)
+    if scan_type == "full":
+        r.set(LAST_FULL_SCAN_KEY, finished_at)
+    else:
+        r.set(LAST_INTERVAL_SCAN_KEY, finished_at)
+        r.set(LAST_INTERVAL_ROOT_KEY, roots[0] if roots else "")
+    return discovered, enqueued, missing, deleted
+
+
+def run_scan(
+    scan_type,
+    roots,
+    *,
+    full_sweep=None,
+    reconcile_scope=None,
+    missing_threshold=None,
+):
+    scan_id = uuid.uuid4().hex
+    session_id = session_call("SELECT create_scan_session(%s)", (scan_type,), fetch=True)
+    if full_sweep is None:
+        full_sweep = scan_type == "full"
+    try:
+        return _scan_roots(
+            roots,
+            scan_id,
+            session_id,
+            full_sweep=full_sweep,
+            scan_type=scan_type,
+            reconcile_scope=reconcile_scope,
+            missing_threshold=missing_threshold,
+        )
+    except Exception:
+        if session_id:
+            session_call(
+                "UPDATE scan_sessions SET status = 'failed', finished_at = NOW() WHERE id = %s",
+                (session_id,),
+            )
+        raise
+
+
+def scan_once():
+    """Run a complete reconciliation sweep (backward-compatible entry point)."""
+    roots = discover_roots()
+    if not roots:
+        raise RuntimeError("Full scan aborted: no scan roots discovered")
+    return run_scan("full", roots)
+
+
+def scan_interval_once():
+    roots = discover_roots()
+    dirty_root, dirty_marker = select_dirty_root(roots)
+    root = dirty_root or select_interval_root(roots)
+    if dirty_root:
+        result = run_scan(
+            "interval",
+            [dirty_root],
+            full_sweep=True,
+            reconcile_scope=dirty_root,
+            missing_threshold=1,
+        )
+    else:
+        result = run_scan("interval", [root] if root else [])
+    if dirty_root:
+        if clear_dirty_root(dirty_root, dirty_marker):
+            logger.info("Dirty root reconciled: %s", dirty_root)
+        else:
+            logger.info("Dirty root changed during reconciliation; keeping marker: %s", dirty_root)
+    return result
+
+
+def consume_full_scan_request():
+    requested_at = r.get(FULL_SCAN_REQUEST_KEY)
+    if not requested_at:
+        return False
+    r.delete(FULL_SCAN_REQUEST_KEY)
+    logger.info("Manual full scan requested at %s", requested_at)
+    return True
+
+
+def wait_for_next_scan(seconds):
+    """Wait interruptibly so a manual full request is picked up promptly."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if r.get(FULL_SCAN_REQUEST_KEY):
+            return
+        heartbeat("idle")
+        refresh_lock()
+        time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
 
 
 def main():
@@ -308,7 +705,13 @@ def main():
         return
 
     heartbeat("started")
-    logger.info("Starting polling scanner on %s interval=%ss", SCAN_ROOT, SCAN_INTERVAL)
+    logger.info(
+        "Starting polling scanner on %s interval=%ss full_interval=%ss",
+        SCAN_ROOT,
+        SCAN_INTERVAL,
+        FULL_SCAN_INTERVAL,
+    )
+    next_full_at = 0.0
 
     try:
         while True:
@@ -317,15 +720,30 @@ def main():
 
             started = time.time()
             try:
-                discovered, enqueued = scan_once()
+                full_sweep = consume_full_scan_request() or time.monotonic() >= next_full_at
+                if full_sweep:
+                    discovered, enqueued, missing, deleted = scan_once()
+                    next_full_at = time.monotonic() + FULL_SCAN_INTERVAL
+                    scan_type = "full"
+                else:
+                    discovered, enqueued, missing, deleted = scan_interval_once()
+                    scan_type = "interval"
                 elapsed = time.time() - started
                 heartbeat("idle")
-                logger.info("Scan done: discovered=%s enqueued=%s elapsed=%.1fs", discovered, enqueued, elapsed)
+                logger.info(
+                    "Scan done: type=%s discovered=%s enqueued=%s missing=%s deleted=%s elapsed=%.1fs",
+                    scan_type,
+                    discovered,
+                    enqueued,
+                    missing,
+                    deleted,
+                    elapsed,
+                )
             except Exception as e:
                 heartbeat("error")
                 logger.exception("Scan loop failed: %s", e)
 
-            time.sleep(SCAN_INTERVAL)
+            wait_for_next_scan(SCAN_INTERVAL)
 
     finally:
         heartbeat("stopped")

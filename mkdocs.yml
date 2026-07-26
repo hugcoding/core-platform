@@ -55,6 +55,7 @@ nav:
   - Project:
       - Overview: project/index.md
       - SCRUM-53 Database Review: project/scrum-53-database-schema-review.md
+      - SCRUM-55 Realtime Scanning: project/scrum-55-realtime-scanning.md
   - Runtime:
       - Scanner: wiki/scanner.md
       - Metadata Worker: wiki/metadata-worker.md
