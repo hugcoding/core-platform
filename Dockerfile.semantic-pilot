@@ -1,0 +1,9 @@
+FROM python:3.11-slim
+
+RUN pip install --no-cache-dir python-docx pypdf
+
+WORKDIR /app
+COPY core ./core
+COPY project/pilots ./project/pilots
+
+CMD ["python", "-m", "core.semantic.extraction"]
