@@ -217,6 +217,43 @@ class ScanSessionTests(unittest.TestCase):
         )
 
 
+class StreamPriorityTests(unittest.TestCase):
+    def test_realtime_stream_is_checked_before_polling(self):
+        realtime_response = [
+            (metadata_worker.REALTIME_STREAM_KEY, [("1-0", {"event": "UPSERT"})])
+        ]
+        redis_client = mock.Mock()
+        redis_client.xreadgroup.return_value = realtime_response
+
+        with mock.patch.object(metadata_worker, "r", redis_client):
+            response = metadata_worker.read_next_batch()
+
+        self.assertEqual(realtime_response, response)
+        redis_client.xreadgroup.assert_called_once_with(
+            metadata_worker.GROUP_NAME,
+            metadata_worker.CONSUMER_NAME,
+            streams={metadata_worker.REALTIME_STREAM_KEY: ">"},
+            count=50,
+        )
+
+    def test_polling_batch_is_small_when_realtime_stream_is_empty(self):
+        polling_response = [
+            (metadata_worker.STREAM_KEY, [("2-0", {"event": "UPSERT"})])
+        ]
+        redis_client = mock.Mock()
+        redis_client.xreadgroup.side_effect = [[], polling_response]
+
+        with mock.patch.object(metadata_worker, "r", redis_client):
+            response = metadata_worker.read_next_batch()
+
+        self.assertEqual(polling_response, response)
+        self.assertEqual(10, redis_client.xreadgroup.call_args.kwargs["count"])
+        self.assertEqual(
+            {metadata_worker.STREAM_KEY: ">"},
+            redis_client.xreadgroup.call_args.kwargs["streams"],
+        )
+
+
 class ProcessCursor:
     def __init__(self, existing_file=None, rename_rows=None):
         self.existing_file = existing_file

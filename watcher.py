@@ -22,7 +22,7 @@ WATCH_ROOTS = tuple(
     for path in os.getenv("WATCH_ROOTS", "/volume1/data").split(",")
     if path.strip()
 )
-STREAM_KEY = os.getenv("STREAM_KEY", "scan_stream")
+STREAM_KEY = os.getenv("STREAM_KEY", "scan_stream_realtime")
 DEBOUNCE_SECONDS = max(1, int(os.getenv("WATCHER_DEBOUNCE_SECONDS", "2")))
 HEARTBEAT_TTL = max(30, int(os.getenv("WATCHER_HEARTBEAT_TTL", "120")))
 

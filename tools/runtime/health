@@ -56,6 +56,8 @@ echo
 echo "========== STREAM =========="
 docker exec nas-redis-1 redis-cli XLEN scan_stream || fail=1
 docker exec nas-redis-1 redis-cli XINFO GROUPS scan_stream || true
+docker exec nas-redis-1 redis-cli XLEN scan_stream_realtime || fail=1
+docker exec nas-redis-1 redis-cli XINFO GROUPS scan_stream_realtime || true
 
 echo
 echo "========== DLQ =========="

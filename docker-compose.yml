@@ -33,6 +33,7 @@ services:
       - REDIS_HOST=redis
       - SCAN_ROOT=${SCAN_ROOT:-/volume1}
       - WATCH_ROOTS=${WATCH_ROOTS:-/volume1/data}
+      - STREAM_KEY=${REALTIME_STREAM_KEY:-scan_stream_realtime}
       - WATCHER_DEBOUNCE_SECONDS=${WATCHER_DEBOUNCE_SECONDS:-2}
     healthcheck:
       test: ["CMD", "python3", "-c", "import redis; r=redis.Redis(host='redis', decode_responses=True); assert r.get('watcher:heartbeat')"]
@@ -52,6 +53,7 @@ services:
       - DB_PASS=${DB_PASS}
       - DB_NAME=${DB_NAME}
       - REDIS_HOST=redis
+      - REALTIME_STREAM_KEY=${REALTIME_STREAM_KEY:-scan_stream_realtime}
       - FORCE_FULL_METADATA=${FORCE_FULL_METADATA:-false}
 
     healthcheck:
