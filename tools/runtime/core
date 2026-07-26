@@ -33,8 +33,7 @@ show_help() {
     printf '%s\n' "  core runtime stop"
     printf '%s\n' "  core runtime restart"
     printf '%s\n' "  core scanner full"
-    printf '%s\n' "  core git status"
-    printf '%s\n' "  core git push"
+    printf '%s\n' "  core git pull  (run from Windows PowerShell)"
     printf '%s\n' "  core version"
     printf '%s\n' ""
 }
@@ -148,15 +147,13 @@ case "$command_domain" in
         ;;
     git)
         case "$command_action" in
-            status)
-                git status
-                ;;
-            push)
-                git push
+            pull)
+                echo "Run 'core git pull' from Windows PowerShell."
+                echo "The NAS has no Git client; Windows updates the NAS checkout safely."
                 ;;
             *)
                 echo "Unknown git command."
-                echo "Use: core git status | push"
+                echo "Use from Windows PowerShell: core git pull"
                 exit 1
                 ;;
         esac
