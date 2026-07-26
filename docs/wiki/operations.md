@@ -65,6 +65,14 @@ Controleer daarna status en logs:
 
 Scanner, metadata-worker, Redis en PostgreSQL hoeven voor deze eerste watcheruitrol niet opnieuw te worden gebouwd of gestart.
 
+De eerste veilige uitrol bewaakt standaard alleen de canonieke doelroot:
+
+```text
+WATCH_ROOTS=/volume1/data
+```
+
+Dit voorkomt een langdurige eerste registratie van alle legacy- en applicatiemappen onder `/volume1`. Meerdere expliciet goedgekeurde hoofdroots kunnen later kommagescheiden worden toegevoegd. De uur- en dagscanner blijven alle geconfigureerde scanroots controleren.
+
 Voor een normale rebuild zonder eerst containers te verwijderen:
 
 ```bash

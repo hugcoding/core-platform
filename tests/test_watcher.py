@@ -46,12 +46,15 @@ class WatcherTests(unittest.TestCase):
     def setUp(self):
         self.original_redis = watcher.r
         self.original_root = watcher.SCAN_ROOT
+        self.original_watch_roots = watcher.WATCH_ROOTS
         watcher.r = FakeRedis()
         watcher.SCAN_ROOT = os.path.normpath("/volume1")
+        watcher.WATCH_ROOTS = (os.path.normpath("/volume1/data"),)
 
     def tearDown(self):
         watcher.r = self.original_redis
         watcher.SCAN_ROOT = self.original_root
+        watcher.WATCH_ROOTS = self.original_watch_roots
 
     def test_publish_adds_durable_event_and_dirty_root(self):
         self.assertTrue(watcher.publish("UPSERT", "/volume1/data/document.txt"))
@@ -97,14 +100,18 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual([], watcher.r.events)
 
     def test_startup_schedules_each_allowed_root_for_recovery(self):
-        entries = ["data", "homes", "@eaDir", ".hidden", "plain-file"]
+        watcher.WATCH_ROOTS = (
+            os.path.join(watcher.SCAN_ROOT, "data"),
+            os.path.join(watcher.SCAN_ROOT, "homes"),
+            os.path.join(watcher.SCAN_ROOT, ".hidden"),
+            os.path.normpath("/outside"),
+        )
 
         with (
-            mock.patch.object(watcher.os, "listdir", return_value=entries),
             mock.patch.object(
                 watcher.os.path,
                 "isdir",
-                side_effect=lambda path: not path.endswith("plain-file"),
+                return_value=True,
             ),
         ):
             roots = watcher.schedule_startup_recovery()
