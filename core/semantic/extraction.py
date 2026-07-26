@@ -29,6 +29,20 @@ def _pdf_text(path: Path) -> tuple[str, int]:
     return "\n".join(page.extract_text() or "" for page in reader.pages), len(reader.pages)
 
 
+def extract_document(
+    path: Path,
+    *,
+    docx_loader: Callable[[Path], tuple[str, int]] = _docx_text,
+    pdf_loader: Callable[[Path], tuple[str, int]] = _pdf_text,
+) -> tuple[str, int]:
+    extension = path.suffix.lower()
+    if extension not in SUPPORTED_EXTENSIONS:
+        raise ValueError(f"unsupported extension: {extension or '[none]'}")
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    return (docx_loader if extension == ".docx" else pdf_loader)(path)
+
+
 def extract_statistics(
     path: Path,
     *,
@@ -36,12 +50,11 @@ def extract_statistics(
     pdf_loader: Callable[[Path], tuple[str, int]] = _pdf_text,
 ) -> dict[str, Any]:
     extension = path.suffix.lower()
-    if extension not in SUPPORTED_EXTENSIONS:
-        raise ValueError(f"unsupported extension: {extension or '[none]'}")
-    if not path.is_file():
-        raise FileNotFoundError(path)
-
-    text, pages = (docx_loader if extension == ".docx" else pdf_loader)(path)
+    text, pages = extract_document(
+        path,
+        docx_loader=docx_loader,
+        pdf_loader=pdf_loader,
+    )
     normalized = " ".join(text.split())
     return {
         "extension": extension.removeprefix("."),
