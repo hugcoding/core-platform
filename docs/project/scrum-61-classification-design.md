@@ -115,3 +115,23 @@ Before adding a classification table:
 6. document how manual overrides survive rule recalculation.
 
 No physical migration to `/volume1/data` starts in this phase.
+
+## Source-map assessment
+
+After the baseline classification assessment, run:
+
+```bash
+docker exec -i postgres \
+  psql -v ON_ERROR_STOP=1 -U hugo -d nasdb_test \
+  < database/assessment/scrum61_source_map.sql
+```
+
+This second read-only assessment checks the exact target-root casing, splits
+`homes` into first-level components, lists direct `/volume1` files, reports
+known application/system roots, and calculates exact duplicate overlap for
+each root pair and within each root.
+
+Root-pair overlap is a source-map metric, not a deletion plan. The same
+content may be intentionally retained in an authoritative collection and a
+backup. Root roles and retention requirements must be approved before any
+migration manifest is created.
