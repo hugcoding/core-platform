@@ -14,6 +14,7 @@ show_help() {
     printf '%s\n' "  core docs serve"
     printf '%s\n' "  core docs build"
     printf '%s\n' "  core docs open"
+    printf '%s\n' "  core docs deploy"
     printf '%s\n' "  core project analyze"
     printf '%s\n' "  core project export"
     printf '%s\n' "  core jira auth"
@@ -53,12 +54,20 @@ case "$command_domain" in
             generate)
                 ./gendocs
                 ;;
-            serve|build|open)
+            serve|build)
                 python3 -m core.cli docs "$command_action"
+                ;;
+            open)
+                echo "Permanent Wiki: http://192.168.68.105:8000/wiki/"
+                ;;
+            deploy)
+                docker compose build docs
+                docker compose up -d --force-recreate docs
+                docker compose ps docs
                 ;;
             *)
                 echo "Unknown docs command."
-                echo "Use: core docs generate | serve | build | open"
+                echo "Use: core docs generate | serve | build | open | deploy"
                 exit 1
                 ;;
         esac
@@ -163,12 +172,11 @@ case "$command_domain" in
     git)
         case "$command_action" in
             pull)
-                echo "Run 'core git pull' from Windows PowerShell."
-                echo "The NAS has no Git client; Windows updates the NAS checkout safely."
+                sh ./tools/runtime/git-pull
                 ;;
             *)
                 echo "Unknown git command."
-                echo "Use from Windows PowerShell: core git pull"
+                echo "Use: core git pull"
                 exit 1
                 ;;
         esac

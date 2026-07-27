@@ -184,12 +184,18 @@ core docs build
 De lokale preview is uitsluitend voor ontwikkeling. Wijzigingen worden daar
 direct zichtbaar, maar komen nog niet op de permanente NAS-Wiki.
 
-Na review en merge naar `main`:
+Na review en merge naar `main` voer je vanuit SSH op de NAS uit:
 
-1. voer vanuit Windows `core git pull` uit om de NAS-checkout bij te werken;
-2. rebuild daarna op de NAS alleen de documentatieservice;
-3. controleer dat `nas-docs-1` healthy is;
-4. open de permanente Wiki.
+```bash
+cd /volume1/docker/nas-stack
+core git pull
+```
+
+CORE gebruikt hiervoor een tijdelijke Git-container; Git hoeft niet als
+Synology-pakket geïnstalleerd te zijn. Als `docs/`, `mkdocs.yml`, de docs-
+Dockerfile of nginx-configuratie is gewijzigd, rebuildt `core git pull`
+automatisch `nas-docs-1`. Bij andere wijzigingen blijft de docs-container
+ongemoeid.
 
 De Material for MkDocs 2.0-waarschuwing is upstream en geen build failure
 zolang MkDocs eindigt met `Documentation built`.
@@ -311,9 +317,7 @@ Na review, merge en `core git pull` publiceer je de goedgekeurde versie:
 
 ```bash
 cd /volume1/docker/nas-stack
-docker compose build docs
-docker compose up -d --force-recreate docs
-docker compose ps docs
+core docs deploy
 ```
 
 Hierdoor worden lokale conceptwijzigingen nooit automatisch gepubliceerd.

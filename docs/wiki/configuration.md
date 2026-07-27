@@ -46,10 +46,16 @@ core docs build
 core docs open
 ```
 
-`core docs serve` start een tijdelijke ontwikkelpreview op de laptop,
-`core docs build` controleert de statische site, en `core docs open` opent
-`http://127.0.0.1:8000/wiki/` in de standaardbrowser. De preview publiceert
-niets naar de permanente NAS-Wiki.
+`core docs serve` start een tijdelijke ontwikkelpreview op de machine waarop
+het commando draait en `core docs build` controleert de statische site. Via
+SSH bindt de preview alleen aan NAS-loopback `127.0.0.1:8000`; dit vereist een
+SSH-tunnel en is niet de permanente Wiki. De preview publiceert niets naar de
+nginx-container.
+
+Vanaf SSH toont `core docs open` de permanente URL en rebuildt
+`core docs deploy` de nginx-documentatiecontainer. `core git pull` gebruikt
+Dockerized Git en voert deze rebuild automatisch uit wanneer gereviewde
+documentatie op `main` is gewijzigd.
 
 CORE probeert eerst het `mkdocs` command. Als dat niet op `PATH` staat, probeert CORE automatisch `python -m mkdocs`. MkDocs moet wel op dezelfde machine geinstalleerd zijn als waar je `core docs ...` draait.
 

@@ -1,0 +1,64 @@
+#!/bin/sh
+set -eu
+
+PROJECT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+cd "$PROJECT_ROOT"
+
+DOCKER_BIN="${DOCKER_BIN:-docker}"
+if ! command -v "$DOCKER_BIN" >/dev/null 2>&1; then
+    if [ -x /usr/local/bin/docker ]; then
+        DOCKER_BIN=/usr/local/bin/docker
+    else
+        echo "Docker command not found."
+        exit 1
+    fi
+fi
+
+GIT_IMAGE="${CORE_GIT_IMAGE:-alpine/git:2.49.1}"
+
+git_run() {
+    "$DOCKER_BIN" run --rm \
+        --user "$(id -u):$(id -g)" \
+        -v "$PROJECT_ROOT:/repo" \
+        -w /repo \
+        "$GIT_IMAGE" \
+        -c safe.directory=/repo \
+        -c maintenance.auto=false \
+        "$@"
+}
+
+tracked_changes=$(git_run status --porcelain --untracked-files=no)
+if [ -n "$tracked_changes" ]; then
+    echo "Tracked local changes found; pull aborted:"
+    printf '%s\n' "$tracked_changes"
+    echo "Commit or stash these changes before retrying."
+    exit 2
+fi
+
+old_head=$(git_run rev-parse HEAD)
+
+echo "Fetching origin/main with Dockerized Git..."
+git_run fetch --no-auto-maintenance origin main
+git_run merge --ff-only origin/main
+
+new_head=$(git_run rev-parse HEAD)
+echo "CORE updated: $old_head -> $new_head"
+
+if [ "$old_head" = "$new_head" ]; then
+    echo "Already up to date."
+    exit 0
+fi
+
+docs_changes=$(git_run diff --name-only "$old_head" "$new_head" -- \
+    docs mkdocs.yml Dockerfile.docs tools/docs/nginx.conf docker-compose.yml)
+
+if [ -n "$docs_changes" ]; then
+    echo "Documentation-related changes detected:"
+    printf '%s\n' "$docs_changes"
+    echo "Rebuilding permanent Wiki..."
+    "$DOCKER_BIN" compose build docs
+    "$DOCKER_BIN" compose up -d --force-recreate docs
+    echo "Permanent Wiki updated: http://192.168.68.105:8000/wiki/"
+else
+    echo "No documentation rebuild required."
+fi
