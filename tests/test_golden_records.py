@@ -3,14 +3,14 @@ import unittest
 from tools.runtime.golden_records import build_manifest, candidate_score
 
 
-def item(file_id, path, hash_content="hash", size="10"):
+def item(file_id, path, content_sha256="hash", size="10"):
     return {
         "file_id": str(file_id),
         "path": path,
         "filename": path.rsplit("/", 1)[-1],
         "extension": "pdf",
         "size_bytes": size,
-        "hash_content": hash_content,
+        "content_sha256": content_sha256,
         "mime_type": "application/pdf",
         "created_at": "2026-01-01+00",
         "updated_at": "2026-01-02+00",

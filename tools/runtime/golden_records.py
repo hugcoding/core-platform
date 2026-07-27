@@ -8,12 +8,13 @@ import csv
 import io
 import json
 import os
-import re
 import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
+
+from core.integrity.golden_record import rank_candidates, selection_metadata
 
 from tools.runtime.migration_inventory import run_query, shutil_which
 
@@ -25,106 +26,50 @@ SELECT
     filename,
     LOWER(COALESCE(extension, '')) AS extension,
     size_bytes,
-    hash_content,
+    content_sha256,
     mime_type,
     created_at,
     updated_at
 FROM files
 WHERE deleted_at IS NULL
   AND (path = :'source' OR path LIKE :'source_prefix')
-  AND hash_content IS NOT NULL
-  AND hash_content <> ''
+  AND content_sha256 IS NOT NULL
+  AND content_sha256 <> ''
   AND LOWER(COALESCE(extension, '')) IN
       ('doc', 'docx', 'odt', 'rtf', 'txt', 'md', 'pdf',
        'xls', 'xlsx', 'ods', 'csv', 'ppt', 'pptx', 'odp')
-ORDER BY hash_content, size_bytes, path, id;
+ORDER BY content_sha256, size_bytes, path, id;
 """
 
-LOW_VALUE_PATH_PARTS = {
-    "cache",
-    "temp",
-    "tmp",
-    "tijdelijk",
-    "cloudstation",
-    "backup",
-    "backups",
-    "archief",
-    "archive",
-    "export",
-    "exports",
-}
-
-
 def candidate_score(row: dict[str, str]) -> tuple[int, list[str]]:
-    path = PurePosixPath(row["path"])
-    evidence = f"/{'/'.join(path.parts)}/".casefold()
-    name = path.name.casefold()
-    score = 100
-    reasons = ["full content hash available"]
-
-    penalties = sorted(part for part in LOW_VALUE_PATH_PARTS if f"/{part}/" in evidence)
-    if penalties:
-        score -= 8 * len(penalties)
-        reasons.append("legacy/path penalty: " + ", ".join(penalties))
-    if re.search(r"(?:^|[\s_-])(kopie|copy|backup)(?:[\s_.()-]|$)", name):
-        score -= 12
-        reasons.append("copy-like filename penalty")
-    if re.search(r"\(\d+\)(?=\.[^.]+$)", name):
-        score -= 6
-        reasons.append("numbered duplicate filename penalty")
-    if name.startswith("~$") or name.endswith((".tmp", ".part")):
-        score -= 30
-        reasons.append("temporary filename penalty")
-    if row.get("updated_at"):
-        score += 2
-        reasons.append("update timestamp available")
-    if row.get("created_at"):
-        score += 1
-        reasons.append("creation timestamp available")
-    return score, reasons
+    ranked = rank_candidates([{**row, "file_id": row.get("file_id", "0")}])
+    return ranked[0]["selection_score"], ranked[0]["selection_reasons"]
 
 
 def choose_golden(group: list[dict[str, str]]) -> dict[str, str]:
-    ranked = []
-    for row in group:
-        score, reasons = candidate_score(row)
-        ranked.append(
-            (score, len(row["path"]), row["path"].casefold(), int(row["file_id"]), row, reasons)
-        )
-    ranked.sort(key=lambda item: (-item[0], item[1], item[2], item[3]))
-    best_score, _, _, _, best, best_reasons = ranked[0]
-    second_score = ranked[1][0] if len(ranked) > 1 else None
-    margin = best_score - second_score if second_score is not None else best_score
-    if len(ranked) == 1:
-        confidence, status = "high", "single_source"
-    elif margin >= 8:
-        confidence, status = "high", "golden_selected"
-    elif margin > 0:
-        confidence, status = "medium", "golden_selected"
-    else:
-        # Always select exactly one record. Stable path and file-id ordering
-        # make equal-score choices deterministic and auditable.
-        confidence, status = "low", "golden_selected_tiebreak"
+    ranked = rank_candidates(group)
+    best = ranked[0]
+    confidence, status, margin = selection_metadata(ranked)
 
     alternatives = [
         {
-            "file_id": item[4]["file_id"],
-            "path": item[4]["path"],
-            "score": item[0],
+            "file_id": item["file_id"],
+            "path": item["path"],
+            "score": item["selection_score"],
         }
         for item in ranked[1:]
     ]
     return {
-        "hash_content": best["hash_content"],
+        "content_sha256": best["content_sha256"],
         "size_bytes": best["size_bytes"],
         "copy_count": str(len(group)),
         "golden_file_id": best["file_id"],
         "golden_path": best["path"],
-        "golden_score": str(best_score),
+        "golden_score": str(best["selection_score"]),
         "score_margin": str(margin),
         "confidence": confidence,
         "selection_status": status,
-        "selection_reasons": json.dumps(best_reasons, ensure_ascii=False),
+        "selection_reasons": json.dumps(best["selection_reasons"], ensure_ascii=False),
         "alternative_sources": json.dumps(alternatives, ensure_ascii=False),
         "proposed_target_path": "",
         "target_classification_status": "pending_content_classification",
@@ -134,7 +79,7 @@ def choose_golden(group: list[dict[str, str]]) -> dict[str, str]:
 def build_manifest(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     groups: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
     for row in rows:
-        groups[(row["hash_content"], row["size_bytes"])].append(row)
+        groups[(row["content_sha256"], row["size_bytes"])].append(row)
     return [choose_golden(group) for _, group in sorted(groups.items())]
 
 

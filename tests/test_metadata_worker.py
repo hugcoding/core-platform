@@ -1,6 +1,8 @@
 import sys
 import types
 import unittest
+import tempfile
+from pathlib import Path
 from unittest import mock
 
 
@@ -269,7 +271,7 @@ class ProcessCursor:
         if "SELECT id, path, deleted_at" in self.current_query:
             return self.existing_file
         if "RETURNING id" in self.current_query:
-            return {"id": 42}
+            return {"id": 42, "content_sha256": None, "size_bytes": 100}
         return None
 
     def fetchall(self):
@@ -287,6 +289,7 @@ class MutationPersistenceTests(unittest.TestCase):
             mock.patch.object(metadata_worker, "upsert_folder", return_value=7),
             mock.patch.object(metadata_worker, "hash_first_1024", return_value="content"),
             mock.patch.object(metadata_worker, "get_mime", return_value="image/jpeg"),
+            mock.patch.object(metadata_worker, "recompute_golden_group"),
             mock.patch.object(metadata_worker, "get_image_dims", return_value=(10, 20)),
             mock.patch.object(
                 metadata_worker,
@@ -358,6 +361,51 @@ class MutationPersistenceTests(unittest.TestCase):
         self.assertIn("last_mutation_type = 'DELETED'", query)
         self.assertNotIn("last_mutation_at", query)
         self.assertIn("updated_at = NOW()", query)
+
+    def test_document_event_computes_full_hash_and_recomputes_group(self):
+        cursor = ProcessCursor()
+        file_stat = types.SimpleNamespace(st_size=100, st_mtime=200, st_ino=1234, st_dev=99)
+        with (
+            mock.patch.object(metadata_worker.os.path, "exists", return_value=True),
+            mock.patch.object(metadata_worker.os, "stat", return_value=file_stat),
+            mock.patch.object(metadata_worker, "upsert_folder", return_value=7),
+            mock.patch.object(metadata_worker, "hash_first_1024", return_value="fast"),
+            mock.patch.object(metadata_worker, "hash_full_sha256", return_value="full-sha"),
+            mock.patch.object(metadata_worker, "get_mime", return_value="text/plain"),
+            mock.patch.object(metadata_worker, "get_image_dims", return_value=(None, None)),
+            mock.patch.object(metadata_worker, "recompute_golden_group") as recompute,
+            mock.patch.object(
+                metadata_worker,
+                "r",
+                types.SimpleNamespace(set=lambda *args, **kwargs: None),
+            ),
+        ):
+            metadata_worker.process_event(
+                cursor,
+                {"event": "UPSERT", "path": "/volume1/data/document.txt"},
+            )
+
+        recompute.assert_called_once_with(
+            cursor, "full-sha", 100, "polling_scanner"
+        )
+        files_query, files_params = next(
+            call for call in cursor.calls if "INSERT INTO files" in call[0]
+        )
+        self.assertIn("content_sha256", files_query)
+        self.assertIn("full-sha", files_params)
+
+
+class FullHashTests(unittest.TestCase):
+    def test_full_sha256_reads_the_entire_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "document.txt"
+            path.write_bytes(b"a" * 1024 + b"different-tail")
+            digest = metadata_worker.hash_full_sha256(str(path), chunk_size=128)
+
+        self.assertEqual(
+            "cdc3a38991b86d7c4849475888ed6a699d7398deb28b42a775d41d6c4e418912",
+            digest,
+        )
 
 
 if __name__ == "__main__":

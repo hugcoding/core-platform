@@ -1,0 +1,80 @@
+"""Deterministic golden-record scoring shared by batch and event processing."""
+
+from __future__ import annotations
+
+import re
+from pathlib import PurePosixPath
+
+
+ALGORITHM_VERSION = "golden-v1"
+LOW_VALUE_PATH_PARTS = {
+    "cache", "temp", "tmp", "tijdelijk", "cloudstation", "backup",
+    "backups", "archief", "archive", "export", "exports",
+}
+
+
+def score_candidate(row: dict) -> tuple[int, list[str]]:
+    path = PurePosixPath(str(row["path"]))
+    evidence = f"/{'/'.join(path.parts)}/".casefold()
+    name = path.name.casefold()
+    score = 100
+    reasons = ["full SHA-256 available"]
+    penalties = sorted(part for part in LOW_VALUE_PATH_PARTS if f"/{part}/" in evidence)
+    if penalties:
+        score -= 8 * len(penalties)
+        reasons.append("legacy/path penalty: " + ", ".join(penalties))
+    if re.search(r"(?:^|[\s_-])(kopie|copy|backup)(?:[\s_.()-]|$)", name):
+        score -= 12
+        reasons.append("copy-like filename penalty")
+    if re.search(r"\(\d+\)(?=\.[^.]+$)", name):
+        score -= 6
+        reasons.append("numbered duplicate filename penalty")
+    if name.startswith("~$") or name.endswith((".tmp", ".part")):
+        score -= 30
+        reasons.append("temporary filename penalty")
+    if row.get("updated_at"):
+        score += 2
+        reasons.append("update timestamp available")
+    if row.get("created_at"):
+        score += 1
+        reasons.append("creation timestamp available")
+    return score, reasons
+
+
+def rank_candidates(rows: list[dict]) -> list[dict]:
+    ranked = []
+    for row in rows:
+        score, reasons = score_candidate(row)
+        ranked.append(
+            {
+                **row,
+                "selection_score": score,
+                "selection_reasons": reasons,
+            }
+        )
+    ranked.sort(
+        key=lambda row: (
+            -row["selection_score"],
+            len(str(row["path"])),
+            str(row["path"]).casefold(),
+            int(row["file_id"]),
+        )
+    )
+    for rank, row in enumerate(ranked, start=1):
+        row["selection_rank"] = rank
+    return ranked
+
+
+def selection_metadata(ranked: list[dict]) -> tuple[str, str, int]:
+    if not ranked:
+        raise ValueError("Cannot select a golden record from an empty group")
+    best = ranked[0]["selection_score"]
+    second = ranked[1]["selection_score"] if len(ranked) > 1 else None
+    margin = best - second if second is not None else best
+    if len(ranked) == 1:
+        return "high", "single_source", margin
+    if margin >= 8:
+        return "high", "golden_selected", margin
+    if margin > 0:
+        return "medium", "golden_selected", margin
+    return "low", "golden_selected_tiebreak", margin

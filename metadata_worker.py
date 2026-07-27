@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import json
+import hashlib
 import socket
 import logging
 from datetime import datetime, timezone
@@ -11,6 +12,8 @@ import psycopg2.extras
 import magic
 import pyvips
 import xxhash
+
+from core.integrity.golden_record import ALGORITHM_VERSION, rank_candidates, selection_metadata
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("metadata-worker")
@@ -33,6 +36,10 @@ HEARTBEAT_TTL = 120
 
 CONSUMER_NAME = socket.gethostname()
 FORCE_FULL = os.getenv("FORCE_FULL_METADATA", "false").lower() == "true"
+FULL_HASH_EXTENSIONS = {
+    "doc", "docx", "odt", "rtf", "txt", "md", "pdf",
+    "xls", "xlsx", "ods", "csv", "ppt", "pptx", "odp",
+}
 
 r = redis.Redis(
     host=REDIS_HOST,
@@ -167,6 +174,20 @@ def hash_first_1024(path):
         return None
 
 
+def hash_full_sha256(path, chunk_size=1024 * 1024):
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            while True:
+                chunk = handle.read(chunk_size)
+                if not chunk:
+                    return digest.hexdigest()
+                digest.update(chunk)
+    except Exception as exc:
+        logger.warning("Full SHA-256 failed: %s err=%s", path, exc)
+        return None
+
+
 def get_mime(path):
     try:
         return magic.from_file(path, mime=True)
@@ -199,10 +220,115 @@ def path_is_missing(path):
 
 def get_file_by_path(cur, path):
     cur.execute(
-        "SELECT id, path, deleted_at FROM files WHERE path = %s",
+        """SELECT id, path, deleted_at, size_bytes, modified_at_fs,
+                  content_sha256, created_at, updated_at
+           FROM files WHERE path = %s""",
         (path,),
     )
     return cur.fetchone()
+
+
+def recompute_golden_group(cur, content_sha256, size_bytes, source):
+    if not content_sha256 or size_bytes is None:
+        return
+    cur.execute(
+        """SELECT id AS file_id, path, created_at, updated_at
+           FROM files
+           WHERE content_sha256 = %s
+             AND size_bytes = %s
+             AND deleted_at IS NULL
+           ORDER BY id""",
+        (content_sha256, size_bytes),
+    )
+    candidates = cur.fetchall()
+    cur.execute(
+        """SELECT id, golden_file_id
+           FROM content_groups
+           WHERE content_sha256 = %s AND size_bytes = %s""",
+        (content_sha256, size_bytes),
+    )
+    existing = cur.fetchone()
+    if not candidates:
+        if existing:
+            cur.execute("DELETE FROM content_groups WHERE id = %s", (existing["id"],))
+            insert_file_event(
+                cur,
+                file_id=existing["golden_file_id"],
+                event_type="GOLDEN_GROUP_REMOVED",
+                source=source,
+                decision="no_active_members",
+                signals={"content_sha256": content_sha256, "size_bytes": size_bytes},
+            )
+        return
+
+    ranked = rank_candidates(candidates)
+    confidence, status, margin = selection_metadata(ranked)
+    golden = ranked[0]
+    cur.execute("SET CONSTRAINTS content_groups_golden_member_fk DEFERRED")
+    if existing:
+        group_id = existing["id"]
+        cur.execute(
+            """UPDATE content_groups SET
+                   golden_file_id = %s,
+                   golden_score = %s,
+                   confidence = %s,
+                   selection_status = %s,
+                   algorithm_version = %s,
+                   selected_at = NOW(),
+                   updated_at = NOW()
+               WHERE id = %s""",
+            (
+                golden["file_id"], golden["selection_score"], confidence,
+                status, ALGORITHM_VERSION, group_id,
+            ),
+        )
+        cur.execute("DELETE FROM content_group_members WHERE content_group_id = %s", (group_id,))
+    else:
+        cur.execute(
+            """INSERT INTO content_groups (
+                   content_sha256, size_bytes, golden_file_id, golden_score,
+                   confidence, selection_status, algorithm_version
+               ) VALUES (%s,%s,%s,%s,%s,%s,%s)
+               RETURNING id""",
+            (
+                content_sha256, size_bytes, golden["file_id"],
+                golden["selection_score"], confidence, status, ALGORITHM_VERSION,
+            ),
+        )
+        group_id = cur.fetchone()["id"]
+
+    for candidate in ranked:
+        cur.execute(
+            """INSERT INTO content_group_members (
+                   content_group_id, file_id, source_path_snapshot,
+                   selection_score, selection_rank, selection_reasons
+               ) VALUES (%s,%s,%s,%s,%s,%s::jsonb)""",
+            (
+                group_id, candidate["file_id"], candidate["path"],
+                candidate["selection_score"], candidate["selection_rank"],
+                json.dumps(candidate["selection_reasons"]),
+            ),
+        )
+
+    old_golden = existing["golden_file_id"] if existing else None
+    if old_golden != golden["file_id"]:
+        insert_file_event(
+            cur,
+            file_id=golden["file_id"],
+            candidate_file_id=old_golden,
+            event_type="GOLDEN_RECORD_CHANGED" if existing else "GOLDEN_RECORD_SELECTED",
+            source=source,
+            score=golden["selection_score"],
+            level=confidence,
+            decision=status,
+            signals={
+                "content_sha256": content_sha256,
+                "size_bytes": size_bytes,
+                "member_count": len(ranked),
+                "score_margin": margin,
+                "algorithm_version": ALGORITHM_VERSION,
+            },
+        )
 
 
 def classify_path_mutation(existing_file):
@@ -261,7 +387,8 @@ def insert_file_event(cur, *, file_id, event_type, source, old_path=None,
 
 def evaluate_identity_match(cur, path, filesystem_device, inode, size_bytes, modified_at_fs, content_hash):
     cur.execute("""
-        SELECT id, path, filesystem_device, inode, size_bytes, modified_at_fs, hash_content
+        SELECT id, path, filesystem_device, inode, size_bytes, modified_at_fs,
+               hash_content, content_sha256, created_at, updated_at
         FROM files
         WHERE filesystem_device = %s
           AND inode = %s
@@ -337,7 +464,7 @@ def process_event(cur, data):
                 updated_at = NOW(),
                 last_mutation_type = 'DELETED'
             WHERE path = %s
-            RETURNING id
+            RETURNING id, content_sha256, size_bytes
         """, (path,))
         row = cur.fetchone()
         if row:
@@ -345,6 +472,10 @@ def process_event(cur, data):
                 cur, file_id=row["id"], event_type="DELETED",
                 source=data.get("source", "polling_scanner"),
                 old_path=path, scan_session_id=data.get("scan_session_id"),
+            )
+            recompute_golden_group(
+                cur, row["content_sha256"], row["size_bytes"],
+                data.get("source", "polling_scanner"),
             )
         logger.info("Deleted: %s", path)
         return
@@ -356,7 +487,7 @@ def process_event(cur, data):
                 updated_at = NOW(),
                 last_mutation_type = 'DELETED'
             WHERE path = %s
-            RETURNING id
+            RETURNING id, content_sha256, size_bytes
         """, (path,))
         row = cur.fetchone()
         if row:
@@ -365,6 +496,10 @@ def process_event(cur, data):
                 source=data.get("source", "polling_scanner"),
                 old_path=path, reason="path_missing",
                 scan_session_id=data.get("scan_session_id"),
+            )
+            recompute_golden_group(
+                cur, row["content_sha256"], row["size_bytes"],
+                data.get("source", "polling_scanner"),
             )
         logger.warning("Missing file, marked deleted: %s", path)
         return
@@ -384,9 +519,22 @@ def process_event(cur, data):
     inode = stat.st_ino
     filesystem_device = stat.st_dev
 
+    existing_file = get_file_by_path(cur, path)
     hash_path = xxhash.xxh64(path).hexdigest()
     hash_content = hash_first_1024(path)
     mime = get_mime(path)
+    if extension in FULL_HASH_EXTENSIONS:
+        unchanged = (
+            existing_file
+            and existing_file.get("content_sha256")
+            and existing_file.get("size_bytes") == size_bytes
+            and existing_file.get("modified_at_fs") == modified_at_fs
+        )
+        content_sha256 = (
+            existing_file["content_sha256"] if unchanged else hash_full_sha256(path)
+        )
+    else:
+        content_sha256 = None
 
     values = (
         folder_id,
@@ -400,10 +548,10 @@ def process_event(cur, data):
         data.get("source", "polling_scanner"),
         hash_path,
         hash_content,
+        content_sha256,
         mime,
     )
 
-    existing_file = get_file_by_path(cur, path)
     rename_candidate = None
     identity_match = None
     if not existing_file:
@@ -412,6 +560,12 @@ def process_event(cur, data):
         )
         if identity_match["decision"] == "auto_linked":
             rename_candidate = identity_match["candidate"]
+    prior_record = rename_candidate or existing_file
+    old_group = (
+        (prior_record.get("content_sha256"), prior_record.get("size_bytes"))
+        if prior_record and prior_record.get("content_sha256")
+        else None
+    )
 
     if rename_candidate:
         mutation_type = classify_rename_mutation(rename_candidate["path"], path)
@@ -428,13 +582,15 @@ def process_event(cur, data):
                 source             = %s,
                 hash_path          = %s,
                 hash_content       = %s,
+                content_sha256     = %s,
+                content_sha256_at  = CASE WHEN %s IS NULL THEN NULL ELSE NOW() END,
                 mime_type          = %s,
                 last_mutation_type = %s,
                 updated_at         = NOW(),
                 deleted_at         = NULL
             WHERE id = %s
             RETURNING id
-        """, values + (mutation_type, rename_candidate["id"]))
+        """, values[:-1] + (content_sha256, values[-1], mutation_type, rename_candidate["id"]))
         logger.info(
             "%s: %s -> %s",
             mutation_type.title(),
@@ -448,10 +604,11 @@ def process_event(cur, data):
                 folder_id, filename, extension, size_bytes,
                 modified_at_fs, filesystem_device, inode,
                 path, source, hash_path, hash_content,
-                mime_type, deleted_at,
+                content_sha256, content_sha256_at, mime_type, deleted_at,
                 last_mutation_type
             )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,%s)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                    CASE WHEN %s IS NULL THEN NULL ELSE NOW() END,%s,NULL,%s)
             ON CONFLICT (path) DO UPDATE SET
                 folder_id          = EXCLUDED.folder_id,
                 filename           = EXCLUDED.filename,
@@ -463,12 +620,14 @@ def process_event(cur, data):
                 source             = EXCLUDED.source,
                 hash_path          = EXCLUDED.hash_path,
                 hash_content       = EXCLUDED.hash_content,
+                content_sha256     = EXCLUDED.content_sha256,
+                content_sha256_at  = EXCLUDED.content_sha256_at,
                 mime_type          = EXCLUDED.mime_type,
                 last_mutation_type = EXCLUDED.last_mutation_type,
                 updated_at         = NOW(),
                 deleted_at         = NULL
             RETURNING id
-        """, values + (mutation_type,))
+        """, values[:-1] + (content_sha256, values[-1], mutation_type))
     file_id = cur.fetchone()["id"]
     insert_file_event(
         cur,
@@ -502,6 +661,18 @@ def process_event(cur, data):
             signals=identity_match["signals"],
             reason=identity_match["reason"],
             scan_session_id=data.get("scan_session_id"),
+        )
+
+    affected_groups = {
+        group for group in (old_group, (content_sha256, size_bytes))
+        if group and group[0]
+    }
+    for group_sha256, group_size in affected_groups:
+        recompute_golden_group(
+            cur,
+            group_sha256,
+            group_size,
+            data.get("source", "polling_scanner"),
         )
 
     if FORCE_FULL:

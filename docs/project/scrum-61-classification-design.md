@@ -254,6 +254,26 @@ and the algorithm version preserve the audit trail. Proposed Dutch target
 paths belong to a later migration-plan structure and are deliberately not
 stored in these identity tables.
 
+### Full hash and event-driven reevaluation
+
+`files.hash_content` is a fast xxHash64 signal over the first 1024 bytes and
+must never be used as exact-duplicate proof. Supported documents additionally
+receive a full-file SHA-256 in `files.content_sha256`. Golden-record groups
+are keyed only by `content_sha256` plus `size_bytes`.
+
+The metadata worker reuses a stored SHA-256 when size and filesystem mtime are
+unchanged. Otherwise it streams the complete document in 1 MiB chunks. The
+following mutations reevaluate only the affected old and new content groups:
+`CREATED`, `MODIFIED`, `RENAMED`, `MOVED`, `RESTORED`, and `DELETED`.
+Renames and moves are reevaluated even when content is unchanged because the
+source path affects the score.
+
+When a group changes, the worker deterministically ranks all active members,
+updates the single `golden_file_id`, rebuilds the member snapshot, and emits
+`GOLDEN_RECORD_SELECTED`, `GOLDEN_RECORD_CHANGED`, or
+`GOLDEN_GROUP_REMOVED` into `file_events`. Alternative physical files remain
+untouched.
+
 ## Source-map assessment
 
 After the baseline classification assessment, run:
