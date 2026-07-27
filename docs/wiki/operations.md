@@ -197,6 +197,9 @@ Dockerfile of nginx-configuratie is gewijzigd, rebuildt `core git pull`
 automatisch `nas-docs-1`. Bij andere wijzigingen blijft de docs-container
 ongemoeid.
 
+Controleer na een automatische publicatie de containerstatus met
+`docker compose ps docs` en open `/wiki/` in de browser.
+
 De Material for MkDocs 2.0-waarschuwing is upstream en geen build failure
 zolang MkDocs eindigt met `Documentation built`.
 
