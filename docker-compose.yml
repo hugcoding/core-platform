@@ -1,5 +1,16 @@
 name: nas
 services:
+  docs:
+    build: { context: ., dockerfile: Dockerfile.docs }
+    restart: unless-stopped
+    ports: ["192.168.68.105:8000:80"]
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    security_opt: ["no-new-privileges:true"]
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped

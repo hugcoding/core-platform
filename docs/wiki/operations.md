@@ -272,3 +272,37 @@ project/exports/controlled-cleanup/
 project/exports/legacy-assessment/
 site/
 ```
+
+## Permanente CORE-documentatie
+
+De documentatie wordt tijdens de image-build statisch gegenereerd en door een
+read-only nginx-container aangeboden. Er draait geen MkDocs-ontwikkelserver in
+productie.
+
+Build en start alleen de documentatieservice:
+
+```bash
+cd /volume1/docker/nas-stack
+docker compose build docs
+docker compose up -d docs
+docker compose ps docs
+```
+
+Open thuis of via OpenVPN:
+
+```text
+http://192.168.68.105:8000/wiki/
+```
+
+De root-URL `http://192.168.68.105:8000/` verwijst automatisch door naar
+`/wiki/`. De hostpoort bindt alleen aan het LAN-adres van de NAS. Er hoort geen
+port-forward voor poort 8000 op het KPN-modem te bestaan. De DSM-firewall staat
+alleen het lokale netwerk `192.168.68.0/24` en het VPN-netwerk `10.8.0.0/24`
+toe.
+
+Na documentatiewijzigingen:
+
+```bash
+docker compose build docs
+docker compose up -d --force-recreate docs
+```

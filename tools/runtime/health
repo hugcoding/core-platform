@@ -22,6 +22,7 @@ check_container nas-redis-1
 check_container nas-scanner-1
 check_container nas-watcher-1
 check_container nas-metadata_worker-1
+check_container nas-docs-1
 
 echo
 echo "========== REDIS =========="

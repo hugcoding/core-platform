@@ -10,6 +10,7 @@ docker inspect nas-scanner-1 --format 'scanner: {{if .State.Health}}{{.State.Hea
 docker inspect nas-watcher-1 --format 'watcher: {{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' 2>/dev/null || true
 docker inspect nas-metadata_worker-1 --format 'metadata_worker: {{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' 2>/dev/null || true
 docker inspect nas-redis-1 --format 'redis: {{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' 2>/dev/null || true
+docker inspect nas-docs-1 --format 'docs: {{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' 2>/dev/null || true
 
 echo
 echo "========== HEARTBEATS =========="
@@ -76,3 +77,5 @@ docker exec nas-redis-1 redis-cli XLEN scan_stream_dlq 2>/dev/null || true
 echo
 echo "========== DOCS =========="
 ls -lh docs/DOCUMENTATIE.md 2>/dev/null || echo "docs/DOCUMENTATIE.md ontbreekt"
+docker inspect nas-docs-1 --format 'container: status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null \
+  || echo "nas-docs-1 ontbreekt"
