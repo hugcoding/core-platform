@@ -1,6 +1,11 @@
 import unittest
 
-from tools.runtime.copy_plan import choose_bucket, plan_rows, safe_filename
+from tools.runtime.copy_plan import (
+    choose_bucket,
+    meaningful_relative_path,
+    plan_rows,
+    safe_filename,
+)
 
 
 def row(action, path, hash_content="hash-1", sensitivity="normal", source_paths="[]"):
@@ -30,6 +35,19 @@ class CopyPlanTest(unittest.TestCase):
         planned = plan_rows([item], "/volume1/data")[0]
         self.assertEqual("blocked_sensitive_policy", planned["semantic_scope"])
 
+    def test_sensitive_folder_evidence_upgrades_standard_document_policy(self):
+        planned = plan_rows(
+            [
+                row(
+                    "document_standard",
+                    "/volume1/backup/NITRO/D/data/hugo/Documents/Geldzaken/overzicht.xlsx",
+                )
+            ],
+            "/volume1/data",
+        )[0]
+        self.assertEqual("sensitive/finance", planned["target_bucket"])
+        self.assertEqual("blocked_sensitive_policy", planned["semantic_scope"])
+
     def test_unclear_document_is_unsorted_and_not_copy_candidate(self):
         planned = plan_rows(
             [row("document_standard", "/volume1/backup/NITRO/D/data/hugo/Documents/report.pdf")],
@@ -46,6 +64,50 @@ class CopyPlanTest(unittest.TestCase):
         planned = plan_rows(rows, "/volume1/data")
         self.assertEqual({"name_collision"}, {item["collision_status"] for item in planned})
         self.assertEqual({"blocked_name_collision"}, {item["copy_action"] for item in planned})
+
+    def test_meaningful_non_cloudstation_hierarchy_is_preserved(self):
+        item = row(
+            "document_standard",
+            "/volume1/backup/NITRO/D/data/hugo/Documents/report.pdf",
+            source_paths=(
+                '["/volume1/backup/NITRO/D/data/hugo/Documents/CloudStation/studie/report.pdf",'
+                '"/volume1/backup/NITRO/D/data/hugo/Documents/Studie/NCOI/Module/report.pdf"]'
+            ),
+        )
+        self.assertEqual("Studie/NCOI/Module/report.pdf", str(meaningful_relative_path(item)))
+        planned = plan_rows([item], "/volume1/data")[0]
+        self.assertEqual(
+            "/volume1/data/documents/study/NCOI/Module/report.pdf",
+            planned["proposed_target_path"],
+        )
+
+    def test_build_metadata_is_retained_as_project_data(self):
+        planned = plan_rows(
+            [row("document_standard", "/volume1/backup/NITRO/D/data/hugo/Documents/Studie/App/build.xml")],
+            "/volume1/data",
+        )[0]
+        self.assertEqual("projects", planned["target_bucket"])
+        self.assertEqual("retain_project_technical", planned["copy_action"])
+
+    def test_system_folder_is_retained_as_project_data(self):
+        planned = plan_rows(
+            [
+                row(
+                    "document_standard",
+                    "/volume1/backup/NITRO/D/data/hugo/Documents/Systeem/tool.xlsx",
+                )
+            ],
+            "/volume1/data",
+        )[0]
+        self.assertEqual("projects", planned["target_bucket"])
+        self.assertEqual("retain_project_technical", planned["copy_action"])
+
+    def test_address_book_is_personal(self):
+        planned = plan_rows(
+            [row("document_standard", "/volume1/backup/NITRO/D/data/hugo/Documents/Adressen/adressen.xlsx")],
+            "/volume1/data",
+        )[0]
+        self.assertEqual("documents/personal", planned["target_bucket"])
 
     def test_non_document_groups_are_not_planned(self):
         self.assertEqual(

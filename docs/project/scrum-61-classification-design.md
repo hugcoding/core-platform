@@ -199,6 +199,15 @@ them. Unclear documents are proposed under `documents/unsorted` and require
 manual target review. Sensitive documents are placed below `sensitive/` and
 remain blocked from semantic processing.
 
+Meaningful subdirectories are preserved below each bucket to retain context
+and avoid flattening unrelated files onto the same target name. Generic
+`CloudStation` wrappers and the source category component are removed.
+Recognized build metadata and documents below the explicit `Systeem` folder
+remain project/technical data. Strong source evidence such as `Geldzaken`,
+`Gezondheid & Voeding`, and `Officiële documenten` upgrades the target to the
+corresponding sensitive bucket even when the earlier extension-only proposal
+did not mark the file sensitive.
+
 The command creates reports only. It does not create directories or copy,
 move, overwrite, update, or delete files.
 

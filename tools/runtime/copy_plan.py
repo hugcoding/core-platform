@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import re
 import sys
 from collections import Counter, defaultdict
@@ -19,11 +20,23 @@ TARGET_BUCKETS = {
     "documents/study",
     "documents/unsorted",
     "documents/work",
+    "projects",
     "sensitive/employment",
     "sensitive/finance",
     "sensitive/health",
     "sensitive/identity",
     "sensitive/other",
+}
+
+SOURCE_ROOT = "/volume1/backup/NITRO/D/data/hugo/Documents/"
+TECHNICAL_FILENAMES = {
+    "build.xml",
+    "build-impl.xml",
+    "filelist.xml",
+    "manifest.mf",
+    "pom.xml",
+    "private.xml",
+    "project.xml",
 }
 
 
@@ -35,10 +48,32 @@ def choose_bucket(row: dict[str, str]) -> tuple[str, str]:
     evidence = f"{row['representative_path']} {row.get('source_paths', '')}".casefold()
     sensitive = row["proposal_action"] == "document_sensitive"
 
-    if sensitive:
-        if contains_any(evidence, ("paspoort", "identiteit", "rijbewijs", "id-kaart", "idkaart")):
+    if sensitive or contains_any(
+        evidence,
+        (
+            "geldzaken",
+            "gezondheid & voeding",
+            "officiële documenten",
+            "officiele documenten",
+        ),
+    ):
+        if contains_any(
+            evidence,
+            (
+                "paspoort",
+                "identiteit",
+                "rijbewijs",
+                "id-kaart",
+                "idkaart",
+                "officiële documenten",
+                "officiele documenten",
+            ),
+        ):
             return "sensitive/identity", "identity keyword in source evidence"
-        if contains_any(evidence, ("medisch", "gezondheid", "huisarts", "ziekenhuis", "zorg", "hapto")):
+        if contains_any(
+            evidence,
+            ("medisch", "gezondheid", "huisarts", "ziekenhuis", "zorg", "hapto"),
+        ):
             return "sensitive/health", "health keyword in source evidence"
         if contains_any(
             evidence,
@@ -47,7 +82,16 @@ def choose_bucket(row: dict[str, str]) -> tuple[str, str]:
             return "sensitive/employment", "employment keyword in source evidence"
         if contains_any(
             evidence,
-            ("financi", "belasting", "bank", "rekening", "pensioen", "hypotheek", "verzekering"),
+            (
+                "financi",
+                "geldzaken",
+                "belasting",
+                "bank",
+                "rekening",
+                "pensioen",
+                "hypotheek",
+                "verzekering",
+            ),
         ):
             return "sensitive/finance", "financial keyword in source evidence"
         return "sensitive/other", "sensitive document without a reliable subcategory"
@@ -60,10 +104,33 @@ def choose_bucket(row: dict[str, str]) -> tuple[str, str]:
         return "documents/home", "home keyword in source evidence"
     if contains_any(
         evidence,
-        ("administratie", "abonnement", "factuur", "aankoop", "garantie", "verzekering", "belasting"),
+        (
+            "administratie",
+            "abonnement",
+            "factuur",
+            "facturen",
+            "bonnen",
+            "aankoop",
+            "garantie",
+            "verzekering",
+            "belasting",
+        ),
     ):
         return "documents/administration", "administration keyword in source evidence"
-    if contains_any(evidence, ("persoonlijk", "personal", "familie", "family")):
+    if contains_any(
+        evidence,
+        (
+            "persoonlijk",
+            "personal",
+            "familie",
+            "family",
+            "adressen",
+            "adresboek",
+            "contactpersonen",
+            "/tabitha/",
+            "/opvang/",
+        ),
+    ):
         return "documents/personal", "personal keyword in source evidence"
     return "documents/unsorted", "no reliable target category"
 
@@ -79,25 +146,100 @@ def safe_filename(path: str) -> str:
     return name
 
 
+def source_paths(row: dict[str, str]) -> list[str]:
+    try:
+        values = json.loads(row.get("source_paths", "[]"))
+    except json.JSONDecodeError:
+        values = []
+    paths = [value for value in values if isinstance(value, str)]
+    if row["representative_path"] not in paths:
+        paths.append(row["representative_path"])
+    return paths
+
+
+def meaningful_relative_path(row: dict[str, str]) -> PurePosixPath:
+    candidates: list[tuple[tuple[int, int, int], PurePosixPath]] = []
+    for full_path in source_paths(row):
+        if full_path.startswith(SOURCE_ROOT):
+            relative = PurePosixPath(full_path[len(SOURCE_ROOT) :])
+        else:
+            relative = PurePosixPath(full_path).name
+            relative = PurePosixPath(relative)
+        parts = list(relative.parts)
+        wrapper = bool(parts and parts[0].casefold() == "cloudstation")
+        if wrapper:
+            parts = parts[1:]
+        if not parts:
+            continue
+        cleaned = PurePosixPath(*parts)
+        # Prefer a non-CloudStation source, then the path with most context.
+        score = (0 if wrapper else 1, len(parts), len(str(cleaned)))
+        candidates.append((score, cleaned))
+    if not candidates:
+        return PurePosixPath(safe_filename(row["representative_path"]))
+    return max(candidates, key=lambda item: item[0])[1]
+
+
+def is_technical_document(row: dict[str, str]) -> bool:
+    filename = PurePosixPath(row["representative_path"]).name.casefold()
+    evidence = " ".join(source_paths(row)).casefold()
+    if filename in TECHNICAL_FILENAMES:
+        return True
+    if "/documents/systeem/" in evidence:
+        return True
+    return contains_any(evidence, ("/nbproject/", "/.idea/", "/.vscode/")) and filename.endswith(
+        (".xml", ".properties", ".html", ".htm")
+    )
+
+
+def remove_bucket_marker(relative: PurePosixPath, bucket: str) -> PurePosixPath:
+    parts = list(relative.parts)
+    aliases = {
+        "documents/study": {"studie", "study", "opleiding", "school"},
+        "documents/work": {"werk", "work"},
+        "documents/home": {"woning", "huis", "home"},
+        "documents/administration": {"administratie", "administratie (archief)"},
+        "sensitive/finance": {"financiën", "financien", "finance"},
+        "sensitive/employment": {"werk", "work", "personeel"},
+        "sensitive/health": {"zorg", "medisch", "gezondheid"},
+        "sensitive/identity": {"identiteit", "identity"},
+    }.get(bucket, set())
+    for index, part in enumerate(parts[:-1]):
+        if part.casefold() in aliases:
+            parts = parts[index + 1 :]
+            break
+    return PurePosixPath(*parts)
+
+
+def proposed_target(row: dict[str, str], target_root: str, bucket: str) -> str:
+    relative = remove_bucket_marker(meaningful_relative_path(row), bucket)
+    safe_parts = [safe_filename(part) for part in relative.parts]
+    return str(PurePosixPath(target_root) / bucket / PurePosixPath(*safe_parts))
+
+
 def plan_rows(rows: list[dict[str, str]], target_root: str) -> list[dict[str, str]]:
     planned: list[dict[str, str]] = []
     for row in rows:
         if row["proposal_action"] not in {"document_standard", "document_sensitive"}:
             continue
-        bucket, bucket_reason = choose_bucket(row)
-        target_path = str(PurePosixPath(target_root) / bucket / safe_filename(row["representative_path"]))
+        if is_technical_document(row):
+            bucket, bucket_reason = "projects", "recognized build or project metadata"
+        else:
+            bucket, bucket_reason = choose_bucket(row)
+        target_path = proposed_target(row, target_root, bucket)
         item = dict(row)
         item["target_bucket"] = bucket
         item["target_bucket_reason"] = bucket_reason
         item["proposed_target_path"] = target_path
         item["collision_status"] = "clear"
-        item["copy_action"] = (
-            "manual_target_review" if bucket == "documents/unsorted" else "copy_candidate"
-        )
+        if bucket == "projects":
+            item["copy_action"] = "retain_project_technical"
+        elif bucket == "documents/unsorted":
+            item["copy_action"] = "manual_target_review"
+        else:
+            item["copy_action"] = "copy_candidate"
         item["semantic_scope"] = (
-            "blocked_sensitive_policy"
-            if row["proposal_action"] == "document_sensitive"
-            else "not_yet_authorized"
+            "blocked_sensitive_policy" if bucket.startswith("sensitive/") else "not_yet_authorized"
         )
         planned.append(item)
 
@@ -201,6 +343,7 @@ def main(argv: list[str] | None = None) -> int:
         "- Mode: **read-only dry-run**",
         f"- Document groups: **{len(planned)}**",
         f"- Copy candidates: **{action_counts['copy_candidate']}**",
+        f"- Retained project/technical: **{action_counts['retain_project_technical']}**",
         f"- Unsorted manual review: **{action_counts['manual_target_review']}**",
         f"- Name collisions blocked: **{action_counts['blocked_name_collision']}**",
         f"- Existing targets blocked: **{action_counts['blocked_existing_target']}**",
