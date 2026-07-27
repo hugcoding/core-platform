@@ -317,3 +317,20 @@ Root-pair overlap is a source-map metric, not a deletion plan. The same
 content may be intentionally retained in an authoritative collection and a
 backup. Root roles and retention requirements must be approved before any
 migration manifest is created.
+
+## Content-classification inventory
+
+After full hashes and persisted golden records are complete, create an
+extractor inventory for golden records only:
+
+```bash
+core cleanup classification-inventory \
+  --source /volume1/backup/NITRO/D/data/hugo/Documents \
+  --dry-run
+```
+
+The inventory assigns an extraction route for modern Office, PDF, plain-text,
+ODF, RTF, and legacy Office formats. Category and Dutch target path remain
+`pending_content_extraction`: content must be read before classification, and
+the old source path is supporting evidence only. Processing remains local;
+embeddings and external AI are disabled.
