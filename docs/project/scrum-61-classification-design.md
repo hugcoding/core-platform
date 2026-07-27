@@ -180,6 +180,28 @@ folder name never affects the proposal.
 The proposal still contains no target paths and cannot copy, move, update, or
 delete anything.
 
+## Read-only document copy plan
+
+Generate proposed target paths for the standard and sensitive document waves:
+
+```bash
+core cleanup copy-plan --manifest latest --dry-run
+```
+
+The plan uses `/volume1/data` and the approved top-level buckets under
+`documents/` and `sensitive/`. It emits one row per exact-content group and
+retains all source paths as provenance.
+
+Target paths are compared case-insensitively for SMB compatibility. Different
+hashes proposing the same path are marked `name_collision` and blocked.
+Existing physical target paths are blocked without reading or overwriting
+them. Unclear documents are proposed under `documents/unsorted` and require
+manual target review. Sensitive documents are placed below `sensitive/` and
+remain blocked from semantic processing.
+
+The command creates reports only. It does not create directories or copy,
+move, overwrite, update, or delete files.
+
 ## Source-map assessment
 
 After the baseline classification assessment, run:
