@@ -8,6 +8,8 @@ CREATE INDEX IF NOT EXISTS files_content_sha256_size_active_idx
     ON public.files (content_sha256, size_bytes)
     WHERE deleted_at IS NULL AND content_sha256 IS NOT NULL;
 
+DROP VIEW IF EXISTS public.v_content_group_members;
+
 DO $$
 BEGIN
     IF EXISTS (

@@ -18,6 +18,19 @@ class FullContentHashMigrationTest(unittest.TestCase):
         self.assertIn("files_content_sha256_size_active_idx", self.sql)
         self.assertIn("(content_sha256, size_bytes)", self.sql)
 
+    def test_dependent_view_is_dropped_before_column_rename(self):
+        drop_position = self.sql.index(
+            "DROP VIEW IF EXISTS public.v_content_group_members"
+        )
+        rename_position = self.sql.index(
+            "RENAME COLUMN hash_content TO content_sha256"
+        )
+        create_position = self.sql.index(
+            "CREATE OR REPLACE VIEW public.v_content_group_members"
+        )
+        self.assertLess(drop_position, rename_position)
+        self.assertLess(rename_position, create_position)
+
     def test_fast_hash_is_documented_as_non_authoritative(self):
         self.assertIn("identity signal only, not exact-duplicate proof", self.sql)
 
