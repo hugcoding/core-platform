@@ -8,6 +8,11 @@ The scanner separates lightweight root-level interval scans from complete reconc
 |---|---:|---|
 | `SCAN_ROOT` | `/volume1` | Parent directory containing scan roots |
 | `SCAN_ROOTS` | documentenbron en `/volume1/data` | Komma-gescheiden tijdelijke allowlist van actieve scanroots |
+
+CORE schrijft CSV-exports standaard als UTF-8 met BOM en gebruikt een
+puntkomma (`;`) als veldscheidingsteken. Daardoor openen Nederlandse
+Excel-installaties de kolommen en tekens direct correct. Invoercommando's
+blijven oudere komma-gescheiden CORE-manifesten automatisch herkennen.
 | `SCAN_INTERVAL` | `600` | Seconds to wait after each completed scan |
 | `FULL_SCAN_INTERVAL` | `3600` | Minimum seconds between completed full sweeps |
 | `MISSING_SCAN_THRESHOLD` | `2` | Completed full sweeps a path may be absent before `DELETE` |

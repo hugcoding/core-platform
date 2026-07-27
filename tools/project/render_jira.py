@@ -3,6 +3,7 @@ from pathlib import Path
 import csv
 import json
 
+from core.exports.csv_format import write_dict_rows
 ROOT = Path("/volume1/docker/nas-stack")
 PROJECT_JSON = ROOT / "project" / "generated" / "project.json"
 JIRA_KEYS_JSON = ROOT / "project" / "meta" / "jira_keys.json"
@@ -28,10 +29,7 @@ def load_jira_keys():
 
 def write_csv(path, fieldnames, rows):
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
+    write_dict_rows(path, rows, fieldnames)
 
 
 def normalize_status(status):

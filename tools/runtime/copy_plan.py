@@ -12,6 +12,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
+from core.exports.csv_format import dict_reader, write_dict_rows
 
 TARGET_BUCKETS = {
     "documents/administration",
@@ -366,7 +367,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         manifest_path = resolve_manifest(root, args.manifest)
         with manifest_path.open(newline="", encoding="utf-8") as handle:
-            source_rows = list(csv.DictReader(handle))
+            source_rows = list(dict_reader(handle))
     except (FileNotFoundError, OSError) as exc:
         print(f"Copy plan failed: {exc}", file=sys.stderr)
         return 1
@@ -398,19 +399,13 @@ def main(argv: list[str] | None = None) -> int:
     fields = list(planned[0])
 
     def write_csv(path: Path, selected: list[dict[str, str]]) -> None:
-        with path.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=fields)
-            writer.writeheader()
-            writer.writerows(selected)
+        write_dict_rows(path, selected, fields)
 
     write_csv(plan_path, planned)
     collisions = [row for row in planned if row["collision_status"] != "clear"]
     write_csv(collisions_path, collisions)
     folders = build_folder_rows(planned)
-    with folders_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(folders[0]))
-        writer.writeheader()
-        writer.writerows(folders)
+    write_dict_rows(folders_path, folders, list(folders[0]))
 
     bucket_counts = Counter(row["target_bucket"] for row in planned)
     action_counts = Counter(row["copy_action"] for row in planned)

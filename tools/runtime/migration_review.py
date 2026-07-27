@@ -11,6 +11,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+from core.exports.csv_format import dict_reader, write_dict_rows
 
 DOCUMENT_EXTENSIONS = {
     "doc",
@@ -131,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         manifest_path = resolve_manifest(root, args.manifest)
         with manifest_path.open(newline="", encoding="utf-8") as handle:
-            rows = list(csv.DictReader(handle))
+            rows = list(dict_reader(handle))
     except (FileNotFoundError, OSError) as exc:
         print(f"Migration review failed: {exc}", file=sys.stderr)
         return 1
@@ -164,10 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     review_path = export_dir / f"review-manifest-{timestamp}.csv"
     report_path = export_dir / f"review-manifest-{timestamp}.md"
     fieldnames = list(reviewed[0])
-    with review_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(reviewed)
+    write_dict_rows(review_path, reviewed, fieldnames)
 
     report = [
         "# SCRUM-61 document review manifest",

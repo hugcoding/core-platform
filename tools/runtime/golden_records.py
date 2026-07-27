@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from core.integrity.golden_record import rank_candidates, selection_metadata
+from core.exports.csv_format import write_dict_rows
 
 from tools.runtime.migration_inventory import run_query, shutil_which
 
@@ -132,10 +133,7 @@ def main(argv: list[str] | None = None) -> int:
     report_path = export_dir / f"golden-records-{timestamp}.md"
 
     def write(path: Path, selected: list[dict[str, str]]) -> None:
-        with path.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=list(manifest[0]))
-            writer.writeheader()
-            writer.writerows(selected)
+        write_dict_rows(path, selected, list(manifest[0]))
 
     write(manifest_path, manifest)
     review = [row for row in manifest if row["confidence"] == "low"]

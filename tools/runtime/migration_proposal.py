@@ -10,6 +10,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+from core.exports.csv_format import dict_reader, write_dict_rows
 POINTER_EXTENSIONS = {"gdoc", "gform", "gsheet", "gtable"}
 
 
@@ -71,10 +72,7 @@ def resolve_manifest(root: Path, value: str) -> Path:
 
 
 def write_csv(path: Path, rows: list[dict[str, str]], fieldnames: list[str]) -> None:
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
+    write_dict_rows(path, rows, fieldnames)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -83,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         manifest_path = resolve_manifest(root, args.manifest)
         with manifest_path.open(newline="", encoding="utf-8") as handle:
-            rows = list(csv.DictReader(handle))
+            rows = list(dict_reader(handle))
     except (FileNotFoundError, OSError) as exc:
         print(f"Migration proposal failed: {exc}", file=sys.stderr)
         return 1

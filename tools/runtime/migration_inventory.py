@@ -13,6 +13,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from core.exports.csv_format import write_dict_rows
 
 CLASSIFICATION_CTE = r"""
 WITH source_files AS (
@@ -241,11 +242,10 @@ def main(argv: list[str] | None = None) -> int:
     detail_path = export_dir / f"manifest-{timestamp}.csv"
     summary_path = export_dir / f"summary-{timestamp}.csv"
     report_path = export_dir / f"migration-inventory-{timestamp}.md"
-    detail_path.write_text(detail_text, encoding="utf-8")
-    summary_path.write_text(summary_text, encoding="utf-8")
-
     details = parse_csv(detail_text)
     summary = parse_csv(summary_text)
+    write_dict_rows(detail_path, details, list(details[0]) if details else [])
+    write_dict_rows(summary_path, summary, list(summary[0]) if summary else [])
     actions: dict[str, int] = {}
     for row in details:
         action = row["migration_action"]
