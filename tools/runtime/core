@@ -4,6 +4,11 @@ set -eu
 PROJECT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$PROJECT_ROOT"
 
+DOCKER_BIN="${DOCKER_BIN:-docker}"
+if ! command -v "$DOCKER_BIN" >/dev/null 2>&1 && [ -x /usr/local/bin/docker ]; then
+    DOCKER_BIN=/usr/local/bin/docker
+fi
+
 show_help() {
     printf '%s\n' ""
     printf '%s\n' "CORE CLI"
@@ -59,8 +64,8 @@ case "$command_domain" in
                 python3 -m core.cli docs serve
                 ;;
             serve)
-                docker compose up -d docs
-                docker compose ps docs
+                "$DOCKER_BIN" compose up -d docs
+                "$DOCKER_BIN" compose ps docs
                 echo "Permanent Wiki: http://192.168.68.105:8000/wiki/"
                 ;;
             build)
@@ -70,9 +75,9 @@ case "$command_domain" in
                 echo "Permanent Wiki: http://192.168.68.105:8000/wiki/"
                 ;;
             deploy)
-                docker compose build docs
-                docker compose up -d --force-recreate docs
-                docker compose ps docs
+                "$DOCKER_BIN" compose build docs
+                "$DOCKER_BIN" compose up -d --force-recreate docs
+                "$DOCKER_BIN" compose ps docs
                 ;;
             *)
                 echo "Unknown docs command."
@@ -151,13 +156,13 @@ case "$command_domain" in
                 ./tools/runtime/watch
                 ;;
             start)
-                docker compose up -d
+                "$DOCKER_BIN" compose up -d
                 ;;
             stop)
-                docker compose down
+                "$DOCKER_BIN" compose down
                 ;;
             restart)
-                docker compose down && docker compose up -d
+                "$DOCKER_BIN" compose down && "$DOCKER_BIN" compose up -d
                 ;;
             *)
                 echo "Unknown runtime command."
