@@ -48,6 +48,19 @@ def choose_bucket(row: dict[str, str]) -> tuple[str, str]:
     evidence = f"{row['representative_path']} {row.get('source_paths', '')}".casefold()
     sensitive = row["proposal_action"] == "document_sensitive"
 
+    reviewed_rules = (
+        (("5euro-cadeaubon", "waterkoker.pdf"), "documents/administration", "reviewed administration document"),
+        (("nieuwsberichten", "op ons wensenlijstje staan", "tickets lost in disney", "/tijdelijk/tickets.pdf"), "documents/personal", "reviewed personal document"),
+        (("/openvpn/readme.txt", "schoonepc_computerbijbel_windows10", "welkom bij stack"), "projects", "reviewed technical document"),
+        (("regeling bedrijfsfitness roads",), "sensitive/employment", "reviewed employment document"),
+        (("boete 18122015", "staatsloterij", "eindnota - notanummer"), "sensitive/finance", "reviewed financial document"),
+        (("herinneringsbriefrijbewijs",), "sensitive/identity", "reviewed identity document"),
+        (("overzicht verlengingen wmo",), "sensitive/health", "reviewed health document"),
+    )
+    for terms, bucket, reason in reviewed_rules:
+        if contains_any(evidence, terms):
+            return bucket, reason
+
     if sensitive or contains_any(
         evidence,
         (
@@ -217,6 +230,14 @@ def proposed_target(row: dict[str, str], target_root: str, bucket: str) -> str:
     return str(PurePosixPath(target_root) / bucket / PurePosixPath(*safe_parts))
 
 
+def add_hash_suffix(path: str, content_hash: str) -> str:
+    value = PurePosixPath(path)
+    suffix = value.suffix
+    stem = value.name[: -len(suffix)] if suffix else value.name
+    name = f"{stem}__{content_hash[:8]}{suffix}"
+    return str(value.with_name(name))
+
+
 def plan_rows(rows: list[dict[str, str]], target_root: str) -> list[dict[str, str]]:
     planned: list[dict[str, str]] = []
     for row in rows:
@@ -251,8 +272,11 @@ def plan_rows(rows: list[dict[str, str]], target_root: str) -> list[dict[str, st
         hashes = {item["hash_content"] for item in group}
         if len(hashes) > 1:
             for item in group:
-                item["collision_status"] = "name_collision"
-                item["copy_action"] = "blocked_name_collision"
+                item["proposed_target_path"] = add_hash_suffix(
+                    item["proposed_target_path"], item["hash_content"]
+                )
+                item["collision_status"] = "resolved_hash_suffix"
+                item["copy_action"] = "copy_candidate_versioned"
 
     for item in planned:
         if Path(item["proposed_target_path"]).exists():
@@ -260,6 +284,56 @@ def plan_rows(rows: list[dict[str, str]], target_root: str) -> list[dict[str, st
             item["copy_action"] = "blocked_existing_target"
 
     return planned
+
+
+def build_folder_rows(planned: list[dict[str, str]]) -> list[dict[str, str]]:
+    grouped: dict[tuple[str, str, str], dict[str, object]] = {}
+    for item in planned:
+        target_directory = str(PurePosixPath(item["proposed_target_path"]).parent)
+        for source_path in source_paths(item):
+            source_directory = str(PurePosixPath(source_path).parent)
+            key = (source_directory, target_directory, item["target_bucket"])
+            current = grouped.setdefault(
+                key,
+                {
+                    "source_directory": source_directory,
+                    "proposed_target_directory": target_directory,
+                    "target_bucket": item["target_bucket"],
+                    "content_groups": set(),
+                    "copy_actions": Counter(),
+                    "mapping_reasons": Counter(),
+                },
+            )
+            current["content_groups"].add(item["hash_content"])
+            current["copy_actions"][item["copy_action"]] += 1
+            current["mapping_reasons"][item["target_bucket_reason"]] += 1
+
+    result: list[dict[str, str]] = []
+    for current in grouped.values():
+        actions = current["copy_actions"]
+        reasons = current["mapping_reasons"]
+        result.append(
+            {
+                "source_directory": str(current["source_directory"]),
+                "proposed_target_directory": str(current["proposed_target_directory"]),
+                "target_bucket": str(current["target_bucket"]),
+                "content_groups": str(len(current["content_groups"])),
+                "copy_actions": json.dumps(dict(actions), ensure_ascii=False, sort_keys=True),
+                "mapping_reasons": json.dumps(dict(reasons), ensure_ascii=False, sort_keys=True),
+                "plan_status": (
+                    "manual_review"
+                    if "manual_target_review" in actions
+                    else "read_only_proposal"
+                ),
+            }
+        )
+    return sorted(
+        result,
+        key=lambda row: (
+            row["proposed_target_directory"].casefold(),
+            row["source_directory"].casefold(),
+        ),
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -319,6 +393,7 @@ def main(argv: list[str] | None = None) -> int:
     export_dir.mkdir(parents=True, exist_ok=True)
     plan_path = export_dir / f"copy-plan-{timestamp}.csv"
     collisions_path = export_dir / f"copy-plan-collisions-{timestamp}.csv"
+    folders_path = export_dir / f"folder-plan-{timestamp}.csv"
     report_path = export_dir / f"copy-plan-{timestamp}.md"
     fields = list(planned[0])
 
@@ -331,6 +406,11 @@ def main(argv: list[str] | None = None) -> int:
     write_csv(plan_path, planned)
     collisions = [row for row in planned if row["collision_status"] != "clear"]
     write_csv(collisions_path, collisions)
+    folders = build_folder_rows(planned)
+    with folders_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(folders[0]))
+        writer.writeheader()
+        writer.writerows(folders)
 
     bucket_counts = Counter(row["target_bucket"] for row in planned)
     action_counts = Counter(row["copy_action"] for row in planned)
@@ -342,11 +422,14 @@ def main(argv: list[str] | None = None) -> int:
         f"- Target root: `{target_root}`",
         "- Mode: **read-only dry-run**",
         f"- Document groups: **{len(planned)}**",
-        f"- Copy candidates: **{action_counts['copy_candidate']}**",
+        f"- Direct copy candidates: **{action_counts['copy_candidate']}**",
+        f"- Versioned copy candidates: **{action_counts['copy_candidate_versioned']}**",
         f"- Retained project/technical: **{action_counts['retain_project_technical']}**",
         f"- Unsorted manual review: **{action_counts['manual_target_review']}**",
-        f"- Name collisions blocked: **{action_counts['blocked_name_collision']}**",
+        f"- Name collisions resolved with hash suffix: **{action_counts['copy_candidate_versioned']}**",
+        f"- Name collisions still blocked: **{action_counts['blocked_name_collision']}**",
         f"- Existing targets blocked: **{action_counts['blocked_existing_target']}**",
+        f"- Proposed source-to-target folder mappings: **{len(folders)}**",
         "",
         "## Proposed buckets",
         "",
@@ -370,6 +453,7 @@ def main(argv: list[str] | None = None) -> int:
     print("SCRUM-61 read-only document copy plan complete")
     print(f"Report: {report_path.relative_to(root)}")
     print(f"Plan: {plan_path.relative_to(root)}")
+    print(f"Folders: {folders_path.relative_to(root)}")
     print(f"Collisions: {collisions_path.relative_to(root)}")
     return 0
 

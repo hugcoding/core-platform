@@ -193,7 +193,9 @@ The plan uses `/volume1/data` and the approved top-level buckets under
 retains all source paths as provenance.
 
 Target paths are compared case-insensitively for SMB compatibility. Different
-hashes proposing the same path are marked `name_collision` and blocked.
+hashes proposing the same path are both preserved with an eight-character
+content-hash suffix before the extension. This prevents overwrites while
+retaining both versions for later content review.
 Existing physical target paths are blocked without reading or overwriting
 them. Unclear documents are proposed under `documents/unsorted` and require
 manual target review. Sensitive documents are placed below `sensitive/` and
@@ -207,6 +209,12 @@ remain project/technical data. Strong source evidence such as `Geldzaken`,
 `Gezondheid & Voeding`, and `Officiële documenten` upgrades the target to the
 corresponding sensitive bucket even when the earlier extension-only proposal
 did not mark the file sensitive.
+
+The command also emits a `folder-plan-*.csv`. This is a read-only mapping from
+every contributing source directory to its proposed target directory, with
+the target bucket, number of content groups, proposed actions, and
+classification reasons. It is a structure proposal only: empty source
+directories are not represented and no target directories are created.
 
 The command creates reports only. It does not create directories or copy,
 move, overwrite, update, or delete files.

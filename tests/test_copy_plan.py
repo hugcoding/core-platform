@@ -1,6 +1,8 @@
 import unittest
 
 from tools.runtime.copy_plan import (
+    add_hash_suffix,
+    build_folder_rows,
     choose_bucket,
     meaningful_relative_path,
     plan_rows,
@@ -56,14 +58,57 @@ class CopyPlanTest(unittest.TestCase):
         self.assertEqual("documents/unsorted", planned["target_bucket"])
         self.assertEqual("manual_target_review", planned["copy_action"])
 
-    def test_different_hashes_at_same_target_are_blocked(self):
+    def test_different_hashes_at_same_target_are_preserved_with_hash_suffix(self):
         rows = [
             row("document_standard", "/volume1/Documents/Studie/report.pdf", "hash-1"),
             row("document_standard", "/volume1/Other/studie/REPORT.PDF", "hash-2"),
         ]
         planned = plan_rows(rows, "/volume1/data")
-        self.assertEqual({"name_collision"}, {item["collision_status"] for item in planned})
-        self.assertEqual({"blocked_name_collision"}, {item["copy_action"] for item in planned})
+        self.assertEqual({"resolved_hash_suffix"}, {item["collision_status"] for item in planned})
+        self.assertEqual({"copy_candidate_versioned"}, {item["copy_action"] for item in planned})
+        self.assertEqual(2, len({item["proposed_target_path"].casefold() for item in planned}))
+
+    def test_hash_suffix_is_inserted_before_extension(self):
+        self.assertEqual(
+            "/volume1/data/report__abcdef12.pdf",
+            add_hash_suffix("/volume1/data/report.pdf", "abcdef123456"),
+        )
+
+    def test_folder_plan_preserves_source_to_target_mapping(self):
+        item = row(
+            "document_standard",
+            "/volume1/backup/NITRO/D/data/hugo/Documents/Studie/NCOI/report.pdf",
+        )
+        folders = build_folder_rows(plan_rows([item], "/volume1/data"))
+        self.assertEqual(1, len(folders))
+        self.assertEqual(
+            "/volume1/backup/NITRO/D/data/hugo/Documents/Studie/NCOI",
+            folders[0]["source_directory"],
+        )
+        self.assertEqual(
+            "/volume1/data/documents/study/NCOI",
+            folders[0]["proposed_target_directory"],
+        )
+
+    def test_reviewed_documents_receive_explicit_bucket(self):
+        cases = {
+            "Tijdelijk/Boete 18122015.pdf": "sensitive/finance",
+            "openvpn/README.txt": "projects",
+            "Nieuwsberichten/bericht.pdf": "documents/personal",
+            "overzicht verlengingen wmo.xlsm": "sensitive/health",
+        }
+        for relative, expected in cases.items():
+            with self.subTest(relative=relative):
+                planned = plan_rows(
+                    [
+                        row(
+                            "document_standard",
+                            f"/volume1/backup/NITRO/D/data/hugo/Documents/{relative}",
+                        )
+                    ],
+                    "/volume1/data",
+                )[0]
+                self.assertEqual(expected, planned["target_bucket"])
 
     def test_meaningful_non_cloudstation_hierarchy_is_preserved(self):
         item = row(
