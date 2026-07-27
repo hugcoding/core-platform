@@ -46,7 +46,10 @@ core docs build
 core docs open
 ```
 
-`core docs serve` start MkDocs op `127.0.0.1:8000`, `core docs build` bouwt de site, en `core docs open` opent `http://127.0.0.1:8000` in de standaardbrowser.
+`core docs serve` start een tijdelijke ontwikkelpreview op de laptop,
+`core docs build` controleert de statische site, en `core docs open` opent
+`http://127.0.0.1:8000/wiki/` in de standaardbrowser. De preview publiceert
+niets naar de permanente NAS-Wiki.
 
 CORE probeert eerst het `mkdocs` command. Als dat niet op `PATH` staat, probeert CORE automatisch `python -m mkdocs`. MkDocs moet wel op dezelfde machine geinstalleerd zijn als waar je `core docs ...` draait.
 

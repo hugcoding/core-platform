@@ -161,31 +161,38 @@ Gebruik geen gewone `git pull` vanuit `\\NAS\docker\nas-stack`; packfile-renames
 
 ## Documentation workflow
 
-Build de documentatie via CORE:
-
-```bash
-core docs build
-```
-
-Als Windows de enige omgeving met MkDocs is:
+Ontwikkel documentatie lokaal in `C:\development\nas-stack\docs`. Start tijdens
+het schrijven een tijdelijke preview:
 
 ```powershell
-.\tools\windows\core.ps1 docs build
-```
-
-Start de lokale docs server:
-
-```bash
+cd C:\development\nas-stack
 core docs serve
 ```
 
-Open de portal:
+Open de preview:
 
-```bash
+```powershell
 core docs open
 ```
 
-De Material for MkDocs 2.0 waarschuwing is upstream en geen build failure zolang MkDocs eindigt met `Documentation built`.
+Controleer voor commit ook een volledige statische build:
+
+```powershell
+core docs build
+```
+
+De lokale preview is uitsluitend voor ontwikkeling. Wijzigingen worden daar
+direct zichtbaar, maar komen nog niet op de permanente NAS-Wiki.
+
+Na review en merge naar `main`:
+
+1. voer vanuit Windows `core git pull` uit om de NAS-checkout bij te werken;
+2. rebuild daarna op de NAS alleen de documentatieservice;
+3. controleer dat `nas-docs-1` healthy is;
+4. open de permanente Wiki.
+
+De Material for MkDocs 2.0-waarschuwing is upstream en geen build failure
+zolang MkDocs eindigt met `Documentation built`.
 
 ## Cleanup workflow
 
@@ -300,9 +307,15 @@ port-forward voor poort 8000 op het KPN-modem te bestaan. De DSM-firewall staat
 alleen het lokale netwerk `192.168.68.0/24` en het VPN-netwerk `10.8.0.0/24`
 toe.
 
-Na documentatiewijzigingen:
+Na review, merge en `core git pull` publiceer je de goedgekeurde versie:
 
 ```bash
+cd /volume1/docker/nas-stack
 docker compose build docs
 docker compose up -d --force-recreate docs
+docker compose ps docs
 ```
+
+Hierdoor worden lokale conceptwijzigingen nooit automatisch gepubliceerd.
+Alleen de gereviewde Git-versie uit de NAS-checkout wordt in `nas-docs-1`
+opgenomen.

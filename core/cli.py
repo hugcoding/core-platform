@@ -85,7 +85,7 @@ def run_docs(
         return 1
 
     if action == "open":
-        url = "http://127.0.0.1:8000"
+        url = "http://127.0.0.1:8000/wiki/"
         print(f"Opening {url}", file=stdout)
         return 0 if browser_open(url) else 1
 

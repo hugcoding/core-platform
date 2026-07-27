@@ -106,8 +106,8 @@ class CoreCliDocsTest(unittest.TestCase):
             exit_code = main(["docs", "open"], base_path=root, stdout=stdout, browser_open=browser_open)
 
             self.assertEqual(0, exit_code)
-            self.assertEqual(["http://127.0.0.1:8000"], opened)
-            self.assertIn("Opening http://127.0.0.1:8000", stdout.getvalue())
+            self.assertEqual(["http://127.0.0.1:8000/wiki/"], opened)
+            self.assertIn("Opening http://127.0.0.1:8000/wiki/", stdout.getvalue())
 
     def test_docs_command_fails_when_mkdocs_config_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
