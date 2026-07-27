@@ -28,15 +28,16 @@ class GoldenRecordsTest(unittest.TestCase):
         self.assertEqual("2", manifest[0]["golden_file_id"])
         self.assertEqual("high", manifest[0]["confidence"])
 
-    def test_equal_scores_require_review(self):
+    def test_equal_scores_choose_one_deterministic_golden_record(self):
         manifest = build_manifest(
             [
                 item(1, "/volume1/source/A/rapport.pdf"),
                 item(2, "/volume1/source/B/rapport.pdf"),
             ]
         )
-        self.assertEqual("golden_record_review_required", manifest[0]["selection_status"])
+        self.assertEqual("golden_selected_tiebreak", manifest[0]["selection_status"])
         self.assertEqual("low", manifest[0]["confidence"])
+        self.assertEqual("1", manifest[0]["golden_file_id"])
 
     def test_copy_like_filename_is_penalized(self):
         original = candidate_score(item(1, "/volume1/source/rapport.pdf"))[0]

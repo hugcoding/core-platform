@@ -232,9 +232,12 @@ core cleanup golden-records \
 
 The golden-record score prefers trustworthy original locations and filenames
 and penalizes legacy wrappers, temporary locations, exports, archives, and
-copy-like filenames. Equal top scores are never decided silently and receive
-`golden_record_review_required`. Every alternative source and the score
-explanation remain in the manifest.
+copy-like filenames. Every exact-content group always receives exactly one
+golden record. Equal top scores use a deterministic path and file-id
+tiebreaker, retain `low` confidence for visibility, and do not block the
+later copy. Every alternative source and the score explanation remain in the
+manifest. Alternative physical files remain untouched at their existing NAS
+locations.
 
 Target paths deliberately remain empty in this phase. The next
 content-classification phase determines the compact Dutch target hierarchy

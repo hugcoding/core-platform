@@ -88,24 +88,28 @@ def choose_golden(group: list[dict[str, str]]) -> dict[str, str]:
     ranked = []
     for row in group:
         score, reasons = candidate_score(row)
-        ranked.append((score, len(row["path"]), row["path"].casefold(), row, reasons))
-    ranked.sort(key=lambda item: (-item[0], item[1], item[2]))
-    best_score, _, _, best, best_reasons = ranked[0]
+        ranked.append(
+            (score, len(row["path"]), row["path"].casefold(), int(row["file_id"]), row, reasons)
+        )
+    ranked.sort(key=lambda item: (-item[0], item[1], item[2], item[3]))
+    best_score, _, _, _, best, best_reasons = ranked[0]
     second_score = ranked[1][0] if len(ranked) > 1 else None
     margin = best_score - second_score if second_score is not None else best_score
     if len(ranked) == 1:
         confidence, status = "high", "single_source"
     elif margin >= 8:
-        confidence, status = "high", "golden_proposed"
+        confidence, status = "high", "golden_selected"
     elif margin > 0:
-        confidence, status = "medium", "golden_proposed"
+        confidence, status = "medium", "golden_selected"
     else:
-        confidence, status = "low", "golden_record_review_required"
+        # Always select exactly one record. Stable path and file-id ordering
+        # make equal-score choices deterministic and auditable.
+        confidence, status = "low", "golden_selected_tiebreak"
 
     alternatives = [
         {
-            "file_id": item[3]["file_id"],
-            "path": item[3]["path"],
+            "file_id": item[4]["file_id"],
+            "path": item[4]["path"],
             "score": item[0],
         }
         for item in ranked[1:]
@@ -189,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
             writer.writerows(selected)
 
     write(manifest_path, manifest)
-    review = [row for row in manifest if row["selection_status"] == "golden_record_review_required"]
+    review = [row for row in manifest if row["confidence"] == "low"]
     write(review_path, review)
     duplicate_groups = sum(row["copy_count"] != "1" for row in manifest)
     report = [
@@ -200,9 +204,10 @@ def main(argv: list[str] | None = None) -> int:
         "- Modus: **alleen-lezen dry-run**",
         f"- Unieke inhoudsgroepen: **{len(manifest)}**",
         f"- Groepen met meerdere bronbestanden: **{duplicate_groups}**",
-        f"- Handmatige golden-recordreview: **{len(review)}**",
+        f"- Golden records met lage zekerheid: **{len(review)}**",
         "",
         "Er zijn geen bestanden, mappen of databaserecords gewijzigd.",
+        "Iedere inhoudsgroep heeft precies één deterministisch golden record.",
         "Doelpaden blijven leeg totdat inhoudsgestuurde classificatie is uitgevoerd.",
     ]
     report_path.write_text("\n".join(report) + "\n", encoding="utf-8")
