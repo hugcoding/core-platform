@@ -274,6 +274,19 @@ updates the single `golden_file_id`, rebuilds the member snapshot, and emits
 `GOLDEN_GROUP_REMOVED` into `file_events`. Alternative physical files remain
 untouched.
 
+An ordinary full scan only enqueues changed filesystem signatures. Existing
+documents that predate `content_sha256` therefore use the targeted one-time
+backfill:
+
+```bash
+core scanner hash-backfill \
+  --source /volume1/backup/NITRO/D/data/hugo/Documents
+```
+
+The scanner queries only active supported documents with a missing full hash
+below the selected source and queues those paths for the metadata worker. It
+does not modify, move, or delete physical files.
+
 ## Source-map assessment
 
 After the baseline classification assessment, run:

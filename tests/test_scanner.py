@@ -52,6 +52,12 @@ class FakeRedis:
     def xadd(self, stream, data):
         self.events.append((stream, data))
 
+    def pipeline(self, transaction=False):
+        return self
+
+    def execute(self):
+        return []
+
 
 class ScannerStateTests(unittest.TestCase):
     def setUp(self):
@@ -225,6 +231,31 @@ class ScannerStateTests(unittest.TestCase):
             scanner.wait_for_next_scan(600)
 
         sleep.assert_not_called()
+
+    def test_hash_backfill_request_is_consumed_once(self):
+        source = "/volume1/backup/Documents"
+        scanner.r.set(scanner.HASH_BACKFILL_REQUEST_KEY, source)
+
+        self.assertEqual(source, scanner.consume_hash_backfill_request())
+        self.assertIsNone(scanner.consume_hash_backfill_request())
+
+    def test_hash_backfill_enqueues_only_paths_returned_by_database(self):
+        cursor = mock.MagicMock()
+        cursor.fetchall.return_value = [
+            ("/volume1/backup/Documents/a.pdf",),
+            ("/volume1/backup/Documents/b.docx",),
+        ]
+        connection = mock.MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        with mock.patch.object(scanner, "get_db", return_value=connection):
+            count = scanner.run_hash_backfill("/volume1/backup/Documents")
+
+        self.assertEqual(2, count)
+        self.assertEqual(2, len(scanner.r.events))
+        self.assertTrue(all(event[1]["source"] == "hash_backfill" for event in scanner.r.events))
+        query, params = cursor.execute.call_args.args
+        self.assertIn("content_sha256 IS NULL", query)
+        self.assertEqual("/volume1/backup/Documents", params[1])
 
     def test_scan_once_registers_a_full_session(self):
         calls = []

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import posixpath
 import time
 import socket
 import logging
@@ -33,7 +34,12 @@ LAST_INTERVAL_ROOT_KEY = "scanner:last_interval_root"
 INTERVAL_ROOT_INDEX_KEY = "scanner:interval:root_index"
 DIRTY_ROOTS_KEY = "scanner:dirty_roots"
 FULL_SCAN_REQUEST_KEY = "scanner:request:full"
+HASH_BACKFILL_REQUEST_KEY = "scanner:request:hash_backfill"
 HEARTBEAT_TTL = 120
+FULL_HASH_EXTENSIONS = (
+    "doc", "docx", "odt", "rtf", "txt", "md", "pdf",
+    "xls", "xlsx", "ods", "csv", "ppt", "pptx", "odp",
+)
 
 CONSUMER_NAME = socket.gethostname()
 SIGNATURE_PREFIX = "scanner:sig:"
@@ -461,11 +467,55 @@ def consume_full_scan_request():
     return True
 
 
+def consume_hash_backfill_request():
+    source = r.get(HASH_BACKFILL_REQUEST_KEY)
+    if not source:
+        return None
+    r.delete(HASH_BACKFILL_REQUEST_KEY)
+    logger.info("Document hash backfill requested for %s", source)
+    return source
+
+
+def run_hash_backfill(source):
+    source = posixpath.normpath(source)
+    scan_root = posixpath.normpath(SCAN_ROOT)
+    if not source.startswith(scan_root + "/"):
+        raise ValueError(f"Hash backfill source must be below {SCAN_ROOT}: {source}")
+    with get_db().cursor() as cur:
+        cur.execute(
+            """SELECT path
+               FROM files
+               WHERE deleted_at IS NULL
+                 AND content_sha256 IS NULL
+                 AND LOWER(COALESCE(extension, '')) = ANY(%s)
+                 AND (path = %s OR path LIKE %s)
+               ORDER BY id""",
+            (list(FULL_HASH_EXTENSIONS), source, source.rstrip("/") + "/%"),
+        )
+        paths = [row[0] for row in cur.fetchall()]
+    pipe = r.pipeline(transaction=False)
+    requested_at = utc_now()
+    for path in paths:
+        pipe.xadd(
+            STREAM_KEY,
+            {
+                "event": "UPSERT",
+                "path": path,
+                "source": "hash_backfill",
+                "ts": requested_at,
+            },
+        )
+    if paths:
+        pipe.execute()
+    logger.info("Document hash backfill enqueued=%s source=%s", len(paths), source)
+    return len(paths)
+
+
 def wait_for_next_scan(seconds):
     """Wait interruptibly so a manual full request is picked up promptly."""
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
-        if r.get(FULL_SCAN_REQUEST_KEY):
+        if r.get(FULL_SCAN_REQUEST_KEY) or r.get(HASH_BACKFILL_REQUEST_KEY):
             return
         heartbeat("idle")
         refresh_lock()
@@ -492,8 +542,12 @@ def main():
 
             started = time.time()
             try:
-                full_sweep = consume_full_scan_request() or time.monotonic() >= next_full_at
-                if full_sweep:
+                backfill_source = consume_hash_backfill_request()
+                if backfill_source:
+                    enqueued = run_hash_backfill(backfill_source)
+                    discovered, missing, deleted = enqueued, 0, 0
+                    scan_type = "hash_backfill"
+                elif consume_full_scan_request() or time.monotonic() >= next_full_at:
                     discovered, enqueued, missing, deleted = scan_once()
                     next_full_at = time.monotonic() + FULL_SCAN_INTERVAL
                     scan_type = "full"

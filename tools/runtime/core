@@ -45,6 +45,7 @@ show_help() {
     printf '%s\n' "  core runtime stop"
     printf '%s\n' "  core runtime restart"
     printf '%s\n' "  core scanner full"
+    printf '%s\n' "  core scanner hash-backfill --source PATH"
     printf '%s\n' "  core git pull  (run from Windows PowerShell)"
     printf '%s\n' "  core version"
     printf '%s\n' ""
@@ -186,9 +187,13 @@ case "$command_domain" in
             full)
                 sh ./tools/runtime/scanner-full
                 ;;
+            hash-backfill)
+                shift 2
+                sh ./tools/runtime/scanner-hash-backfill "$@"
+                ;;
             *)
                 echo "Unknown scanner command."
-                echo "Use: core scanner full"
+                echo "Use: core scanner full | hash-backfill --source PATH"
                 exit 1
                 ;;
         esac
