@@ -11,6 +11,7 @@ show_help() {
     printf '%s\n' "Usage:"
     printf '%s\n' "  core doctor"
     printf '%s\n' "  core docs generate"
+    printf '%s\n' "  core docs dev"
     printf '%s\n' "  core docs serve"
     printf '%s\n' "  core docs build"
     printf '%s\n' "  core docs open"
@@ -54,7 +55,15 @@ case "$command_domain" in
             generate)
                 ./gendocs
                 ;;
-            serve|build)
+            dev)
+                python3 -m core.cli docs serve
+                ;;
+            serve)
+                docker compose up -d docs
+                docker compose ps docs
+                echo "Permanent Wiki: http://192.168.68.105:8000/wiki/"
+                ;;
+            build)
                 python3 -m core.cli docs "$command_action"
                 ;;
             open)
@@ -67,7 +76,7 @@ case "$command_domain" in
                 ;;
             *)
                 echo "Unknown docs command."
-                echo "Use: core docs generate | serve | build | open | deploy"
+                echo "Use: core docs generate | dev | serve | build | open | deploy"
                 exit 1
                 ;;
         esac

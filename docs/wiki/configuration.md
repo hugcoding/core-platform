@@ -46,11 +46,12 @@ core docs build
 core docs open
 ```
 
-`core docs serve` start een tijdelijke ontwikkelpreview op de machine waarop
-het commando draait en `core docs build` controleert de statische site. Via
-SSH bindt de preview alleen aan NAS-loopback `127.0.0.1:8000`; dit vereist een
-SSH-tunnel en is niet de permanente Wiki. De preview publiceert niets naar de
-nginx-container.
+Vanaf SSH start `core docs serve` de permanente nginx-container op de
+achtergrond. Het commando blokkeert de terminal niet en toont de permanente
+URL. `core docs dev` start uitsluitend voor probleemonderzoek de oude
+MkDocs-ontwikkelserver op NAS-loopback `127.0.0.1:8000`; deze vereist een
+SSH-tunnel en publiceert niets naar nginx. `core docs build` controleert een
+losse statische MkDocs-build.
 
 Vanaf SSH toont `core docs open` de permanente URL en rebuildt
 `core docs deploy` de nginx-documentatiecontainer. `core git pull` gebruikt

@@ -161,28 +161,28 @@ Gebruik geen gewone `git pull` vanuit `\\NAS\docker\nas-stack`; packfile-renames
 
 ## Documentation workflow
 
-Ontwikkel documentatie lokaal in `C:\development\nas-stack\docs`. Start tijdens
-het schrijven een tijdelijke preview:
+Ontwikkel documentatie lokaal in `C:\development\nas-stack\docs`. De
+permanente NAS-Wiki start je vanuit SSH zonder foreground-proces:
 
-```powershell
-cd C:\development\nas-stack
+```bash
+cd /volume1/docker/nas-stack
 core docs serve
 ```
 
-Open de preview:
+Het commando start `nas-docs-1` op de achtergrond. Open daarna:
 
-```powershell
-core docs open
+```text
+http://192.168.68.105:8000/wiki/
 ```
 
-Controleer voor commit ook een volledige statische build:
+Alleen voor een tijdelijke MkDocs-ontwikkelserver op NAS-loopback:
 
-```powershell
-core docs build
+```bash
+core docs dev
 ```
 
-De lokale preview is uitsluitend voor ontwikkeling. Wijzigingen worden daar
-direct zichtbaar, maar komen nog niet op de permanente NAS-Wiki.
+`core docs dev` blokkeert de terminal en is vanaf een laptop alleen via een
+SSH-tunnel bereikbaar. Gebruik dit niet voor de permanente Wiki.
 
 Na review en merge naar `main` voer je vanuit SSH op de NAS uit:
 
