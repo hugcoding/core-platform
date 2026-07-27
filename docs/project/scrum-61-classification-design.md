@@ -287,6 +287,17 @@ The scanner queries only active supported documents with a missing full hash
 below the selected source and queues those paths for the metadata worker. It
 does not modify, move, or delete physical files.
 
+During the document-development phase, `SCAN_ROOTS` is an explicit allowlist:
+
+```text
+/volume1/backup/NITRO/D/data/hugo/Documents,/volume1/data
+```
+
+Full and interval scans operate only below these roots. Reconciliation is
+scoped to the same roots, so files elsewhere on the NAS remain physically
+untouched and keep their existing database state rather than being marked
+deleted merely because they are temporarily outside the active scope.
+
 ## Source-map assessment
 
 After the baseline classification assessment, run:

@@ -31,6 +31,7 @@ services:
       - DB_NAME=${DB_NAME}
       - REDIS_HOST=redis
       - SCAN_ROOT=${SCAN_ROOT:-/volume1}
+      - SCAN_ROOTS=${SCAN_ROOTS:-/volume1/backup/NITRO/D/data/hugo/Documents,/volume1/data}
       - SCAN_INTERVAL=${SCAN_INTERVAL:-600}
       - FULL_SCAN_INTERVAL=${FULL_SCAN_INTERVAL:-3600}
       - MISSING_SCAN_THRESHOLD=${MISSING_SCAN_THRESHOLD:-2}

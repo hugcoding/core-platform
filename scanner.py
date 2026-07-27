@@ -17,6 +17,11 @@ REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
 SCAN_ROOT = os.getenv("SCAN_ROOT", "/volume1")
+SCAN_ROOTS = tuple(
+    posixpath.normpath(path.strip())
+    for path in os.getenv("SCAN_ROOTS", "").split(",")
+    if path.strip()
+)
 SCAN_INTERVAL = max(1, int(os.getenv("SCAN_INTERVAL", "600")))
 FULL_SCAN_INTERVAL = max(SCAN_INTERVAL, int(os.getenv("FULL_SCAN_INTERVAL", "3600")))
 MISSING_SCAN_THRESHOLD = max(1, int(os.getenv("MISSING_SCAN_THRESHOLD", "2")))
@@ -156,6 +161,22 @@ def discover_roots():
     if not os.path.isdir(SCAN_ROOT):
         logger.error("SCAN_ROOT does not exist: %s", SCAN_ROOT)
         return []
+
+    if SCAN_ROOTS:
+        scan_root = posixpath.normpath(SCAN_ROOT)
+        roots = []
+        for path in SCAN_ROOTS:
+            if not (path == scan_root or path.startswith(scan_root + "/")):
+                logger.error("Configured scan root is outside SCAN_ROOT: %s", path)
+                continue
+            if not os.path.isdir(path):
+                logger.error("Configured scan root does not exist: %s", path)
+                continue
+            if should_skip_path(path):
+                logger.error("Configured scan root is excluded by safety rules: %s", path)
+                continue
+            roots.append(path)
+        return sorted(set(roots))
 
     roots = []
     for name in os.listdir(SCAN_ROOT):
@@ -373,12 +394,18 @@ def _scan_roots(
         )
 
     if full_sweep:
-        missing, deleted = reconcile_missing(
-            scan_id,
-            session_id=session_id,
-            root_scope=reconcile_scope,
-            threshold=missing_threshold,
-        )
+        scopes = [reconcile_scope] if reconcile_scope else roots
+        results = [
+            reconcile_missing(
+                scan_id,
+                session_id=session_id,
+                root_scope=scope,
+                threshold=missing_threshold,
+            )
+            for scope in scopes
+        ]
+        missing = sum(result[0] for result in results)
+        deleted = sum(result[1] for result in results)
     else:
         missing, deleted = 0, 0
 

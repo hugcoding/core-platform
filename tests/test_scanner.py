@@ -63,12 +63,14 @@ class ScannerStateTests(unittest.TestCase):
     def setUp(self):
         self.original_redis = scanner.r
         self.original_threshold = scanner.MISSING_SCAN_THRESHOLD
+        self.original_roots = scanner.SCAN_ROOTS
         scanner.r = FakeRedis()
         scanner.MISSING_SCAN_THRESHOLD = 2
 
     def tearDown(self):
         scanner.r = self.original_redis
         scanner.MISSING_SCAN_THRESHOLD = self.original_threshold
+        scanner.SCAN_ROOTS = self.original_roots
 
     def test_unchanged_file_is_marked_seen_without_new_event(self):
         path = "/volume1/share/file.txt"
@@ -277,6 +279,44 @@ class ScannerStateTests(unittest.TestCase):
         with mock.patch.object(scanner, "discover_roots", return_value=[]):
             with self.assertRaisesRegex(RuntimeError, "no scan roots"):
                 scanner.scan_once()
+
+    def test_configured_scan_roots_form_an_allowlist(self):
+        scanner.SCAN_ROOTS = (
+            "/volume1/backup/NITRO/D/data/hugo/Documents",
+            "/volume1/data",
+        )
+        with mock.patch.object(scanner.os.path, "isdir", return_value=True):
+            roots = scanner.discover_roots()
+
+        self.assertEqual(
+            [
+                "/volume1/backup/NITRO/D/data/hugo/Documents",
+                "/volume1/data",
+            ],
+            roots,
+        )
+
+    def test_full_reconciliation_is_scoped_to_scanned_roots(self):
+        calls = []
+        with (
+            mock.patch.object(scanner.os, "walk", return_value=[]),
+            mock.patch.object(
+                scanner,
+                "reconcile_missing",
+                side_effect=lambda *args, **kwargs: calls.append(kwargs["root_scope"]) or (0, 0),
+            ),
+        ):
+            scanner._scan_roots(
+                ["/volume1/data", "/volume1/backup/Documents"],
+                "scan",
+                None,
+                full_sweep=True,
+            )
+
+        self.assertEqual(
+            ["/volume1/data", "/volume1/backup/Documents"],
+            calls,
+        )
 
     def test_failed_full_walk_does_not_reconcile(self):
         path = "/volume1/share/missing.txt"
