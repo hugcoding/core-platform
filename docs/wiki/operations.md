@@ -161,8 +161,25 @@ Gebruik geen gewone `git pull` vanuit `\\NAS\docker\nas-stack`; packfile-renames
 
 ## Documentation workflow
 
-Ontwikkel documentatie lokaal in `C:\development\nas-stack\docs`. De
-permanente NAS-Wiki start je vanuit SSH zonder foreground-proces:
+Gebruik voor documentatie twee strikt gescheiden modi:
+
+| Doel | Uitvoeren op | Commando | URL |
+|---|---|---|---|
+| Lokale ontwikkelpreview | Windows-laptop | `python -m core.cli docs serve` | `http://127.0.0.1:8000/wiki/` |
+| Permanente gereviewde Wiki | NAS via SSH | `core docs serve` | `http://192.168.68.105:8000/wiki/` |
+
+Ontwikkel documentatie lokaal in `C:\development\nas-stack\docs`:
+
+```powershell
+cd C:\development\nas-stack
+python -m core.cli docs serve
+```
+
+Dit foreground-proces moet tijdens de lokale preview openblijven. Stop het met
+`Ctrl+C`.
+
+De permanente NAS-Wiki start of controleer je vanuit SSH zonder
+foreground-proces:
 
 ```bash
 cd /volume1/docker/nas-stack
@@ -183,6 +200,11 @@ core docs dev
 
 `core docs dev` blokkeert de terminal en is vanaf een laptop alleen via een
 SSH-tunnel bereikbaar. Gebruik dit niet voor de permanente Wiki.
+
+Voer `python -m core.cli docs serve` niet op de NAS uit. Dat start daar nog een
+losse loopbackserver op `127.0.0.1:8000` en kan leiden tot
+`OSError: [Errno 98] Address already in use`. Gebruik op de NAS altijd
+`core docs serve` of `core docs deploy`.
 
 Na review en merge naar `main` voer je vanuit SSH op de NAS uit:
 

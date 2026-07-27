@@ -53,6 +53,11 @@ MkDocs-ontwikkelserver op NAS-loopback `127.0.0.1:8000`; deze vereist een
 SSH-tunnel en publiceert niets naar nginx. `core docs build` controleert een
 losse statische MkDocs-build.
 
+Voor een lokale Windows-preview voer je vanuit `C:\development\nas-stack`
+`python -m core.cli docs serve` uit en open je
+`http://127.0.0.1:8000/wiki/`. Hetzelfde Python-commando hoort niet op de NAS
+te worden gebruikt.
+
 Vanaf SSH toont `core docs open` de permanente URL en rebuildt
 `core docs deploy` de nginx-documentatiecontainer. `core git pull` gebruikt
 Dockerized Git en voert deze rebuild automatisch uit wanneer gereviewde
