@@ -219,6 +219,28 @@ directories are not represented and no target directories are created.
 The command creates reports only. It does not create directories or copy,
 move, overwrite, update, or delete files.
 
+## Golden records before target classification
+
+Generate a read-only proposal that selects one source record per exact
+content-hash group:
+
+```bash
+core cleanup golden-records \
+  --source /volume1/backup/NITRO/D/data/hugo/Documents \
+  --dry-run
+```
+
+The golden-record score prefers trustworthy original locations and filenames
+and penalizes legacy wrappers, temporary locations, exports, archives, and
+copy-like filenames. Equal top scores are never decided silently and receive
+`golden_record_review_required`. Every alternative source and the score
+explanation remain in the manifest.
+
+Target paths deliberately remain empty in this phase. The next
+content-classification phase determines the compact Dutch target hierarchy
+from the files themselves; source directory names are supporting evidence
+only.
+
 ## Source-map assessment
 
 After the baseline classification assessment, run:
