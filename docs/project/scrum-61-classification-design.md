@@ -244,6 +244,16 @@ content-classification phase determines the compact Dutch target hierarchy
 from the files themselves; source directory names are supporting evidence
 only.
 
+Durable decisions are stored in `content_groups` and
+`content_group_members`. `content_groups.golden_file_id` is the single
+authoritative selection. A deferred composite foreign key guarantees that
+the selected file is also a recorded member of the same group. The
+`v_content_group_members` view derives `is_golden`, avoiding two independent
+sources of truth. Scores, ranks, reasons, source-path snapshots, confidence,
+and the algorithm version preserve the audit trail. Proposed Dutch target
+paths belong to a later migration-plan structure and are deliberately not
+stored in these identity tables.
+
 ## Source-map assessment
 
 After the baseline classification assessment, run:
