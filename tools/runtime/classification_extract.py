@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from core.exports.csv_format import dict_reader, write_dict_rows
@@ -59,12 +60,20 @@ def normalize(text: str) -> str:
     return " ".join(text.split()).casefold()
 
 
-def extract_text(path: Path, route: str) -> tuple[str, int | None]:
+def iso_value(value) -> str:
+    if value is None:
+        return ""
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def extract_text(path: Path, route: str) -> tuple[str, int | None, dict[str, str]]:
     if route == "plain-text":
         try:
-            return path.read_text(encoding="utf-8"), None
+            return path.read_text(encoding="utf-8"), None, {}
         except UnicodeDecodeError:
-            return path.read_text(encoding="cp1252"), None
+            return path.read_text(encoding="cp1252"), None, {}
     if route == "pypdf":
         from pypdf import PdfReader
 
@@ -72,7 +81,16 @@ def extract_text(path: Path, route: str) -> tuple[str, int | None]:
         if reader.is_encrypted:
             if reader.decrypt("") == 0:
                 raise PermissionError("PDF requires a password")
-        return "\n".join(page.extract_text() or "" for page in reader.pages), len(reader.pages)
+        metadata = reader.metadata or {}
+        return (
+            "\n".join(page.extract_text() or "" for page in reader.pages),
+            len(reader.pages),
+            {
+                "embedded_created_at": iso_value(getattr(metadata, "creation_date", None)),
+                "embedded_modified_at": iso_value(getattr(metadata, "modification_date", None)),
+                "embedded_author": iso_value(getattr(metadata, "author", None)),
+            },
+        )
     if route == "python-docx":
         from docx import Document
 
@@ -81,7 +99,13 @@ def extract_text(path: Path, route: str) -> tuple[str, int | None]:
         for table in document.tables:
             for row in table.rows:
                 blocks.append(" ".join(cell.text for cell in row.cells))
-        return "\n".join(blocks), None
+        properties = document.core_properties
+        return "\n".join(blocks), None, {
+            "embedded_created_at": iso_value(properties.created),
+            "embedded_modified_at": iso_value(properties.modified),
+            "embedded_author": iso_value(properties.last_modified_by or properties.author),
+            "embedded_revision": iso_value(properties.revision),
+        }
     if route == "openpyxl":
         from openpyxl import load_workbook
 
@@ -91,8 +115,14 @@ def extract_text(path: Path, route: str) -> tuple[str, int | None]:
             values.append(sheet.title)
             for row in sheet.iter_rows(values_only=True):
                 values.extend(str(value) for value in row if value is not None)
+        properties = workbook.properties
+        metadata = {
+            "embedded_created_at": iso_value(properties.created),
+            "embedded_modified_at": iso_value(properties.modified),
+            "embedded_author": iso_value(properties.lastModifiedBy or properties.creator),
+        }
         workbook.close()
-        return "\n".join(values), None
+        return "\n".join(values), None, metadata
     if route == "python-pptx":
         from pptx import Presentation
 
@@ -103,22 +133,62 @@ def extract_text(path: Path, route: str) -> tuple[str, int | None]:
                 shape.text for shape in slide.shapes
                 if hasattr(shape, "text") and shape.text
             )
-        return "\n".join(values), len(presentation.slides)
+        properties = presentation.core_properties
+        return "\n".join(values), len(presentation.slides), {
+            "embedded_created_at": iso_value(properties.created),
+            "embedded_modified_at": iso_value(properties.modified),
+            "embedded_author": iso_value(properties.last_modified_by or properties.author),
+            "embedded_revision": iso_value(properties.revision),
+        }
     if route == "rtf":
         from striprtf.striprtf import rtf_to_text
 
-        return rtf_to_text(path.read_text(encoding="cp1252", errors="replace")), None
+        return rtf_to_text(path.read_text(encoding="cp1252", errors="replace")), None, {}
     if route == "odf":
         from odf import teletype
         from odf.opendocument import load
 
         document = load(str(path))
-        return teletype.extractText(document), None
+        return teletype.extractText(document), None, {}
     raise ValueError(f"unsupported extraction route: {route}")
 
 
 def term_hits(text: str, terms: tuple[str, ...]) -> list[str]:
     return [term for term in terms if re.search(rf"\b{re.escape(term)}\b", text)]
+
+
+DATE_PATTERNS = (
+    r"\b(?:19|20)\d{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])\b",
+    r"\b(?:0?[1-9]|[12]\d|3[01])[-/.](?:0?[1-9]|1[0-2])[-/.](?:19|20)\d{2}\b",
+)
+
+
+def date_candidates(text: str, limit: int = 50) -> list[str]:
+    values = []
+    for pattern in DATE_PATTERNS:
+        values.extend(re.findall(pattern, text))
+    return sorted(set(values))[:limit]
+
+
+def temporal_inconsistencies(created: str, modified: str) -> list[str]:
+    issues = []
+    try:
+        created_value = datetime.fromisoformat(created.replace("Z", "+00:00")) if created else None
+        modified_value = datetime.fromisoformat(modified.replace("Z", "+00:00")) if modified else None
+        now = datetime.now(timezone.utc)
+        for label, value in (("created", created_value), ("modified", modified_value)):
+            if value:
+                comparable = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+                if comparable > now:
+                    issues.append(f"{label}_in_future")
+        if created_value and modified_value:
+            left = created_value if created_value.tzinfo else created_value.replace(tzinfo=timezone.utc)
+            right = modified_value if modified_value.tzinfo else modified_value.replace(tzinfo=timezone.utc)
+            if left > right:
+                issues.append("created_after_modified")
+    except (TypeError, ValueError):
+        issues.append("embedded_date_parse_error")
+    return issues
 
 
 def classify_content(text: str, filename: str, source_path: str) -> tuple[str, str, str]:
@@ -161,6 +231,16 @@ def process_row(row: dict[str, str]) -> dict[str, str]:
         "characters": "",
         "words": "",
         "pages_or_slides": "",
+        "filesystem_mtime": "",
+        "embedded_created_at": "",
+        "embedded_modified_at": "",
+        "embedded_author_present": "",
+        "embedded_revision": "",
+        "filename_date_candidates": "[]",
+        "content_date_candidates": "[]",
+        "temporal_inconsistencies": "[]",
+        "temporal_assessment_status": "evidence_only",
+        "temporal_extraction_version": "temporal-v1",
     }
     if row["extraction_status"] != "ready_for_local_extraction":
         result["extraction_result"] = "skipped"
@@ -181,7 +261,8 @@ def process_row(row: dict[str, str]) -> dict[str, str]:
         )
         return result
     try:
-        text, pages = extract_text(Path(row["golden_path"]), row["extraction_route"])
+        path = Path(row["golden_path"])
+        text, pages, embedded = extract_text(path, row["extraction_route"])
         normalized = normalize(text)
         category, confidence, reasons = classify_content(
             normalized, row["filename"], row["golden_path"]
@@ -194,6 +275,26 @@ def process_row(row: dict[str, str]) -> dict[str, str]:
                 "characters": str(len(normalized)),
                 "words": str(len(normalized.split())) if normalized else "0",
                 "pages_or_slides": str(pages or ""),
+                "filesystem_mtime": datetime.fromtimestamp(
+                    path.stat().st_mtime, tz=timezone.utc
+                ).isoformat(),
+                "embedded_created_at": embedded.get("embedded_created_at", ""),
+                "embedded_modified_at": embedded.get("embedded_modified_at", ""),
+                "embedded_author_present": str(bool(embedded.get("embedded_author"))).lower(),
+                "embedded_revision": embedded.get("embedded_revision", ""),
+                "filename_date_candidates": json.dumps(
+                    date_candidates(row["filename"]), ensure_ascii=False
+                ),
+                "content_date_candidates": json.dumps(
+                    date_candidates(text), ensure_ascii=False
+                ),
+                "temporal_inconsistencies": json.dumps(
+                    temporal_inconsistencies(
+                        embedded.get("embedded_created_at", ""),
+                        embedded.get("embedded_modified_at", ""),
+                    ),
+                    ensure_ascii=False,
+                ),
                 "content_category": category,
                 "category_confidence": confidence,
                 "category_reasons": reasons,
@@ -248,6 +349,10 @@ def main(argv: list[str] | None = None) -> int:
     write_dict_rows(output_path, results, list(results[0]))
     outcomes = Counter(row.get("extraction_result", "") for row in results)
     categories = Counter(row.get("content_category", "") for row in results)
+    embedded_created = sum(bool(row.get("embedded_created_at")) for row in results)
+    embedded_modified = sum(bool(row.get("embedded_modified_at")) for row in results)
+    content_dates = sum(row.get("content_date_candidates", "[]") != "[]" for row in results)
+    temporal_issues = sum(row.get("temporal_inconsistencies", "[]") != "[]" for row in results)
     report = [
         "# SCRUM-61 lokale inhoudsclassificatie", "",
         f"- Gegenereerd: `{datetime.now().astimezone().isoformat()}`",
@@ -258,6 +363,10 @@ def main(argv: list[str] | None = None) -> int:
         f"- Lege bestanden: **{outcomes['empty_file']}**",
         f"- Wachtwoord vereist: **{outcomes['password_required']}**",
         f"- Fouten: **{outcomes['error']}**",
+        f"- Ingebedde aanmaakdatum: **{embedded_created}**",
+        f"- Ingebedde wijzigingsdatum: **{embedded_modified}**",
+        f"- Inhoudelijke datumkandidaten: **{content_dates}**",
+        f"- Tijdsinconsistenties: **{temporal_issues}**",
         "", "## Voorgestelde categorieën", "", "| Categorie | Bestanden |", "|---|---:|",
     ]
     report.extend(

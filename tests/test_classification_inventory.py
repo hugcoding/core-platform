@@ -12,6 +12,7 @@ def row(extension):
         "golden_path": f"/volume1/Documents/bestand.{extension}",
         "golden_confidence": "high", "golden_selection_status": "single_source",
         "golden_algorithm_version": "golden-v1", "physical_copy_count": "1",
+        "member_time_evidence": "[]",
     }
 
 

@@ -30,10 +30,21 @@ SELECT
     g.confidence AS golden_confidence,
     g.selection_status AS golden_selection_status,
     g.algorithm_version AS golden_algorithm_version,
-    COUNT(m.file_id) AS physical_copy_count
+    COUNT(m.file_id) AS physical_copy_count,
+    JSON_AGG(
+        JSON_BUILD_OBJECT(
+            'file_id', member_file.id,
+            'path', member_file.path,
+            'filesystem_mtime_epoch', member_file.modified_at_fs,
+            'core_first_seen_at', member_file.created_at,
+            'core_updated_at', member_file.updated_at
+        )
+        ORDER BY m.selection_rank
+    )::text AS member_time_evidence
 FROM content_groups g
 JOIN files f ON f.id = g.golden_file_id
 JOIN content_group_members m ON m.content_group_id = g.id
+JOIN files member_file ON member_file.id = m.file_id
 WHERE f.deleted_at IS NULL
   AND (f.path = :'source' OR f.path LIKE :'source_prefix')
 GROUP BY

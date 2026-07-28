@@ -1,7 +1,12 @@
 import unittest
 from unittest import mock
 
-from tools.runtime.classification_extract import classify_content, process_row
+from tools.runtime.classification_extract import (
+    classify_content,
+    date_candidates,
+    process_row,
+    temporal_inconsistencies,
+)
 
 
 class ClassificationExtractTest(unittest.TestCase):
@@ -40,9 +45,15 @@ class ClassificationExtractTest(unittest.TestCase):
             "filename": "document.pdf",
             "content_category": "pending_content_extraction",
         }
-        with mock.patch(
-            "tools.runtime.classification_extract.extract_text",
-            return_value=("opleiding module les opdracht examen", 1),
+        with (
+            mock.patch(
+                "tools.runtime.classification_extract.extract_text",
+                return_value=("opleiding module les opdracht examen", 1, {}),
+            ),
+            mock.patch(
+                "tools.runtime.classification_extract.Path.stat",
+                return_value=mock.Mock(st_mtime=1_700_000_000),
+            ),
         ):
             result = process_row(row)
 
@@ -78,6 +89,18 @@ class ClassificationExtractTest(unittest.TestCase):
         ):
             result = process_row(row)
         self.assertEqual("password_required", result["extraction_result"])
+
+    def test_date_candidates_are_extracted_without_context_text(self):
+        self.assertEqual(
+            ["12-05-2014", "2020-01-31"],
+            date_candidates("Op 12-05-2014 en 2020-01-31 gebeurde iets."),
+        )
+
+    def test_temporal_inconsistencies_detect_invalid_order(self):
+        self.assertEqual(
+            ["created_after_modified"],
+            temporal_inconsistencies("2020-01-02T00:00:00", "2020-01-01T00:00:00"),
+        )
 
 
 if __name__ == "__main__":

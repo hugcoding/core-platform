@@ -347,3 +347,10 @@ classification signals, confidence, OCR status, and errors. Raw extracted
 text is discarded after each document and never written to CSV or
 PostgreSQL. Legacy Office formats remain `conversion_required`; embeddings
 and external AI stay disabled.
+
+The same pass captures read-only temporal evidence to prevent a later full
+reprocessing cycle: embedded Office/PDF created and modified properties,
+filesystem mtime, date candidates from filename and content, duplicate-member
+filesystem/Core observation timestamps, and temporal inconsistencies. These
+remain evidence only; no inferred date is selected and no filesystem
+timestamp is changed.
