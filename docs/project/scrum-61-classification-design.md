@@ -334,3 +334,16 @@ ODF, RTF, and legacy Office formats. Category and Dutch target path remain
 `pending_content_extraction`: content must be read before classification, and
 the old source path is supporting evidence only. Processing remains local;
 embeddings and external AI are disabled.
+
+Run transient local extraction and rule-based classification in the isolated
+tool container:
+
+```bash
+core cleanup classification-extract --manifest latest --dry-run
+```
+
+The container mounts `/volume1` read-only and stores only statistics,
+classification signals, confidence, OCR status, and errors. Raw extracted
+text is discarded after each document and never written to CSV or
+PostgreSQL. Legacy Office formats remain `conversion_required`; embeddings
+and external AI stay disabled.

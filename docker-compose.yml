@@ -1,5 +1,13 @@
 name: nas
 services:
+  classifier:
+    profiles: ["tools"]
+    build: { context: ., dockerfile: Dockerfile.classifier }
+    volumes:
+      - "/volume1:/volume1:ro"
+      - "./project/exports:/app/project/exports"
+    security_opt: ["no-new-privileges:true"]
+
   docs:
     build: { context: ., dockerfile: Dockerfile.docs }
     restart: unless-stopped

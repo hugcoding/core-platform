@@ -1,0 +1,7 @@
+FROM python:3.11-slim
+RUN pip install --no-cache-dir \
+    pypdf python-docx openpyxl python-pptx striprtf odfpy
+WORKDIR /app
+COPY core/exports ./core/exports
+COPY tools/runtime/classification_extract.py ./tools/runtime/classification_extract.py
+ENTRYPOINT ["python", "./tools/runtime/classification_extract.py"]
