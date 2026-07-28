@@ -70,7 +70,8 @@ def extract_text(path: Path, route: str) -> tuple[str, int | None]:
 
         reader = PdfReader(path)
         if reader.is_encrypted:
-            raise ValueError("encrypted PDF")
+            if reader.decrypt("") == 0:
+                raise PermissionError("PDF requires a password")
         return "\n".join(page.extract_text() or "" for page in reader.pages), len(reader.pages)
     if route == "python-docx":
         from docx import Document
@@ -106,7 +107,7 @@ def extract_text(path: Path, route: str) -> tuple[str, int | None]:
     if route == "rtf":
         from striprtf.striprtf import rtf_to_text
 
-        return rtf_to_text(path.read_text(encoding="cp1252")), None
+        return rtf_to_text(path.read_text(encoding="cp1252", errors="replace")), None
     if route == "odf":
         from odf import teletype
         from odf.opendocument import load
@@ -164,6 +165,21 @@ def process_row(row: dict[str, str]) -> dict[str, str]:
     if row["extraction_status"] != "ready_for_local_extraction":
         result["extraction_result"] = "skipped"
         return result
+    if row.get("size_bytes") == "0":
+        category, confidence, reasons = classify_content(
+            "", row["filename"], row["golden_path"]
+        )
+        result.update(
+            {
+                "extraction_result": "empty_file",
+                "content_category": category,
+                "category_confidence": confidence,
+                "category_reasons": reasons,
+                "characters": "0",
+                "words": "0",
+            }
+        )
+        return result
     try:
         text, pages = extract_text(Path(row["golden_path"]), row["extraction_route"])
         normalized = normalize(text)
@@ -187,7 +203,9 @@ def process_row(row: dict[str, str]) -> dict[str, str]:
     except Exception as exc:
         result.update(
             {
-                "extraction_result": "error",
+                "extraction_result": (
+                    "password_required" if isinstance(exc, PermissionError) else "error"
+                ),
                 "extraction_error": f"{type(exc).__name__}: {exc}",
                 "characters": "0",
                 "words": "0",
@@ -237,6 +255,8 @@ def main(argv: list[str] | None = None) -> int:
         f"- Extracted: **{outcomes['extracted']}**",
         f"- OCR vereist: **{outcomes['needs_ocr']}**",
         f"- Conversie/overgeslagen: **{outcomes['skipped']}**",
+        f"- Lege bestanden: **{outcomes['empty_file']}**",
+        f"- Wachtwoord vereist: **{outcomes['password_required']}**",
         f"- Fouten: **{outcomes['error']}**",
         "", "## Voorgestelde categorieën", "", "| Categorie | Bestanden |", "|---|---:|",
     ]

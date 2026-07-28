@@ -50,6 +50,35 @@ class ClassificationExtractTest(unittest.TestCase):
         self.assertNotIn("text", result)
         self.assertNotIn("opleiding module", str(result.values()))
 
+    def test_empty_file_is_not_reported_as_parser_error(self):
+        row = {
+            "extraction_status": "ready_for_local_extraction",
+            "extraction_route": "python-docx",
+            "golden_path": "/volume1/Aantekeningen.docx",
+            "filename": "Aantekeningen.docx",
+            "size_bytes": "0",
+            "content_category": "pending_content_extraction",
+        }
+        result = process_row(row)
+        self.assertEqual("empty_file", result["extraction_result"])
+        self.assertEqual("", result["extraction_error"])
+
+    def test_password_error_receives_separate_review_status(self):
+        row = {
+            "extraction_status": "ready_for_local_extraction",
+            "extraction_route": "pypdf",
+            "golden_path": "/volume1/beveiligd.pdf",
+            "filename": "beveiligd.pdf",
+            "size_bytes": "10",
+            "content_category": "pending_content_extraction",
+        }
+        with mock.patch(
+            "tools.runtime.classification_extract.extract_text",
+            side_effect=PermissionError("PDF requires a password"),
+        ):
+            result = process_row(row)
+        self.assertEqual("password_required", result["extraction_result"])
+
 
 if __name__ == "__main__":
     unittest.main()
