@@ -9,6 +9,7 @@ import re
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from core.exports.csv_format import dict_reader, write_dict_rows
 
@@ -170,22 +171,42 @@ def date_candidates(text: str, limit: int = 50) -> list[str]:
     return sorted(set(values))[:limit]
 
 
+LOCAL_TIMEZONE = ZoneInfo("Europe/Amsterdam")
+
+
+def parse_embedded_datetime(value: str) -> datetime | None:
+    """Parse embedded document time and localize offset-less wall-clock values."""
+    if not value:
+        return None
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=LOCAL_TIMEZONE)
+    return parsed
+
+
 def temporal_inconsistencies(created: str, modified: str) -> list[str]:
     issues = []
     try:
-        created_value = datetime.fromisoformat(created.replace("Z", "+00:00")) if created else None
-        modified_value = datetime.fromisoformat(modified.replace("Z", "+00:00")) if modified else None
+        created_value = parse_embedded_datetime(created)
+        modified_value = parse_embedded_datetime(modified)
         now = datetime.now(timezone.utc)
         for label, value in (("created", created_value), ("modified", modified_value)):
             if value:
-                comparable = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-                if comparable > now:
+                if value.astimezone(timezone.utc) > now:
                     issues.append(f"{label}_in_future")
         if created_value and modified_value:
-            left = created_value if created_value.tzinfo else created_value.replace(tzinfo=timezone.utc)
-            right = modified_value if modified_value.tzinfo else modified_value.replace(tzinfo=timezone.utc)
+            left = created_value.astimezone(timezone.utc)
+            right = modified_value.astimezone(timezone.utc)
             if left > right:
-                issues.append("created_after_modified")
+                created_wall_time = created_value.replace(tzinfo=None)
+                modified_wall_time = modified_value.replace(tzinfo=None)
+                if (
+                    created_value.utcoffset() != modified_value.utcoffset()
+                    and created_wall_time <= modified_wall_time
+                ):
+                    issues.append("embedded_timezone_conflict")
+                else:
+                    issues.append("created_after_modified")
     except (TypeError, ValueError):
         issues.append("embedded_date_parse_error")
     return issues

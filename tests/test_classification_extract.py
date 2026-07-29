@@ -102,6 +102,33 @@ class ClassificationExtractTest(unittest.TestCase):
             temporal_inconsistencies("2020-01-02T00:00:00", "2020-01-01T00:00:00"),
         )
 
+    def test_temporal_inconsistencies_localize_offsetless_amsterdam_time(self):
+        self.assertEqual(
+            [],
+            temporal_inconsistencies(
+                "2008-10-20T09:05:17",
+                "2008-10-20T09:05:18+02:00",
+            ),
+        )
+
+    def test_temporal_inconsistencies_compare_aware_values_by_instant(self):
+        self.assertEqual(
+            [],
+            temporal_inconsistencies(
+                "2020-01-01T10:00:00+01:00",
+                "2020-01-01T09:30:00+00:00",
+            ),
+        )
+
+    def test_temporal_inconsistencies_distinguish_conflicting_offsets(self):
+        self.assertEqual(
+            ["embedded_timezone_conflict"],
+            temporal_inconsistencies(
+                "2009-05-03T16:08:29+00:00",
+                "2009-05-03T16:09:18+02:00",
+            ),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
