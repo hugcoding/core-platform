@@ -24,6 +24,8 @@ def test_dashboard_frontend_uses_relative_api_and_refreshes():
     source = (ROOT / "dashboard" / "static" / "app.js").read_text()
     assert "fetch('/api/v1/overview'" in source
     assert "setInterval(refresh,10000)" in source
+    assert "addEventListener('click',refresh)" in source
+    assert "classList.add('loading')" in source
 
 
 def test_core_cli_exposes_dashboard_lifecycle():

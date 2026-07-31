@@ -1,0 +1,8 @@
+.header-actions{display:flex;align-items:center;gap:16px}
+#refresh{display:flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:9px;background:#0d1c28;color:#a9becc;padding:8px 11px;cursor:pointer;font:600 11px Inter,ui-sans-serif,system-ui,sans-serif}
+#refresh:hover{border-color:var(--cyan);color:var(--cyan)}
+#refresh:disabled{cursor:wait;opacity:.6}
+#refresh i{font-style:normal;font-size:17px;line-height:1}
+#refresh.loading i{animation:refresh-spin .8s linear infinite}
+@keyframes refresh-spin{to{transform:rotate(360deg)}}
+@media(max-width:520px){#refresh span{display:none}}
