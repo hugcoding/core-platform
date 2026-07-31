@@ -348,3 +348,35 @@ core docs deploy
 Hierdoor worden lokale conceptwijzigingen nooit automatisch gepubliceerd.
 Alleen de gereviewde Git-versie uit de NAS-checkout wordt in `nas-docs-1`
 opgenomen.
+
+## CORE Pulse dashboard
+
+CORE Pulse is het visuele, read-only operationele dashboard van CORE. Het toont
+live scanner- en workerheartbeats, recente scans, wachtrijen, kerncijfers,
+classificatievoortgang en NAS-capaciteit.
+
+Publiceer na review en merge vanaf de NAS:
+
+```bash
+cd /volume1/docker/nas-stack
+core git pull
+core dashboard deploy
+core dashboard status
+```
+
+Open thuis of via OpenVPN:
+
+```text
+http://192.168.68.105:8080/coredashboard
+```
+
+De root van poort 8080 verwijst door naar `/coredashboard`. De service bindt
+alleen aan het LAN-adres van de NAS. Er hoort geen port-forward voor poort 8080
+op het modem te bestaan; de DSM-firewall staat alleen LAN en OpenVPN toe.
+
+Het MVP bevat geen muterende API-routes en krijgt geen Docker-socket. Een latere
+interactieve versie gebruikt een afzonderlijke commandlaag met een vaste
+allowlist, autorisatie, invoervalidatie, dry-run/confirmatie, asynchrone
+taakstatus en auditlogging. Daarmee kunnen later onder andere file reviews en
+gerichte scans veilig worden toegevoegd zonder de read-only querylaag te
+vervangen.
