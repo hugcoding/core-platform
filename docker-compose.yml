@@ -1,5 +1,28 @@
 name: nas
 services:
+  dashboard:
+    build: { context: ., dockerfile: Dockerfile.dashboard }
+    restart: unless-stopped
+    depends_on: { redis: { condition: service_healthy } }
+    ports: ["192.168.68.105:8080:8080"]
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - DB_NAME=${DB_NAME}
+      - REDIS_HOST=redis
+      - EXPORT_DIR=/exports/migration-inventory
+      - HOST_PROC=/host/proc
+      - STORAGE_PATH=/volume1
+    volumes:
+      - "./project/exports:/exports:ro"
+      - "/proc:/host/proc:ro"
+      - "/volume1:/volume1:ro"
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+
   classifier:
     profiles: ["tools"]
     build: { context: ., dockerfile: Dockerfile.classifier }

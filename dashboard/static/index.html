@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CORE Pulse</title><link rel="stylesheet" href="/coredashboard/assets/style.css"></head>
+<body><div class="glow"></div><main>
+  <header><div><p class="eyebrow">CORE CONTROL CENTER</p><h1>Pulse <span>NAS intelligence</span></h1></div><div id="clock" class="clock"></div></header>
+  <section class="hero panel"><div class="orb" id="orb"><i></i></div><div><p class="eyebrow">PLATFORM STATUS</p><h2 id="overall">Verbinden…</h2><p id="summary">Live systeeminformatie wordt geladen.</p></div><div class="hero-meta"><span>LIVE</span><strong id="updated">—</strong></div></section>
+  <section><div class="section-title"><h3>Services</h3><span>live heartbeats</span></div><div id="services" class="services"></div></section>
+  <section class="grid"><article class="panel span2"><div class="section-title"><h3>Datastroom</h3><span>scanner → metadata → intelligence</span></div><div class="journey"><div><b id="activeFiles">—</b><small>Actieve bestanden</small></div><em>›</em><div><b id="contentGroups">—</b><small>Contentgroepen</small></div><em>›</em><div><b id="duplicates">—</b><small>Duplicaatgroepen</small></div><em>›</em><div><b id="events">—</b><small>Open events</small></div></div></article>
+    <article class="panel"><div class="section-title"><h3>Classificatie</h3><span id="classifierState">pilot</span></div><div class="progress"><i id="progress"></i></div><div class="progress-label"><strong id="progressPct">—</strong><span id="progressCount">—</span></div></article>
+    <article class="panel"><div class="section-title"><h3>NAS</h3><span>resources</span></div><div id="host" class="host"></div></article>
+  </section>
+  <section class="grid"><article class="panel span2"><div class="section-title"><h3>Recente scans</h3><span id="scanHint">interval roots roteren</span></div><div class="table-wrap"><table><thead><tr><th>Type</th><th>Status</th><th>Gestart</th><th>Gevonden</th><th>Jobs</th></tr></thead><tbody id="scans"></tbody></table></div></article>
+  <article class="panel"><div class="section-title"><h3>Queues</h3><span>runtime</span></div><div id="queues" class="stats"></div></article>
+  <article class="panel"><div class="section-title"><h3>Shortcuts</h3><span>workspace</span></div><nav><a href="http://192.168.68.105:8000/wiki/">Documentatie <b>↗</b></a><a href="https://hugohoogendoorn.atlassian.net">Jira <b>↗</b></a><a href="https://github.com/hugcoding/core-platform">GitHub <b>↗</b></a></nav></article></section>
+  <footer>CORE Pulse v0.1 · read-only MVP · automatisch vernieuwd iedere 10 seconden</footer>
+</main><script src="/coredashboard/assets/app.js"></script></body></html>

@@ -21,6 +21,9 @@ show_help() {
     printf '%s\n' "  core docs build"
     printf '%s\n' "  core docs open"
     printf '%s\n' "  core docs deploy"
+    printf '%s\n' "  core dashboard deploy"
+    printf '%s\n' "  core dashboard status"
+    printf '%s\n' "  core dashboard open"
     printf '%s\n' "  core project analyze"
     printf '%s\n' "  core project export"
     printf '%s\n' "  core jira auth"
@@ -87,6 +90,27 @@ case "$command_domain" in
             *)
                 echo "Unknown docs command."
                 echo "Use: core docs generate | dev | serve | build | open | deploy"
+                exit 1
+                ;;
+        esac
+        ;;
+    dashboard)
+        case "$command_action" in
+            deploy)
+                "$DOCKER_BIN" compose build dashboard
+                "$DOCKER_BIN" compose up -d --force-recreate dashboard
+                "$DOCKER_BIN" compose ps dashboard
+                echo "CORE Pulse: http://192.168.68.105:8080/coredashboard"
+                ;;
+            status)
+                "$DOCKER_BIN" compose ps dashboard
+                ;;
+            open)
+                echo "CORE Pulse: http://192.168.68.105:8080/coredashboard"
+                ;;
+            *)
+                echo "Unknown dashboard command."
+                echo "Use: core dashboard deploy | status | open"
                 exit 1
                 ;;
         esac
