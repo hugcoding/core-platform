@@ -411,3 +411,25 @@ bucket but require separate policy approval. Every output row contains
 For human review it also writes a compact `classification-review-ready-*.csv`
 containing only the review-relevant source, classification, target, and safety
 columns. The full plan remains the machine-readable audit trail.
+
+## Lifecycle and retention proposal
+
+Content domain does not determine migration or retention. Generate a separate,
+read-only lifecycle proposal with versioned policy and decision evidence:
+
+```bash
+core cleanup retention-plan --results latest --dry-run
+```
+
+The first policy distinguishes study handouts, own work, certificates, and
+reference material. It proposes `active`, `cold_archive`, `retention_review`,
+or `permanent`, using embedded modified time, embedded created time, and
+filesystem mtime in conservative priority order. Temporal conflicts and
+missing evidence block automatic dating. Financial, employment, identity,
+health, unknown, and low-confidence roles require explicit review.
+
+Every proposed decision has a deterministic ID, policy version, basis source,
+reason code, snapshot level, and `execution_authorized=false`. Expired policy
+never deletes content: it only creates a review proposal. Later approval and
+execution phases must persist decisions append-only and require separate
+immutable manifests.
