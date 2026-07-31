@@ -35,6 +35,18 @@ REQUIRED_FIELDS = {
     "golden_path", "extraction_status", "extraction_result",
     "content_category", "category_confidence", "temporal_inconsistencies",
 }
+REVIEW_FIELDS = [
+    "golden_file_id",
+    "filename",
+    "golden_path",
+    "content_category",
+    "category_confidence",
+    "target_bucket",
+    "reviewed_target_path",
+    "review_reason",
+    "collision_status",
+    "execution_authorized",
+]
 
 
 def json_list(value: str) -> list:
@@ -118,6 +130,14 @@ def build_plan(rows: list[dict[str, str]], target_root: str) -> list[dict[str, s
     return planned
 
 
+def compact_review_rows(planned: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [
+        {field: row.get(field, "") for field in REVIEW_FIELDS}
+        for row in planned
+        if row["review_status"] == "review_ready"
+    ]
+
+
 def resolve_results(root: Path, value: str) -> Path:
     export_dir = root / "project" / "exports" / "migration-inventory"
     if value == "latest":
@@ -159,6 +179,8 @@ def main(argv: list[str] | None = None) -> int:
     plan_path = export_dir / f"classification-plan-{timestamp}.csv"
     fields = list(planned[0])
     write_dict_rows(plan_path, planned, fields)
+    review_path = export_dir / f"classification-review-ready-{timestamp}.csv"
+    write_dict_rows(review_path, compact_review_rows(planned), REVIEW_FIELDS)
     queue_paths = {}
     for queue, statuses in {
         "ocr": {"blocked_ocr"}, "conversion": {"blocked_conversion"},
@@ -186,6 +208,7 @@ def main(argv: list[str] | None = None) -> int:
     print("SCRUM-61 reviewed classification copy plan complete")
     print(f"Report: {report_path.relative_to(root)}")
     print(f"Plan: {plan_path.relative_to(root)}")
+    print(f"Compact review: {review_path.relative_to(root)}")
     for name, path in queue_paths.items():
         print(f"{name.title()} queue: {path.relative_to(root)}")
     return 0

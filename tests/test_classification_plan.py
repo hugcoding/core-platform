@@ -1,6 +1,6 @@
 import unittest
 
-from tools.runtime.classification_plan import build_plan, review_decision
+from tools.runtime.classification_plan import build_plan, compact_review_rows, review_decision
 
 
 def row(**overrides):
@@ -42,6 +42,19 @@ class ClassificationPlanTests(unittest.TestCase):
         planned = build_plan([row(), row(content_group_id="group-2", content_sha256="123456789abc")], "/volume1/data")
         self.assertEqual({"resolved_hash_suffix"}, {item["collision_status"] for item in planned})
         self.assertEqual(2, len({item["reviewed_target_path"] for item in planned}))
+
+    def test_compact_review_contains_only_review_ready_rows_and_fields(self):
+        planned = build_plan([row(), row(content_group_id="group-2", category_confidence="low")], "/volume1/data")
+        compact = compact_review_rows(planned)
+        self.assertEqual(1, len(compact))
+        self.assertEqual(
+            {
+                "golden_file_id", "filename", "golden_path", "content_category",
+                "category_confidence", "target_bucket", "reviewed_target_path",
+                "review_reason", "collision_status", "execution_authorized",
+            },
+            set(compact[0]),
+        )
 
 
 if __name__ == "__main__":

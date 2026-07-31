@@ -408,3 +408,6 @@ partial extraction, uncertain category, and temporal-conflict records remain
 blocked in explicit queues. Sensitive records retain a proposed protected
 bucket but require separate policy approval. Every output row contains
 `execution_authorized=false`; this command never copies or changes data.
+For human review it also writes a compact `classification-review-ready-*.csv`
+containing only the review-relevant source, classification, target, and safety
+columns. The full plan remains the machine-readable audit trail.
