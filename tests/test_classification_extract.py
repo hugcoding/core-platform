@@ -1,11 +1,18 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import mock
 
 from tools.runtime.classification_extract import (
+    DocumentExtractionTimeout,
+    checkpoint_path,
     classify_content,
     date_candidates,
+    parse_loose_pdf_date,
     process_row,
+    read_checkpoint,
     temporal_inconsistencies,
+    write_checkpoint,
 )
 
 
@@ -89,6 +96,94 @@ class ClassificationExtractTest(unittest.TestCase):
         ):
             result = process_row(row)
         self.assertEqual("password_required", result["extraction_result"])
+
+    def test_metadata_warning_does_not_discard_extracted_text(self):
+        row = {
+            "extraction_status": "ready_for_local_extraction",
+            "extraction_route": "pypdf",
+            "golden_path": "/volume1/document.pdf",
+            "filename": "document.pdf",
+            "size_bytes": "10",
+            "content_category": "pending_content_extraction",
+        }
+        with (
+            mock.patch(
+                "tools.runtime.classification_extract.extract_text",
+                return_value=(
+                    "opleiding module les opdracht examen",
+                    1,
+                    {"metadata_warnings": ["invalid creation date"]},
+                ),
+            ),
+            mock.patch(
+                "tools.runtime.classification_extract.Path.stat",
+                return_value=mock.Mock(st_mtime=1_700_000_000),
+            ),
+        ):
+            result = process_row(row)
+        self.assertEqual("extracted", result["extraction_result"])
+        self.assertEqual("metadata_parse_warning", result["metadata_extraction_status"])
+        self.assertIn("invalid creation date", result["extraction_warnings"])
+
+    def test_page_warning_retains_partial_pdf_text(self):
+        row = {
+            "extraction_status": "ready_for_local_extraction",
+            "extraction_route": "pypdf",
+            "golden_path": "/volume1/partial.pdf",
+            "filename": "partial.pdf",
+            "size_bytes": "10",
+            "content_category": "pending_content_extraction",
+        }
+        with (
+            mock.patch(
+                "tools.runtime.classification_extract.extract_text",
+                return_value=(
+                    "leesbare tekst van overige pagina",
+                    2,
+                    {"content_warnings": ["page_2: PdfReadError"]},
+                ),
+            ),
+            mock.patch(
+                "tools.runtime.classification_extract.Path.stat",
+                return_value=mock.Mock(st_mtime=1_700_000_000),
+            ),
+        ):
+            result = process_row(row)
+        self.assertEqual("partial_extraction", result["extraction_result"])
+        self.assertEqual("extracted", result["metadata_extraction_status"])
+
+    def test_document_timeout_receives_separate_status(self):
+        row = {
+            "extraction_status": "ready_for_local_extraction",
+            "extraction_route": "pypdf",
+            "golden_path": "/volume1/slow.pdf",
+            "filename": "slow.pdf",
+            "size_bytes": "10",
+            "content_category": "pending_content_extraction",
+        }
+        with mock.patch(
+            "tools.runtime.classification_extract.extract_text",
+            side_effect=DocumentExtractionTimeout("too slow"),
+        ):
+            result = process_row(row)
+        self.assertEqual("extraction_timeout", result["extraction_result"])
+
+    def test_loose_pdf_date_is_parsed(self):
+        self.assertEqual(
+            "2012-05-25T12:07:01",
+            parse_loose_pdf_date("5/25/2012 12:7:1"),
+        )
+
+    def test_checkpoint_roundtrip_is_manifest_version_specific(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "manifest.csv"
+            manifest.write_text("file_id;path\n1;/volume1/a\n", encoding="utf-8")
+            checkpoint = checkpoint_path(root, manifest)
+            rows = [{"content_group_id": "group-1", "extraction_result": "extracted"}]
+            write_checkpoint(checkpoint, rows)
+            self.assertEqual(rows, read_checkpoint(checkpoint))
+            self.assertIn("temporal-v2", checkpoint.name)
 
     def test_date_candidates_are_extracted_without_context_text(self):
         self.assertEqual(

@@ -354,3 +354,41 @@ filesystem mtime, date candidates from filename and content, duplicate-member
 filesystem/Core observation timestamps, and temporal inconsistencies. These
 remain evidence only; no inferred date is selected and no filesystem
 timestamp is changed.
+
+### Robust batch execution
+
+Classification extraction reports every document with its manifest position,
+`file_id`, extraction route, result, and elapsed time. It also prints a batch
+summary every 25 newly processed records. Paths and extracted text are not
+included in progress logs.
+
+Each document has a default 120-second deadline. A timeout is recorded as
+`extraction_timeout` and processing continues with the next record. Successful
+text extraction is retained when only embedded metadata parsing fails; that
+case is reported separately as `metadata_parse_warning` instead of a document
+extraction error.
+
+The runner writes an atomic checkpoint every ten newly processed records. The
+checkpoint identity combines the manifest contents and extractor version, so
+the normal command automatically resumes only a compatible interrupted run:
+
+```bash
+core cleanup classification-extract --manifest latest --dry-run
+```
+
+Operational overrides are available when diagnosing a pilot batch:
+
+```bash
+core cleanup classification-extract \
+  --manifest latest \
+  --timeout-seconds 180 \
+  --checkpoint-every 5 \
+  --progress-every 10 \
+  --dry-run
+```
+
+Use `--no-resume` only when an existing compatible checkpoint must be ignored.
+Setting `--timeout-seconds 0` disables the deadline and is not recommended for
+unreviewed document collections. A completed run removes its checkpoint and
+adds timeout, warning, resume, extractor-version, and slowest-document metrics
+to the Markdown report.

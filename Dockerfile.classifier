@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 RUN pip install --no-cache-dir \
-    pypdf python-docx openpyxl python-pptx striprtf odfpy tzdata
+    pypdf python-docx openpyxl python-pptx striprtf odfpy tzdata cryptography
 WORKDIR /app
 ENV PYTHONPATH=/app
 COPY core/exports ./core/exports
