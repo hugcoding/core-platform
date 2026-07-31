@@ -33,3 +33,11 @@ def test_core_cli_exposes_dashboard_lifecycle():
     assert 'core dashboard deploy' in source
     assert 'compose build dashboard' in source
     assert 'compose ps dashboard' in source
+
+
+def test_dashboard_has_a_visible_mkdocs_page():
+    navigation = (ROOT / "mkdocs.yml").read_text()
+    page = (ROOT / "docs" / "wiki" / "core-pulse.md").read_text()
+    assert "CORE Pulse: wiki/core-pulse.md" in navigation
+    assert "core dashboard deploy" in page
+    assert "core docs deploy" in page
