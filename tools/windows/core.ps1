@@ -40,6 +40,7 @@ function Show-Help {
     Write-Host "  core cleanup migration-inventory --source PATH --dry-run"
     Write-Host "  core cleanup migration-review --manifest latest --dry-run"
     Write-Host "  core cleanup migration-proposal --manifest latest --dry-run"
+    Write-Host "  core cleanup classification-plan --results latest --dry-run"
     Write-Host "  core runtime status"
     Write-Host "  core runtime health"
     Write-Host "  core runtime logs"
@@ -129,6 +130,10 @@ function Invoke-Cleanup {
         "migration-proposal" {
             $CleanupArgs = @($Arguments) -join " "
             Invoke-Nas "sh ./tools/runtime/migration-proposal $CleanupArgs"
+        }
+        "classification-plan" {
+            $CleanupArgs = @($Arguments) -join " "
+            Invoke-Nas "sh ./tools/runtime/classification-plan $CleanupArgs"
         }
         default {
             Write-Host "Unknown cleanup command." -ForegroundColor Yellow

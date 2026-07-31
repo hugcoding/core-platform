@@ -40,6 +40,7 @@ show_help() {
     printf '%s\n' "  core cleanup golden-records --source PATH --dry-run"
     printf '%s\n' "  core cleanup classification-inventory --source PATH --dry-run"
     printf '%s\n' "  core cleanup classification-extract --manifest latest --dry-run"
+    printf '%s\n' "  core cleanup classification-plan --results latest --dry-run"
     printf '%s\n' "  core runtime status"
     printf '%s\n' "  core runtime health"
     printf '%s\n' "  core runtime logs"
@@ -172,6 +173,10 @@ case "$command_domain" in
             classification-extract)
                 shift 2
                 sh ./tools/runtime/classification-extract "$@"
+                ;;
+            classification-plan)
+                shift 2
+                sh ./tools/runtime/classification-plan "$@"
                 ;;
             *)
                 echo "Unknown cleanup command."

@@ -392,3 +392,19 @@ Setting `--timeout-seconds 0` disables the deadline and is not recommended for
 unreviewed document collections. A completed run removes its checkpoint and
 adds timeout, warning, resume, extractor-version, and slowest-document metrics
 to the Markdown report.
+
+## Reviewed classification copy plan
+
+After extraction completes, translate the latest result into an auditable,
+non-mutating plan and separate work queues:
+
+```bash
+core cleanup classification-plan --results latest --dry-run
+```
+
+Only high-confidence, successfully extracted, non-sensitive documents without
+temporal inconsistencies become `review_ready`. OCR, conversion, password,
+partial extraction, uncertain category, and temporal-conflict records remain
+blocked in explicit queues. Sensitive records retain a proposed protected
+bucket but require separate policy approval. Every output row contains
+`execution_authorized=false`; this command never copies or changes data.
