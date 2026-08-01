@@ -239,6 +239,27 @@ later copy. Every alternative source and the score explanation remain in the
 manifest. Alternative physical files remain untouched at their existing NAS
 locations.
 
+Golden algorithm `golden-v3` separates facts that were previously easy to
+confuse:
+
+- `exact_match_basis=full_sha256_and_size` proves group membership;
+- `content_integrity_status=stored_full_content_hash_evidence` records the
+  available integrity evidence without claiming that current readability was
+  reverified during the report;
+- `provenance_quality_score` compares only source-path and filename quality;
+- `golden_selection_confidence` describes how clearly one provenance candidate
+  outranks the alternatives.
+
+CORE `created_at` and `updated_at` are observation timestamps and no longer add
+selection points. Activity dates, content classification, semantic relevance,
+retention, and cleanup readiness never influence or inherit golden confidence.
+The read-only manifest shows the persisted golden ID and algorithm beside the
+v3 proposal. Any changed choice receives `golden_change_review`; the report
+does not update the database. If the persisted golden record is outside the
+requested `--source`, it is reported as
+`persisted_golden_outside_assessment_scope`, not incorrectly presented as a
+proposed replacement.
+
 Zero-byte files are not meaningful exact-content groups. They remain normal,
 queryable `files` records and continue to produce file-mutation events, but do
 not receive a full SHA-256, content-group membership, golden selection, or

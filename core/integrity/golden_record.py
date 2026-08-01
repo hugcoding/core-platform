@@ -6,7 +6,9 @@ import re
 from pathlib import PurePosixPath
 
 
-ALGORITHM_VERSION = "golden-v2"
+ALGORITHM_VERSION = "golden-v3"
+EXACT_MATCH_BASIS = "full_sha256_and_size"
+SELECTION_QUALITY_SCOPE = "provenance_only"
 LOW_VALUE_PATH_PARTS = {
     "cache", "temp", "tmp", "tijdelijk", "cloudstation", "backup",
     "backups", "archief", "archive", "export", "exports",
@@ -34,12 +36,6 @@ def score_candidate(row: dict) -> tuple[int, list[str]]:
     if name.startswith("~$") or name.endswith((".tmp", ".part")):
         score -= 30
         reasons.append("temporary filename penalty")
-    if row.get("updated_at"):
-        score += 2
-        reasons.append("update timestamp available")
-    if row.get("created_at"):
-        score += 1
-        reasons.append("creation timestamp available")
     return score, reasons
 
 
@@ -52,6 +48,11 @@ def rank_candidates(rows: list[dict]) -> list[dict]:
                 **row,
                 "selection_score": score,
                 "selection_reasons": reasons,
+                "eligibility_status": "eligible_nonempty_exact_content",
+                "exact_match_basis": EXACT_MATCH_BASIS,
+                "content_integrity_status": "stored_full_content_hash_evidence",
+                "selection_quality_scope": SELECTION_QUALITY_SCOPE,
+                "provenance_quality_score": score,
             }
         )
     ranked.sort(

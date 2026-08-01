@@ -99,7 +99,17 @@ class OneDriveBaselineTests(unittest.TestCase):
             ]
         )
         self.assertNotEqual("99", result["canonical_file_id"])
-        self.assertEqual("deterministic_golden-v2", result["canonical_basis"])
+        self.assertEqual("deterministic_golden-v3", result["canonical_basis"])
+
+    def test_exact_match_and_golden_confidence_are_separate_fields(self):
+        result = assess_group([
+            item(1, f"{SOURCE}/A/document.pdf"),
+            item(2, f"{SOURCE}/B/document.pdf"),
+        ])
+        self.assertEqual("full_sha256_and_size", result["exact_match_basis"])
+        self.assertEqual("stored_full_content_hash_evidence", result["content_integrity_status"])
+        self.assertEqual("provenance_only", result["selection_quality_scope"])
+        self.assertEqual(result["confidence"], result["golden_selection_confidence"])
 
     def test_missing_full_hash_is_blocked(self):
         result = assess_group(

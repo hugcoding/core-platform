@@ -331,6 +331,10 @@ def recompute_golden_group(cur, content_sha256, size_bytes, source):
                 "member_count": len(ranked),
                 "score_margin": margin,
                 "algorithm_version": ALGORITHM_VERSION,
+                "exact_match_basis": golden["exact_match_basis"],
+                "content_integrity_status": golden["content_integrity_status"],
+                "selection_quality_scope": golden["selection_quality_scope"],
+                "provenance_quality_score": golden["provenance_quality_score"],
             },
         )
 
