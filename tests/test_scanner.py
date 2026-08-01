@@ -249,12 +249,25 @@ class ScannerStateTests(unittest.TestCase):
         ]
         connection = mock.MagicMock()
         connection.cursor.return_value.__enter__.return_value = cursor
-        with mock.patch.object(scanner, "get_db", return_value=connection):
+        session_calls = []
+
+        def session_call(query, params=(), fetch=False):
+            session_calls.append((query, params, fetch))
+            return "session-backfill" if "create_scan_session" in query else None
+
+        with (
+            mock.patch.object(scanner, "get_db", return_value=connection),
+            mock.patch.object(scanner, "session_call", side_effect=session_call),
+        ):
             count = scanner.run_hash_backfill("/volume1/backup/Documents")
 
         self.assertEqual(2, count)
         self.assertEqual(2, len(scanner.r.events))
         self.assertTrue(all(event[1]["source"] == "hash_backfill" for event in scanner.r.events))
+        self.assertTrue(all(event[1]["scan_session_id"] == "session-backfill" for event in scanner.r.events))
+        self.assertEqual(("hash_backfill",), session_calls[0][1])
+        self.assertTrue(any("increment_jobs_enqueued" in call[0] for call in session_calls))
+        self.assertTrue(any("finish_scan_session" in call[0] for call in session_calls))
         query, params = cursor.execute.call_args.args
         self.assertIn("content_sha256 IS NULL", query)
         self.assertEqual("/volume1/backup/Documents", params[1])

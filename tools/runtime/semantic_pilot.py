@@ -36,7 +36,7 @@ ORDER BY f.path, f.id;
 """
 REVIEW_FIELDS = [
     "file_id", "content_group_id", "path", "extension", "size_bytes",
-    "modified_at_fs", "selection_status", "selection_reason",
+    "modified_at_fs", "pilot_category", "selection_status", "selection_reason",
 ]
 
 
@@ -92,16 +92,20 @@ def main(argv: list[str] | None = None) -> int:
     manifest_path.write_text(json.dumps(build_manifest(selected, source=source, cutoff=cutoff, generated_at=generated_at), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     write_dict_rows(review_path, ({field: row.get(field, "") for field in REVIEW_FIELDS} for row in [*selected, *excluded]), REVIEW_FIELDS)
     reasons = Counter(row["selection_reason"] for row in excluded)
+    categories = Counter(row["pilot_category"] for row in selected)
     report = [
         "# SCRUM-59 OneDrive golden semantic pilot", "",
         f"- Generated: `{generated_at.isoformat()}`", f"- Source: `{source}`",
         f"- Recent cutoff: `{cutoff.isoformat()}`", f"- Selected golden records: **{len(selected)}**",
         f"- Pilot limit: **{args.limit}**", "- Mode: **read-only, local-only dry-run**",
         "- Embeddings: **disabled**", "- External AI: **disabled**", "- Database writes: **disabled**", "",
+        "## Selected categories", "",
+        *[f"- `{category}`: **{categories.get(category, 0)}**" for category in ("study", "work", "administration", "general")], "",
         "## Exclusions", "",
         *[f"- `{reason}`: **{count}**" for reason, count in sorted(reasons.items())], "",
         "Mutation time only limits the recent pilot corpus; it never influences golden-record selection.",
-        "Sensitive paths are conservatively excluded. The manifest contains metadata but no extracted text.",
+        "Sensitive paths are conservatively excluded by category. Unsupported formats are counted before missing hashes.",
+        "The manifest contains metadata but no extracted text.",
         "No files, directories, database rows, vectors, or external services were changed.", "",
         "## Outputs", "", f"- Manifest: `{manifest_path.name}`", f"- Review: `{review_path.name}`",
     ]

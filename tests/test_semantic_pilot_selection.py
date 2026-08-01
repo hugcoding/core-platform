@@ -1,7 +1,9 @@
 import unittest
 from datetime import datetime, timezone
 
-from core.semantic.pilot_selection import build_manifest, parse_timestamp, select_candidates
+from core.semantic.pilot_selection import (
+    build_manifest, parse_timestamp, pilot_category, select_candidates, sensitivity_reason,
+)
 
 
 def row(file_id, path, **overrides):
@@ -56,12 +58,54 @@ class SemanticPilotSelectionTests(unittest.TestCase):
 
         self.assertEqual([1], [int(item["file_id"]) for item in selected])
         reasons = {int(item["file_id"]): item["selection_reason"] for item in excluded}
-        self.assertTrue(reasons[2].startswith("sensitive_path_term:"))
+        self.assertEqual("sensitive_path_category:finance", reasons[2])
         self.assertEqual("outside_recent_window", reasons[3])
         self.assertEqual("not_persisted_golden", reasons[4])
         self.assertEqual("not_persisted_golden", reasons[5])
         self.assertEqual("unsupported_extension", reasons[6])
         self.assertEqual("empty_file", reasons[7])
+
+    def test_unsupported_format_is_not_misreported_as_missing_hash(self):
+        selected, excluded = select_candidates(
+            [row(1, "/volume1/photo.jpg", extension="jpg", content_sha256="")],
+            cutoff=self.cutoff,
+            limit=1,
+        )
+        self.assertEqual([], selected)
+        self.assertEqual("unsupported_extension", excluded[0]["selection_reason"])
+
+    def test_sensitive_categories_cover_recent_personal_examples(self):
+        examples = {
+            "/volume1/Key.docx": "secrets",
+            "/volume1/Employer's Certificate HH.pdf": "employment",
+            "/volume1/Inkomen/aanvraag.pdf": "finance",
+            "/volume1/Hugo_CV_Data_Engineer.pdf": "employment",
+            "/volume1/Tickets/TicketOrder123.pdf": "personal",
+            "/volume1/checklist relatie.pdf": "personal",
+        }
+        for path, category in examples.items():
+            with self.subTest(path=path):
+                self.assertEqual(f"sensitive_path_category:{category}", sensitivity_reason(path))
+
+    def test_category_detection_is_path_based(self):
+        self.assertEqual("study", pilot_category("/volume1/Documenten/Studie/les.pdf"))
+        self.assertEqual("work", pilot_category("/volume1/Documenten/Werk/plan.pdf"))
+        self.assertEqual("administration", pilot_category("/volume1/Documenten/Administratie/brief.pdf"))
+        self.assertEqual("general", pilot_category("/volume1/Documenten/notitie.pdf"))
+
+    def test_selection_round_robins_across_available_categories(self):
+        rows = [
+            row(1, "/volume1/Studie/a.pdf"), row(2, "/volume1/Studie/b.pdf"),
+            row(3, "/volume1/Werk/a.pdf"), row(4, "/volume1/Werk/b.pdf"),
+            row(5, "/volume1/Administratie/a.pdf"), row(6, "/volume1/Administratie/b.pdf"),
+            row(7, "/volume1/Algemeen/a.pdf"), row(8, "/volume1/Algemeen/b.pdf"),
+        ]
+        selected, excluded = select_candidates(rows, cutoff=self.cutoff, limit=4)
+        self.assertEqual(
+            {"study", "work", "administration", "general"},
+            {item["pilot_category"] for item in selected},
+        )
+        self.assertEqual(4, sum(item["selection_reason"] == "pilot_limit" for item in excluded))
 
     def test_limit_is_deterministic_and_prefers_most_recent(self):
         rows = [
