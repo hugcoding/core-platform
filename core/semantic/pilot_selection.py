@@ -15,7 +15,13 @@ SENSITIVE_TERMS = {
 
 
 def parse_timestamp(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    normalized = value.strip()
+    try:
+        epoch_seconds = float(normalized)
+    except ValueError:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    else:
+        parsed = datetime.fromtimestamp(epoch_seconds, tz=timezone.utc)
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
