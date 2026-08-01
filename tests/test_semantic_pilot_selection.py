@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timezone
 
-from core.semantic.pilot_selection import build_manifest, select_candidates
+from core.semantic.pilot_selection import build_manifest, parse_timestamp, select_candidates
 
 
 def row(file_id, path, **overrides):
@@ -21,6 +21,25 @@ def row(file_id, path, **overrides):
 
 class SemanticPilotSelectionTests(unittest.TestCase):
     cutoff = datetime(2024, 8, 1, tzinfo=timezone.utc)
+
+    def test_timestamp_parser_accepts_core_epoch_and_iso_formats(self):
+        self.assertEqual(
+            datetime(2025, 4, 1, 20, 37, 38, tzinfo=timezone.utc),
+            parse_timestamp("1743539858"),
+        )
+        self.assertEqual(
+            datetime(2025, 4, 1, 20, 37, 38, tzinfo=timezone.utc),
+            parse_timestamp("2025-04-01T20:37:38Z"),
+        )
+
+    def test_epoch_timestamp_is_eligible_inside_recent_window(self):
+        selected, excluded = select_candidates(
+            [row(1, "/volume1/document.pdf", modified_at_fs="1743539858")],
+            cutoff=self.cutoff,
+            limit=1,
+        )
+        self.assertEqual([1], [int(item["file_id"]) for item in selected])
+        self.assertEqual([], excluded)
 
     def test_selects_recent_non_sensitive_persisted_golden_once(self):
         rows = [
