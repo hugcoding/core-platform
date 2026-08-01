@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-RUN pip install --no-cache-dir python-docx pypdf
+RUN pip install --no-cache-dir python-docx pypdf cryptography
 
 WORKDIR /app
 COPY core ./core

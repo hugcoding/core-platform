@@ -25,7 +25,12 @@ def _pdf_text(path: Path) -> tuple[str, int]:
 
     reader = PdfReader(path)
     if reader.is_encrypted:
-        raise ValueError("encrypted PDF")
+        try:
+            unlocked = reader.decrypt("")
+        except Exception as exc:
+            raise PermissionError("password-protected PDF") from exc
+        if not unlocked:
+            raise PermissionError("password-protected PDF")
     return "\n".join(page.extract_text() or "" for page in reader.pages), len(reader.pages)
 
 
@@ -104,6 +109,29 @@ def run_manifest(
         yield {"file_id": item["file_id"], "status": "extracted", **statistics}
 
 
+def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
+    extracted = [result for result in results if result["status"] == "extracted"]
+    no_text = [result for result in extracted if not result.get("has_extractable_text")]
+    return {
+        "status": "summary",
+        "documents": len(results),
+        "extracted": len(extracted),
+        "extractable_text": len(extracted) - len(no_text),
+        "needs_ocr": sum(
+            result.get("extension") == "pdf" for result in no_text
+        ),
+        "no_text": len(no_text),
+        "password_protected": sum(
+            result.get("error_type") == "PermissionError" for result in results
+        ),
+        "skipped": sum(result["status"] == "skipped" for result in results),
+        "errors": sum(result["status"] == "error" for result in results),
+        "characters": sum(int(result.get("characters") or 0) for result in extracted),
+        "words": sum(int(result.get("words") or 0) for result in extracted),
+        "pages": sum(int(result.get("pages") or 0) for result in extracted),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="semantic-pilot-extract")
     parser.add_argument(
@@ -112,11 +140,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    errors = 0
-    for result in run_manifest(Path(args.manifest)):
+    results = list(run_manifest(Path(args.manifest)))
+    for result in results:
         print(json.dumps(result, ensure_ascii=False))
-        errors += result["status"] == "error"
-    return 1 if errors else 0
+    summary = summarize(results)
+    print(json.dumps(summary, ensure_ascii=False))
+    return 1 if summary["errors"] else 0
 
 
 if __name__ == "__main__":
