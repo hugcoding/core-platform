@@ -36,11 +36,37 @@ WHERE deleted_at IS NULL
   AND (path = :'source' OR path LIKE :'source_prefix')
   AND content_sha256 IS NOT NULL
   AND content_sha256 <> ''
+  AND size_bytes > 0
   AND LOWER(COALESCE(extension, '')) IN
       ('doc', 'docx', 'odt', 'rtf', 'txt', 'md', 'pdf',
        'xls', 'xlsx', 'ods', 'csv', 'ppt', 'pptx', 'odp')
 ORDER BY content_sha256, size_bytes, path, id;
 """
+
+EMPTY_QUERY = r"""
+SELECT
+    id AS file_id, path, filename, LOWER(COALESCE(extension, '')) AS extension,
+    size_bytes, content_sha256, mime_type, created_at, updated_at,
+    'empty_file' AS review_category,
+    'excluded_from_golden_selection' AS selection_status
+FROM files
+WHERE deleted_at IS NULL
+  AND (path = :'source' OR path LIKE :'source_prefix')
+  AND size_bytes = 0
+ORDER BY path, id;
+"""
+
+MANIFEST_FIELDS = [
+    "content_sha256", "size_bytes", "copy_count", "golden_file_id",
+    "golden_path", "golden_score", "score_margin", "confidence",
+    "selection_status", "selection_reasons", "alternative_sources",
+    "proposed_target_path", "target_classification_status",
+]
+EMPTY_FIELDS = [
+    "file_id", "path", "filename", "extension", "size_bytes",
+    "content_sha256", "mime_type", "created_at", "updated_at",
+    "review_category", "selection_status",
+]
 
 def candidate_score(row: dict[str, str]) -> tuple[int, list[str]]:
     ranked = rank_candidates([{**row, "file_id": row.get("file_id", "0")}])
@@ -114,14 +140,15 @@ def main(argv: list[str] | None = None) -> int:
     ]
     try:
         rows = list(csv.DictReader(io.StringIO(run_query(command, QUERY, source))))
+        empty_rows = list(csv.DictReader(io.StringIO(run_query(command, EMPTY_QUERY, source))))
     except KeyboardInterrupt:
         print("\nGolden-record proposal cancelled; nothing was changed.", file=sys.stderr)
         return 130
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
         print(f"Golden-record proposal failed: {exc}", file=sys.stderr)
         return 1
-    if not rows:
-        print("Golden-record proposal failed: no hashed documents found.", file=sys.stderr)
+    if not rows and not empty_rows:
+        print("Golden-record proposal failed: no eligible or empty files found.", file=sys.stderr)
         return 1
 
     manifest = build_manifest(rows)
@@ -130,14 +157,13 @@ def main(argv: list[str] | None = None) -> int:
     export_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = export_dir / f"golden-records-{timestamp}.csv"
     review_path = export_dir / f"golden-record-review-{timestamp}.csv"
+    empty_path = export_dir / f"golden-record-empty-files-{timestamp}.csv"
     report_path = export_dir / f"golden-records-{timestamp}.md"
 
-    def write(path: Path, selected: list[dict[str, str]]) -> None:
-        write_dict_rows(path, selected, list(manifest[0]))
-
-    write(manifest_path, manifest)
+    write_dict_rows(manifest_path, manifest, MANIFEST_FIELDS)
     review = [row for row in manifest if row["confidence"] == "low"]
-    write(review_path, review)
+    write_dict_rows(review_path, review, MANIFEST_FIELDS)
+    write_dict_rows(empty_path, empty_rows, EMPTY_FIELDS)
     duplicate_groups = sum(row["copy_count"] != "1" for row in manifest)
     report = [
         "# SCRUM-61 golden-recordvoorstel",
@@ -148,16 +174,19 @@ def main(argv: list[str] | None = None) -> int:
         f"- Unieke inhoudsgroepen: **{len(manifest)}**",
         f"- Groepen met meerdere bronbestanden: **{duplicate_groups}**",
         f"- Golden records met lage zekerheid: **{len(review)}**",
+        f"- Lege bestanden buiten golden-selectie: **{len(empty_rows)}**",
         "",
         "Er zijn geen bestanden, mappen of databaserecords gewijzigd.",
         "Iedere inhoudsgroep heeft precies één deterministisch golden record.",
         "Doelpaden blijven leeg totdat inhoudsgestuurde classificatie is uitgevoerd.",
+        "Lege bestanden blijven geinventariseerd en staan apart in de empty-file-review.",
     ]
     report_path.write_text("\n".join(report) + "\n", encoding="utf-8")
     print("SCRUM-61 read-only golden-record proposal complete")
     print(f"Report: {report_path.relative_to(root)}")
     print(f"Manifest: {manifest_path.relative_to(root)}")
     print(f"Review: {review_path.relative_to(root)}")
+    print(f"Empty files: {empty_path.relative_to(root)}")
     return 0
 
 

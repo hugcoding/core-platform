@@ -231,11 +231,15 @@ def get_file_by_path(cur, path):
 def recompute_golden_group(cur, content_sha256, size_bytes, source):
     if not content_sha256 or size_bytes is None:
         return
+    if size_bytes <= 0:
+        # Empty files remain inventoried; the migration audits legacy cleanup.
+        return
     cur.execute(
         """SELECT id AS file_id, path, created_at, updated_at
            FROM files
            WHERE content_sha256 = %s
              AND size_bytes = %s
+             AND size_bytes > 0
              AND deleted_at IS NULL
            ORDER BY id""",
         (content_sha256, size_bytes),
@@ -523,7 +527,7 @@ def process_event(cur, data):
     hash_path = xxhash.xxh64(path).hexdigest()
     hash_content = hash_first_1024(path)
     mime = get_mime(path)
-    if extension in FULL_HASH_EXTENSIONS:
+    if extension in FULL_HASH_EXTENSIONS and size_bytes > 0:
         unchanged = (
             existing_file
             and existing_file.get("content_sha256")

@@ -239,6 +239,14 @@ later copy. Every alternative source and the score explanation remain in the
 manifest. Alternative physical files remain untouched at their existing NAS
 locations.
 
+Zero-byte files are not meaningful exact-content groups. They remain normal,
+queryable `files` records and continue to produce file-mutation events, but do
+not receive a full SHA-256, content-group membership, golden selection, or
+golden event. The golden-record dry-run exports them separately as
+`golden-record-empty-files-*.csv`. A zero-byte file that later receives content
+becomes eligible normally; a non-empty file that becomes empty first causes its
+old non-empty group to be recalculated.
+
 Target paths deliberately remain empty in this phase. The next
 content-classification phase determines the compact Dutch target hierarchy
 from the files themselves; source directory names are supporting evidence
@@ -273,6 +281,11 @@ updates the single `golden_file_id`, rebuilds the member snapshot, and emits
 `GOLDEN_RECORD_SELECTED`, `GOLDEN_RECORD_CHANGED`, or
 `GOLDEN_GROUP_REMOVED` into `file_events`. Alternative physical files remain
 untouched.
+
+Migration `20260801_exclude_empty_golden_records.sql` removes any legacy
+zero-byte content group after writing one append-only `GOLDEN_GROUP_REMOVED`
+audit event. A database constraint prevents recurrence. Neither the migration
+nor its rollback changes or removes physical files or their inventory rows.
 
 An ordinary full scan only enqueues changed filesystem signatures. Existing
 documents that predate `content_sha256` therefore use the targeted one-time

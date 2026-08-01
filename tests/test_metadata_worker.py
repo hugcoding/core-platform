@@ -394,6 +394,90 @@ class MutationPersistenceTests(unittest.TestCase):
         self.assertIn("content_sha256", files_query)
         self.assertIn("full-sha", files_params)
 
+    def test_empty_document_remains_inventoried_without_hash_or_golden_group(self):
+        cursor = ProcessCursor()
+        file_stat = types.SimpleNamespace(st_size=0, st_mtime=200, st_ino=1234, st_dev=99)
+        with (
+            mock.patch.object(metadata_worker.os.path, "exists", return_value=True),
+            mock.patch.object(metadata_worker.os, "stat", return_value=file_stat),
+            mock.patch.object(metadata_worker, "upsert_folder", return_value=7),
+            mock.patch.object(metadata_worker, "hash_first_1024", return_value="empty-fast"),
+            mock.patch.object(metadata_worker, "hash_full_sha256") as full_hash,
+            mock.patch.object(metadata_worker, "get_mime", return_value="text/plain"),
+            mock.patch.object(metadata_worker, "get_image_dims", return_value=(None, None)),
+            mock.patch.object(metadata_worker, "recompute_golden_group") as recompute,
+            mock.patch.object(metadata_worker, "r", types.SimpleNamespace(set=lambda *args, **kwargs: None)),
+        ):
+            metadata_worker.process_event(
+                cursor, {"event": "UPSERT", "path": "/volume1/data/empty.txt"}
+            )
+
+        full_hash.assert_not_called()
+        recompute.assert_not_called()
+        insert_query, insert_params = next(call for call in cursor.calls if "INSERT INTO files" in call[0])
+        self.assertEqual(insert_query.count("%s"), len(insert_params))
+        self.assertIn(0, insert_params)
+
+    def test_nonempty_to_empty_recomputes_only_the_old_group(self):
+        existing = {
+            "id": 42, "path": "/volume1/data/document.txt", "deleted_at": None,
+            "size_bytes": 100, "modified_at_fs": 100, "content_sha256": "old-sha",
+            "created_at": None, "updated_at": None,
+        }
+        cursor = ProcessCursor(existing_file=existing)
+        file_stat = types.SimpleNamespace(st_size=0, st_mtime=200, st_ino=1234, st_dev=99)
+        with (
+            mock.patch.object(metadata_worker.os.path, "exists", return_value=True),
+            mock.patch.object(metadata_worker.os, "stat", return_value=file_stat),
+            mock.patch.object(metadata_worker, "upsert_folder", return_value=7),
+            mock.patch.object(metadata_worker, "hash_first_1024", return_value="empty-fast"),
+            mock.patch.object(metadata_worker, "hash_full_sha256") as full_hash,
+            mock.patch.object(metadata_worker, "get_mime", return_value="text/plain"),
+            mock.patch.object(metadata_worker, "get_image_dims", return_value=(None, None)),
+            mock.patch.object(metadata_worker, "recompute_golden_group") as recompute,
+            mock.patch.object(metadata_worker, "r", types.SimpleNamespace(set=lambda *args, **kwargs: None)),
+        ):
+            metadata_worker.process_event(
+                cursor, {"event": "UPSERT", "path": "/volume1/data/document.txt"}
+            )
+
+        full_hash.assert_not_called()
+        recompute.assert_called_once_with(cursor, "old-sha", 100, "polling_scanner")
+
+    def test_empty_to_nonempty_creates_a_normal_content_group(self):
+        existing = {
+            "id": 42, "path": "/volume1/data/document.txt", "deleted_at": None,
+            "size_bytes": 0, "modified_at_fs": 100, "content_sha256": None,
+            "created_at": None, "updated_at": None,
+        }
+        cursor = ProcessCursor(existing_file=existing)
+        file_stat = types.SimpleNamespace(st_size=10, st_mtime=200, st_ino=1234, st_dev=99)
+        with (
+            mock.patch.object(metadata_worker.os.path, "exists", return_value=True),
+            mock.patch.object(metadata_worker.os, "stat", return_value=file_stat),
+            mock.patch.object(metadata_worker, "upsert_folder", return_value=7),
+            mock.patch.object(metadata_worker, "hash_first_1024", return_value="fast"),
+            mock.patch.object(metadata_worker, "hash_full_sha256", return_value="new-sha"),
+            mock.patch.object(metadata_worker, "get_mime", return_value="text/plain"),
+            mock.patch.object(metadata_worker, "get_image_dims", return_value=(None, None)),
+            mock.patch.object(metadata_worker, "recompute_golden_group") as recompute,
+            mock.patch.object(metadata_worker, "r", types.SimpleNamespace(set=lambda *args, **kwargs: None)),
+        ):
+            metadata_worker.process_event(
+                cursor, {"event": "UPSERT", "path": "/volume1/data/document.txt"}
+            )
+
+        recompute.assert_called_once_with(cursor, "new-sha", 10, "polling_scanner")
+
+
+class EmptyGoldenGroupTests(unittest.TestCase):
+    def test_empty_group_recomputation_is_ignored_without_golden_event(self):
+        cursor = mock.Mock()
+
+        metadata_worker.recompute_golden_group(cursor, "empty-sha", 0, "polling_scanner")
+
+        cursor.execute.assert_not_called()
+
 
 class FullHashTests(unittest.TestCase):
     def test_full_sha256_reads_the_entire_file(self):

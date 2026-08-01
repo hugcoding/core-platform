@@ -1,5 +1,6 @@
 import unittest
 
+from core.integrity.golden_record import rank_candidates
 from tools.runtime.golden_records import build_manifest, candidate_score
 
 
@@ -51,6 +52,10 @@ class GoldenRecordsTest(unittest.TestCase):
             "pending_content_classification",
             manifest[0]["target_classification_status"],
         )
+
+    def test_empty_file_is_ineligible_for_golden_selection(self):
+        with self.assertRaisesRegex(ValueError, "Empty files"):
+            rank_candidates([item(1, "/volume1/source/empty.txt", size="0")])
 
 
 if __name__ == "__main__":

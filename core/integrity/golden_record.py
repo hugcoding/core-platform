@@ -6,7 +6,7 @@ import re
 from pathlib import PurePosixPath
 
 
-ALGORITHM_VERSION = "golden-v1"
+ALGORITHM_VERSION = "golden-v2"
 LOW_VALUE_PATH_PARTS = {
     "cache", "temp", "tmp", "tijdelijk", "cloudstation", "backup",
     "backups", "archief", "archive", "export", "exports",
@@ -14,6 +14,8 @@ LOW_VALUE_PATH_PARTS = {
 
 
 def score_candidate(row: dict) -> tuple[int, list[str]]:
+    if int(row.get("size_bytes") or 0) <= 0:
+        raise ValueError("Empty files are not eligible for golden-record selection")
     path = PurePosixPath(str(row["path"]))
     evidence = f"/{'/'.join(path.parts)}/".casefold()
     name = path.name.casefold()
