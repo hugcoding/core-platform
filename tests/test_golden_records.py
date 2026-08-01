@@ -1,7 +1,7 @@
 import unittest
 
-from core.integrity.golden_record import rank_candidates
-from tools.runtime.golden_records import build_manifest, candidate_score
+from core.integrity.golden_record import comparison_confidence, rank_candidates
+from tools.runtime.golden_records import build_manifest, candidate_score, needs_review
 
 
 def item(file_id, path, content_sha256="hash", size="10"):
@@ -94,6 +94,24 @@ class GoldenRecordsTest(unittest.TestCase):
         }
         result = build_manifest([row])[0]
         self.assertEqual("persisted_golden_outside_assessment_scope", result["selection_change"])
+
+    def test_single_source_comparison_confidence_is_not_applicable(self):
+        result = build_manifest([item(1, "/volume1/source/rapport.pdf")])[0]
+        self.assertEqual("high", result["golden_selection_confidence"])
+        self.assertEqual("not_applicable", result["golden_comparison_confidence"])
+        self.assertEqual("no_persisted_golden", result["review_reason"])
+
+    def test_medium_duplicate_gets_explicit_review_reason(self):
+        result = build_manifest([
+            item(1, "/volume1/source/rapport.pdf"),
+            item(2, "/volume1/source/rapport (1).pdf"),
+        ])[0]
+        self.assertEqual("medium", result["golden_comparison_confidence"])
+        self.assertEqual("provenance_margin_requires_review", result["review_reason"])
+        self.assertTrue(needs_review(result))
+
+    def test_comparison_confidence_preserves_duplicate_confidence(self):
+        self.assertEqual("medium", comparison_confidence("medium", "golden_selected"))
 
 
 if __name__ == "__main__":

@@ -13,7 +13,9 @@ import magic
 import pyvips
 import xxhash
 
-from core.integrity.golden_record import ALGORITHM_VERSION, rank_candidates, selection_metadata
+from core.integrity.golden_record import (
+    ALGORITHM_VERSION, comparison_confidence, rank_candidates, selection_metadata,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("metadata-worker")
@@ -335,6 +337,7 @@ def recompute_golden_group(cur, content_sha256, size_bytes, source):
                 "content_integrity_status": golden["content_integrity_status"],
                 "selection_quality_scope": golden["selection_quality_scope"],
                 "provenance_quality_score": golden["provenance_quality_score"],
+                "golden_comparison_confidence": comparison_confidence(confidence, status),
             },
         )
 

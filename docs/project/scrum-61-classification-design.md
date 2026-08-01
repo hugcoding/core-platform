@@ -250,6 +250,13 @@ confuse:
 - `golden_selection_confidence` describes how clearly one provenance candidate
   outranks the alternatives.
 
+For backward compatibility, persisted `confidence` and exported
+`golden_selection_confidence` remain high/medium/low. The review layer adds
+`golden_comparison_confidence`: it is `not_applicable` for `single_source`, and
+high/medium/low only when multiple exact copies were actually compared. Both
+medium and low duplicate choices are included in the compact review with an
+explicit `review_reason`.
+
 CORE `created_at` and `updated_at` are observation timestamps and no longer add
 selection points. Activity dates, content classification, semantic relevance,
 retention, and cleanup readiness never influence or inherit golden confidence.

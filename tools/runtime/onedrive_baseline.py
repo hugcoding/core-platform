@@ -19,7 +19,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.exports.csv_format import write_dict_rows
-from core.integrity.golden_record import ALGORITHM_VERSION, rank_candidates, selection_metadata
+from core.integrity.golden_record import (
+    ALGORITHM_VERSION, comparison_confidence, rank_candidates, selection_metadata,
+)
 from tools.runtime.migration_inventory import run_query, shutil_which
 
 
@@ -119,6 +121,7 @@ MANIFEST_FIELDS = [
     "baseline_copy_count", "historical_copy_count", "total_active_copy_count",
     "canonical_file_id", "canonical_path", "canonical_source_zone", "canonical_basis",
     "selection_score", "score_margin", "confidence", "golden_selection_confidence",
+    "golden_comparison_confidence",
     "eligibility_status", "exact_match_basis", "content_integrity_status",
     "selection_quality_scope", "provenance_quality_score", "selection_status",
     "relationship", "proposed_action", "maximum_reclaimable_bytes_upper_bound",
@@ -246,6 +249,10 @@ def assess_group(rows: list[dict[str, str]]) -> dict[str, str]:
         "score_margin": str(margin),
         "confidence": confidence,
         "golden_selection_confidence": confidence,
+        "golden_comparison_confidence": (
+            "not_applicable" if status in {"blocked_missing_full_hash", "excluded_empty_file"}
+            else comparison_confidence(confidence, status)
+        ),
         "eligibility_status": selected.get("eligibility_status", "ineligible"),
         "exact_match_basis": selected.get("exact_match_basis", "unavailable"),
         "content_integrity_status": selected.get("content_integrity_status", "unassessed"),
