@@ -87,6 +87,36 @@ volgnummer en chunkhash. De uitvoer bevat geen chunktekst en schrijft niets naar
 PostgreSQL. Een vervolg met echte embeddings vereist eerst expliciete goedkeuring
 van de SCRUM-57 architectuurreview.
 
+## ACC-opslag voor technische metadata
+
+Na toepassing van `database/migrations/20260801_add_semantic_acc_metadata.sql`
+kan dezelfde lokale planning worden voorbereid voor de acceptatiedatabase:
+
+```sh
+core semantic acc-metadata \
+  project/exports/semantic-pilot/onedrive-golden-pilot-YYYYMMDD-HHMMSS.json \
+  --dry-run
+```
+
+De dry-run maakt een controleerbaar JSON-plan maar schrijft niets. Na review kan
+exact hetzelfde manifest expliciet worden toegepast:
+
+```sh
+core semantic acc-metadata \
+  project/exports/semantic-pilot/onedrive-golden-pilot-YYYYMMDD-HHMMSS.json \
+  --apply
+```
+
+De deterministische run-id is gebaseerd op manifesthash, extractorversie en
+chunkerversie. Unieke sleutels en upserts maken herhalen idempotent. Voor ieder
+document valideert de transactie opnieuw de volledige inhoudshash en dat het
+bestand nog het persisted golden record is. Bij afwijking rolt de hele transactie
+terug.
+
+Opgeslagen worden runstatus, versies, `file_id`, `content_group_id`, hash,
+extractiestatistieken, OCR/passwordstatus en per chunk alleen identiteit,
+volgnummer en afmetingen. Ruwe tekst en embeddings worden niet opgeslagen.
+
 ## Veiligheidsgrenzen
 
 - Geen mutaties aan bestanden, golden records of database.

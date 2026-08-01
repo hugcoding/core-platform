@@ -12,6 +12,7 @@ from core.semantic.extraction import extract_document
 
 TARGET_WORDS = 600
 OVERLAP_WORDS = 75
+CHUNKER_VERSION = "words-600-overlap-75-v1"
 
 
 def normalize_text(text: str) -> str:
@@ -91,6 +92,15 @@ def plan_document_chunks(
         "content_version": content_version,
         "chunk_ids": [
             _chunk_id(file_id, content_version, ordinal, chunk)
+            for ordinal, chunk in enumerate(chunks)
+        ],
+        "chunk_metadata": [
+            {
+                "chunk_id": _chunk_id(file_id, content_version, ordinal, chunk),
+                "ordinal": ordinal,
+                "words": len(chunk.split()),
+                "characters": len(chunk),
+            }
             for ordinal, chunk in enumerate(chunks)
         ],
     }
