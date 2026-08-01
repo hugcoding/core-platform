@@ -14,7 +14,7 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-from core.integrity.golden_record import rank_candidates, selection_metadata
+from core.integrity.golden_record import ALGORITHM_VERSION, rank_candidates, selection_metadata
 from core.exports.csv_format import write_dict_rows
 
 from tools.runtime.migration_inventory import run_query, shutil_which
@@ -22,25 +22,30 @@ from tools.runtime.migration_inventory import run_query, shutil_which
 
 QUERY = r"""
 SELECT
-    id AS file_id,
-    path,
-    filename,
-    LOWER(COALESCE(extension, '')) AS extension,
-    size_bytes,
-    content_sha256,
-    mime_type,
-    created_at,
-    updated_at
-FROM files
-WHERE deleted_at IS NULL
-  AND (path = :'source' OR path LIKE :'source_prefix')
-  AND content_sha256 IS NOT NULL
-  AND content_sha256 <> ''
-  AND size_bytes > 0
-  AND LOWER(COALESCE(extension, '')) IN
+    f.id AS file_id,
+    f.path,
+    f.filename,
+    LOWER(COALESCE(f.extension, '')) AS extension,
+    f.size_bytes,
+    f.content_sha256,
+    f.mime_type,
+    f.created_at,
+    f.updated_at,
+    cg.golden_file_id AS existing_golden_file_id,
+    cg.algorithm_version AS existing_algorithm_version
+FROM files f
+LEFT JOIN content_groups cg
+  ON cg.content_sha256 = f.content_sha256
+ AND cg.size_bytes IS NOT DISTINCT FROM f.size_bytes
+WHERE f.deleted_at IS NULL
+  AND (f.path = :'source' OR f.path LIKE :'source_prefix')
+  AND f.content_sha256 IS NOT NULL
+  AND f.content_sha256 <> ''
+  AND f.size_bytes > 0
+  AND LOWER(COALESCE(f.extension, '')) IN
       ('doc', 'docx', 'odt', 'rtf', 'txt', 'md', 'pdf',
        'xls', 'xlsx', 'ods', 'csv', 'ppt', 'pptx', 'odp')
-ORDER BY content_sha256, size_bytes, path, id;
+ORDER BY f.content_sha256, f.size_bytes, f.path, f.id;
 """
 
 EMPTY_QUERY = r"""
@@ -59,6 +64,9 @@ ORDER BY path, id;
 MANIFEST_FIELDS = [
     "content_sha256", "size_bytes", "copy_count", "golden_file_id",
     "golden_path", "golden_score", "score_margin", "confidence",
+    "golden_selection_confidence", "eligibility_status", "exact_match_basis",
+    "content_integrity_status", "selection_quality_scope", "provenance_quality_score",
+    "existing_golden_file_id", "existing_algorithm_version", "selection_change",
     "selection_status", "selection_reasons", "alternative_sources",
     "proposed_target_path", "target_classification_status",
 ]
@@ -83,9 +91,27 @@ def choose_golden(group: list[dict[str, str]]) -> dict[str, str]:
             "file_id": item["file_id"],
             "path": item["path"],
             "score": item["selection_score"],
+            "provenance_quality_score": item["provenance_quality_score"],
+            "selection_reasons": item["selection_reasons"],
         }
         for item in ranked[1:]
     ]
+    existing_golden = next(
+        (row.get("existing_golden_file_id") for row in group if row.get("existing_golden_file_id")),
+        "",
+    )
+    existing_version = next(
+        (row.get("existing_algorithm_version") for row in group if row.get("existing_algorithm_version")),
+        "",
+    )
+    assessed_ids = {str(row["file_id"]) for row in group}
+    selection_change = (
+        "new_proposal" if not existing_golden
+        else "persisted_golden_outside_assessment_scope"
+        if str(existing_golden) not in assessed_ids
+        else "unchanged" if str(existing_golden) == str(best["file_id"])
+        else "golden_change_review"
+    )
     return {
         "content_sha256": best["content_sha256"],
         "size_bytes": best["size_bytes"],
@@ -95,6 +121,15 @@ def choose_golden(group: list[dict[str, str]]) -> dict[str, str]:
         "golden_score": str(best["selection_score"]),
         "score_margin": str(margin),
         "confidence": confidence,
+        "golden_selection_confidence": confidence,
+        "eligibility_status": best["eligibility_status"],
+        "exact_match_basis": best["exact_match_basis"],
+        "content_integrity_status": best["content_integrity_status"],
+        "selection_quality_scope": best["selection_quality_scope"],
+        "provenance_quality_score": str(best["provenance_quality_score"]),
+        "existing_golden_file_id": str(existing_golden),
+        "existing_algorithm_version": str(existing_version),
+        "selection_change": selection_change,
         "selection_status": status,
         "selection_reasons": json.dumps(best["selection_reasons"], ensure_ascii=False),
         "alternative_sources": json.dumps(alternatives, ensure_ascii=False),
@@ -161,7 +196,10 @@ def main(argv: list[str] | None = None) -> int:
     report_path = export_dir / f"golden-records-{timestamp}.md"
 
     write_dict_rows(manifest_path, manifest, MANIFEST_FIELDS)
-    review = [row for row in manifest if row["confidence"] == "low"]
+    review = [
+        row for row in manifest
+        if row["confidence"] == "low" or row["selection_change"] != "unchanged"
+    ]
     write_dict_rows(review_path, review, MANIFEST_FIELDS)
     write_dict_rows(empty_path, empty_rows, EMPTY_FIELDS)
     duplicate_groups = sum(row["copy_count"] != "1" for row in manifest)
@@ -170,15 +208,20 @@ def main(argv: list[str] | None = None) -> int:
         "",
         f"- Gegenereerd: `{datetime.now().astimezone().isoformat()}`",
         f"- Bron: `{source}`",
+        f"- Golden-algoritme: `{ALGORITHM_VERSION}`",
         "- Modus: **alleen-lezen dry-run**",
         f"- Unieke inhoudsgroepen: **{len(manifest)}**",
         f"- Groepen met meerdere bronbestanden: **{duplicate_groups}**",
-        f"- Golden records met lage zekerheid: **{len(review)}**",
+        f"- Golden records met lage zekerheid: **{sum(row['confidence'] == 'low' for row in manifest)}**",
+        f"- Bestaande golden-keuzes die zouden wijzigen: **{sum(row['selection_change'] == 'golden_change_review' for row in manifest)}**",
+        f"- Persisted golden records buiten de gekozen bronscope: **{sum(row['selection_change'] == 'persisted_golden_outside_assessment_scope' for row in manifest)}**",
         f"- Lege bestanden buiten golden-selectie: **{len(empty_rows)}**",
         "",
         "Er zijn geen bestanden, mappen of databaserecords gewijzigd.",
         "Iedere inhoudsgroep heeft precies één deterministisch golden record.",
         "Doelpaden blijven leeg totdat inhoudsgestuurde classificatie is uitgevoerd.",
+        "Exact-matchbewijs en golden-selection-confidence zijn afzonderlijke velden.",
+        "De score vergelijkt alleen provenancekwaliteit; CORE-observatietijden tellen niet mee.",
         "Lege bestanden blijven geinventariseerd en staan apart in de empty-file-review.",
     ]
     report_path.write_text("\n".join(report) + "\n", encoding="utf-8")
