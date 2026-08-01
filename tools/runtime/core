@@ -43,6 +43,9 @@ show_help() {
     printf '%s\n' "  core cleanup classification-plan --results latest --dry-run"
     printf '%s\n' "  core cleanup retention-plan --results latest --dry-run"
     printf '%s\n' "  core cleanup onedrive-baseline --source PATH --dry-run"
+    printf '%s\n' "  core semantic onedrive-golden-pilot --cutoff TIMESTAMP --dry-run"
+    printf '%s\n' "  core semantic pilot-extract MANIFEST_JSON"
+    printf '%s\n' "  core semantic pilot-chunks MANIFEST_JSON"
     printf '%s\n' "  core runtime status"
     printf '%s\n' "  core runtime health"
     printf '%s\n' "  core runtime logs"
@@ -191,6 +194,27 @@ case "$command_domain" in
             *)
                 echo "Unknown cleanup command."
                 echo "Use: core cleanup assess | legacy-duplicates ... | migration-inventory ... | onedrive-baseline --source PATH --dry-run"
+                exit 1
+                ;;
+        esac
+        ;;
+    semantic)
+        case "$command_action" in
+            onedrive-golden-pilot)
+                shift 2
+                sh ./tools/runtime/semantic-pilot "$@"
+                ;;
+            pilot-extract)
+                shift 2
+                sh ./tools/semantic/pilot-extract "$@"
+                ;;
+            pilot-chunks)
+                shift 2
+                sh ./tools/semantic/pilot-chunks "$@"
+                ;;
+            *)
+                echo "Unknown semantic command."
+                echo "Use: core semantic onedrive-golden-pilot ... | pilot-extract MANIFEST_JSON | pilot-chunks MANIFEST_JSON"
                 exit 1
                 ;;
         esac

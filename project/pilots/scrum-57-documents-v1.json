@@ -2,6 +2,8 @@
   "pilot": "scrum-57-documents-v1",
   "processing": "local_only",
   "embedding_enabled": false,
+  "external_ai_enabled": false,
+  "database_writes_enabled": false,
   "files": [
     {
       "file_id": 2556163,

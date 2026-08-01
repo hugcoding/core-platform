@@ -2,6 +2,13 @@
 set -eu
 
 image=${SEMANTIC_PILOT_IMAGE:-core-semantic-pilot:local}
+manifest=${1:-}
+
+if [ -z "$manifest" ] || [ ! -f "$manifest" ]; then
+    echo "Use: tools/semantic/pilot-extract MANIFEST_JSON" >&2
+    exit 2
+fi
+manifest=$(cd "$(dirname "$manifest")" && pwd)/$(basename "$manifest")
 
 docker build \
     --file Dockerfile.semantic-pilot \
@@ -12,4 +19,6 @@ docker run --rm \
     --network none \
     --read-only \
     --volume /volume1:/volume1:ro \
-    "$image"
+    --volume "$manifest:/pilot/manifest.json:ro" \
+    "$image" \
+    python -m core.semantic.extraction --manifest /pilot/manifest.json

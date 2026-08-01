@@ -41,6 +41,8 @@ class PilotManifestTests(unittest.TestCase):
         payload = {
             "processing": "local_only",
             "embedding_enabled": False,
+            "external_ai_enabled": False,
+            "database_writes_enabled": False,
             "files": [
                 {"file_id": 1, "approval": "approved", "path": "/pilot/one.pdf"},
                 {"file_id": 2, "approval": "needs_review", "path": "/pilot/two.pdf"},
@@ -77,6 +79,15 @@ class PilotManifestTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "embeddings must be disabled"):
                 list(run_manifest(manifest))
+
+    def test_manifest_refuses_external_ai_and_database_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            external = self._write_manifest(directory, external_ai_enabled=True)
+            with self.assertRaisesRegex(ValueError, "external AI must be disabled"):
+                list(run_manifest(external))
+            database = self._write_manifest(directory, database_writes_enabled=True)
+            with self.assertRaisesRegex(ValueError, "database writes must be disabled"):
+                list(run_manifest(database))
 
 
 if __name__ == "__main__":
