@@ -110,6 +110,7 @@ class OneDriveBaselineTests(unittest.TestCase):
         self.assertEqual("stored_full_content_hash_evidence", result["content_integrity_status"])
         self.assertEqual("provenance_only", result["selection_quality_scope"])
         self.assertEqual(result["confidence"], result["golden_selection_confidence"])
+        self.assertEqual("low", result["golden_comparison_confidence"])
 
     def test_missing_full_hash_is_blocked(self):
         result = assess_group(

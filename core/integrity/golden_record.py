@@ -81,3 +81,8 @@ def selection_metadata(ranked: list[dict]) -> tuple[str, str, int]:
     if margin > 0:
         return "medium", "golden_selected", margin
     return "low", "golden_selected_tiebreak", margin
+
+
+def comparison_confidence(confidence: str, selection_status: str) -> str:
+    """Separate singleton status from confidence between competing copies."""
+    return "not_applicable" if selection_status == "single_source" else confidence

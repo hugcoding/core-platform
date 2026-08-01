@@ -14,7 +14,9 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-from core.integrity.golden_record import ALGORITHM_VERSION, rank_candidates, selection_metadata
+from core.integrity.golden_record import (
+    ALGORITHM_VERSION, comparison_confidence, rank_candidates, selection_metadata,
+)
 from core.exports.csv_format import write_dict_rows
 
 from tools.runtime.migration_inventory import run_query, shutil_which
@@ -64,7 +66,8 @@ ORDER BY path, id;
 MANIFEST_FIELDS = [
     "content_sha256", "size_bytes", "copy_count", "golden_file_id",
     "golden_path", "golden_score", "score_margin", "confidence",
-    "golden_selection_confidence", "eligibility_status", "exact_match_basis",
+    "golden_selection_confidence", "golden_comparison_confidence", "review_reason",
+    "eligibility_status", "exact_match_basis",
     "content_integrity_status", "selection_quality_scope", "provenance_quality_score",
     "existing_golden_file_id", "existing_algorithm_version", "selection_change",
     "selection_status", "selection_reasons", "alternative_sources",
@@ -112,6 +115,16 @@ def choose_golden(group: list[dict[str, str]]) -> dict[str, str]:
         else "unchanged" if str(existing_golden) == str(best["file_id"])
         else "golden_change_review"
     )
+    comparison = comparison_confidence(confidence, status)
+    review_reason = (
+        "persisted_golden_would_change" if selection_change == "golden_change_review"
+        else "persisted_golden_outside_assessment_scope"
+        if selection_change == "persisted_golden_outside_assessment_scope"
+        else "deterministic_tiebreak_between_exact_copies" if comparison == "low"
+        else "provenance_margin_requires_review" if comparison == "medium"
+        else "no_persisted_golden" if selection_change == "new_proposal"
+        else "not_required"
+    )
     return {
         "content_sha256": best["content_sha256"],
         "size_bytes": best["size_bytes"],
@@ -122,6 +135,8 @@ def choose_golden(group: list[dict[str, str]]) -> dict[str, str]:
         "score_margin": str(margin),
         "confidence": confidence,
         "golden_selection_confidence": confidence,
+        "golden_comparison_confidence": comparison,
+        "review_reason": review_reason,
         "eligibility_status": best["eligibility_status"],
         "exact_match_basis": best["exact_match_basis"],
         "content_integrity_status": best["content_integrity_status"],
@@ -143,6 +158,13 @@ def build_manifest(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     for row in rows:
         groups[(row["content_sha256"], row["size_bytes"])].append(row)
     return [choose_golden(group) for _, group in sorted(groups.items())]
+
+
+def needs_review(row: dict[str, str]) -> bool:
+    return (
+        row["golden_comparison_confidence"] in {"medium", "low"}
+        or row["selection_change"] != "unchanged"
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -196,10 +218,7 @@ def main(argv: list[str] | None = None) -> int:
     report_path = export_dir / f"golden-records-{timestamp}.md"
 
     write_dict_rows(manifest_path, manifest, MANIFEST_FIELDS)
-    review = [
-        row for row in manifest
-        if row["confidence"] == "low" or row["selection_change"] != "unchanged"
-    ]
+    review = [row for row in manifest if needs_review(row)]
     write_dict_rows(review_path, review, MANIFEST_FIELDS)
     write_dict_rows(empty_path, empty_rows, EMPTY_FIELDS)
     duplicate_groups = sum(row["copy_count"] != "1" for row in manifest)
@@ -213,6 +232,8 @@ def main(argv: list[str] | None = None) -> int:
         f"- Unieke inhoudsgroepen: **{len(manifest)}**",
         f"- Groepen met meerdere bronbestanden: **{duplicate_groups}**",
         f"- Golden records met lage zekerheid: **{sum(row['confidence'] == 'low' for row in manifest)}**",
+        f"- Medium-confidence duplicaatkeuzes: **{sum(row['golden_comparison_confidence'] == 'medium' for row in manifest)}**",
+        f"- Single-source groepen (vergelijkingsconfidence n.v.t.): **{sum(row['golden_comparison_confidence'] == 'not_applicable' for row in manifest)}**",
         f"- Bestaande golden-keuzes die zouden wijzigen: **{sum(row['selection_change'] == 'golden_change_review' for row in manifest)}**",
         f"- Persisted golden records buiten de gekozen bronscope: **{sum(row['selection_change'] == 'persisted_golden_outside_assessment_scope' for row in manifest)}**",
         f"- Lege bestanden buiten golden-selectie: **{len(empty_rows)}**",
