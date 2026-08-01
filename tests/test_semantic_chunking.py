@@ -70,6 +70,8 @@ class ChunkManifestTests(unittest.TestCase):
                     {
                         "processing": "local_only",
                         "embedding_enabled": True,
+                        "external_ai_enabled": False,
+                        "database_writes_enabled": False,
                         "files": [],
                     }
                 ),

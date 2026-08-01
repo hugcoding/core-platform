@@ -76,6 +76,10 @@ def run_manifest(
         raise ValueError("pilot manifest must require local_only processing")
     if manifest.get("embedding_enabled") is not False:
         raise ValueError("embeddings must be disabled for the extraction pilot")
+    if manifest.get("external_ai_enabled") is not False:
+        raise ValueError("external AI must be disabled for the extraction pilot")
+    if manifest.get("database_writes_enabled") is not False:
+        raise ValueError("database writes must be disabled for the extraction pilot")
 
     for item in manifest["files"]:
         if item["approval"] != "approved":
