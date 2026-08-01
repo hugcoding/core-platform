@@ -508,6 +508,7 @@ def run_hash_backfill(source):
     scan_root = posixpath.normpath(SCAN_ROOT)
     if not source.startswith(scan_root + "/"):
         raise ValueError(f"Hash backfill source must be below {SCAN_ROOT}: {source}")
+    session_id = session_call("SELECT create_scan_session(%s)", ("hash_backfill",), fetch=True)
     with get_db().cursor() as cur:
         cur.execute(
             """SELECT path
@@ -530,10 +531,15 @@ def run_hash_backfill(source):
                 "path": path,
                 "source": "hash_backfill",
                 "ts": requested_at,
+                "scan_session_id": str(session_id or ""),
             },
         )
     if paths:
         pipe.execute()
+    if session_id:
+        session_call("SELECT increment_files_discovered(%s, %s)", (session_id, len(paths)))
+        session_call("SELECT increment_jobs_enqueued(%s, %s)", (session_id, len(paths)))
+        session_call("SELECT finish_scan_session(%s)", (session_id,))
     logger.info("Document hash backfill enqueued=%s source=%s", len(paths), source)
     return len(paths)
 

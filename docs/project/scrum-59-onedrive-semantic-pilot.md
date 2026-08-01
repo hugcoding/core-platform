@@ -16,6 +16,15 @@ Een bestand komt alleen in het manifest wanneer het:
 - niet door de conservatieve padfilter als gevoelig wordt herkend;
 - binnen de expliciete pilotlimiet valt.
 
+De privacyfilter groepeert padbewijs voor secrets, identiteit, financiën,
+gezondheid, werk/sollicitatie en persoonlijke documenten. Dit is een
+voorzorgsfilter voor de lokale pilot en geen definitieve inhoudsclassificatie.
+
+Geschikte kandidaten worden deterministisch om-en-om gekozen uit `study`,
+`work`, `administration` en `general`. Zo wordt de limiet niet volledig gevuld
+door één map met de nieuwste documenten. Een categorie die onvoldoende veilige
+kandidaten heeft, blokkeert de andere categorieën niet.
+
 De mutatiedatum beperkt alleen de recente pilotscope. Zij bepaalt nooit welk
 bestand golden record is. Eén exacte inhoudsgroep levert hoogstens één document.
 
@@ -37,6 +46,15 @@ De uitvoer komt in `project/exports/semantic-pilot/` en bevat:
 Het manifest zet `embedding_enabled`, `external_ai_enabled` en
 `database_writes_enabled` expliciet op `false`. Er wordt geen geëxtraheerde tekst
 in manifest, review of rapport opgeslagen.
+
+Het rapport telt een niet-ondersteund bestandstype als `unsupported_extension`
+voordat de hashstatus wordt beoordeeld. `missing_full_sha256` betreft daardoor
+alleen PDF/DOCX-kandidaten die de extractiepilot werkelijk zou kunnen gebruiken.
+
+Een document-hash-backfill krijgt na toepassing van de bijbehorende migratie een
+eigen `scan_sessions`-record van type `hash_backfill`. De scanner koppelt ieder
+werkitem aan die sessie, zodat gepland en verwerkt zichtbaar worden naast full-
+en intervalscans.
 
 ## Stap 2: lokale extractiecontrole
 

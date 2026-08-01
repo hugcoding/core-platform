@@ -592,7 +592,7 @@ CREATE TABLE public.scan_sessions (
     jobs_enqueued integer DEFAULT 0 NOT NULL,
     jobs_processed integer DEFAULT 0 NOT NULL,
     CONSTRAINT scan_sessions_status_check CHECK ((status = ANY (ARRAY['running'::text, 'finished'::text, 'failed'::text, 'aborted'::text]))),
-    CONSTRAINT scan_sessions_type_check CHECK ((type = ANY (ARRAY['full'::text, 'interval'::text, 'watcher'::text])))
+    CONSTRAINT scan_sessions_type_check CHECK ((type = ANY (ARRAY['full'::text, 'interval'::text, 'watcher'::text, 'hash_backfill'::text])))
 );
 
 
