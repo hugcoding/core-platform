@@ -188,7 +188,15 @@ def assess_group(rows: list[dict[str, str]]) -> dict[str, str]:
     size = _integer(sample.get("size_bytes"))
     hashed = bool(sample.get("content_sha256"))
 
-    if not hashed:
+    if size == 0:
+        selected = baseline[0]
+        confidence, status, margin = "low", "excluded_empty_file", 0
+        canonical_basis = "unavailable"
+        relationship = "empty_file"
+        action = "review_empty_file"
+        reason = "Empty content remains inventoried but is ineligible for golden-record selection."
+        selection_reasons = []
+    elif not hashed:
         selected = baseline[0]
         confidence, status, margin = "low", "blocked_missing_full_hash", 0
         canonical_basis = "unavailable"

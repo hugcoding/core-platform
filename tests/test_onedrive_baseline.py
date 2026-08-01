@@ -99,7 +99,7 @@ class OneDriveBaselineTests(unittest.TestCase):
             ]
         )
         self.assertNotEqual("99", result["canonical_file_id"])
-        self.assertEqual("deterministic_golden-v1", result["canonical_basis"])
+        self.assertEqual("deterministic_golden-v2", result["canonical_basis"])
 
     def test_missing_full_hash_is_blocked(self):
         result = assess_group(
@@ -108,6 +108,14 @@ class OneDriveBaselineTests(unittest.TestCase):
         self.assertEqual("blocked_missing_full_hash", result["proposed_action"])
         self.assertEqual("0", result["maximum_reclaimable_bytes_upper_bound"])
         self.assertEqual("low", result["confidence"])
+
+    def test_empty_file_is_separate_from_missing_hash(self):
+        result = assess_group([
+            item(1, f"{SOURCE}/empty.txt", content_sha256="", size="0", group_id="")
+        ])
+        self.assertEqual("empty_file", result["relationship"])
+        self.assertEqual("review_empty_file", result["proposed_action"])
+        self.assertEqual("excluded_empty_file", result["selection_status"])
 
     def test_build_assessment_keeps_unhashed_files_separate(self):
         assessment = build_assessment(
