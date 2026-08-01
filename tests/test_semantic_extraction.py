@@ -2,11 +2,47 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from core.semantic.extraction import extract_statistics, run_manifest
+from core.semantic.extraction import _pdf_text, extract_statistics, run_manifest, summarize
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class ExtractionStatisticsTests(unittest.TestCase):
+    def test_semantic_image_installs_local_aes_dependency(self):
+        dockerfile = (ROOT / "Dockerfile.semantic-pilot").read_text(encoding="utf-8")
+        self.assertIn("cryptography", dockerfile)
+
+    def test_passwordless_aes_pdf_is_unlocked_locally(self):
+        class Reader:
+            is_encrypted = True
+            pages = []
+
+            def decrypt(self, password):
+                self.password = password
+                return 1
+
+        reader = Reader()
+        with mock.patch.dict("sys.modules", {"pypdf": mock.Mock(PdfReader=lambda _: reader)}):
+            text, pages = _pdf_text(Path("encrypted.pdf"))
+
+        self.assertEqual("", text)
+        self.assertEqual(0, pages)
+        self.assertEqual("", reader.password)
+
+    def test_password_protected_pdf_is_reported_without_password(self):
+        class Reader:
+            is_encrypted = True
+
+            def decrypt(self, password):
+                return 0
+
+        with mock.patch.dict("sys.modules", {"pypdf": mock.Mock(PdfReader=lambda _: Reader())}):
+            with self.assertRaisesRegex(PermissionError, "password-protected PDF"):
+                _pdf_text(Path("protected.pdf"))
+
     def test_docx_reports_statistics_without_returning_text(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "pilot.docx"
@@ -88,6 +124,27 @@ class PilotManifestTests(unittest.TestCase):
             database = self._write_manifest(directory, database_writes_enabled=True)
             with self.assertRaisesRegex(ValueError, "database writes must be disabled"):
                 list(run_manifest(database))
+
+
+class ExtractionSummaryTests(unittest.TestCase):
+    def test_summary_contains_only_aggregate_statistics(self):
+        results = [
+            {"status": "extracted", "extension": "pdf", "has_extractable_text": True, "characters": 100, "words": 20, "pages": 2},
+            {"status": "extracted", "extension": "pdf", "has_extractable_text": False, "characters": 0, "words": 0, "pages": 4},
+            {"status": "error", "error_type": "PermissionError", "reason": "password-protected PDF"},
+            {"status": "skipped"},
+        ]
+
+        report = summarize(results)
+
+        self.assertEqual(4, report["documents"])
+        self.assertEqual(2, report["extracted"])
+        self.assertEqual(1, report["extractable_text"])
+        self.assertEqual(1, report["needs_ocr"])
+        self.assertEqual(1, report["password_protected"])
+        self.assertEqual(1, report["errors"])
+        self.assertEqual(20, report["words"])
+        self.assertNotIn("text", report)
 
 
 if __name__ == "__main__":

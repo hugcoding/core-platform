@@ -65,6 +65,15 @@ core semantic pilot-extract \
 
 De container heeft geen netwerk, draait read-only en mount `/volume1` read-only.
 De uitvoer bevat alleen statistieken zoals woorden, pagina's en extractiestatus.
+De container bevat lokale cryptografische ondersteuning om AES-PDF's met een
+lege gebruikerswachtwoordlaag veilig te openen. Een werkelijk met een wachtwoord
+beveiligde PDF blijft geblokkeerd en wordt als `password_protected` gerapporteerd;
+CORE probeert geen wachtwoorden te raden of op te slaan.
+
+Na de individuele regels volgt één JSON-samenvatting met aantallen voor
+`extracted`, `extractable_text`, `needs_ocr`, `no_text`, `password_protected`,
+`skipped` en `errors`, plus totale woorden, tekens en PDF-pagina's. Ook deze
+samenvatting bevat geen documenttekst.
 
 ## Stap 3: lokale chunkplanning
 
