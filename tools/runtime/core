@@ -42,6 +42,7 @@ show_help() {
     printf '%s\n' "  core cleanup classification-extract --manifest latest --dry-run"
     printf '%s\n' "  core cleanup classification-plan --results latest --dry-run"
     printf '%s\n' "  core cleanup retention-plan --results latest --dry-run"
+    printf '%s\n' "  core cleanup onedrive-baseline --source PATH --dry-run"
     printf '%s\n' "  core runtime status"
     printf '%s\n' "  core runtime health"
     printf '%s\n' "  core runtime logs"
@@ -183,9 +184,13 @@ case "$command_domain" in
                 shift 2
                 sh ./tools/runtime/retention-plan "$@"
                 ;;
+            onedrive-baseline)
+                shift 2
+                sh ./tools/runtime/onedrive-baseline "$@"
+                ;;
             *)
                 echo "Unknown cleanup command."
-                echo "Use: core cleanup assess | legacy-duplicates ... | migration-inventory --source PATH --dry-run"
+                echo "Use: core cleanup assess | legacy-duplicates ... | migration-inventory ... | onedrive-baseline --source PATH --dry-run"
                 exit 1
                 ;;
         esac

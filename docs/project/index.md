@@ -22,6 +22,11 @@ Jira is de actuele bron voor planning en issue-status. De repository bewaart tec
 
 De eerste read-only fase van SCRUM-53 inventariseert het PostgreSQL-schema en classificeert mogelijke opruimkandidaten. Bekijk [SCRUM-53 Database Review](scrum-53-database-schema-review.md) voor de bevindingen en het gecontroleerde vervolgplan.
 
+De actuele OneDrive-werkset wordt los van de historische NAS-data beoordeeld.
+Bekijk [SCRUM-76 OneDrive-baseline en golden-recordreview](scrum-76-onedrive-baseline.md)
+voor bronautoriteit, exacte matching, ruimtebesparingsbovengrenzen en de veilige
+reviewflow.
+
 ## Projectworkflow
 
 Ontwikkel en commit vanuit de lokale workspace:
