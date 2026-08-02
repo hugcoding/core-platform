@@ -1,0 +1,9 @@
+.git/
+.venv/
+__pycache__/
+*.pyc
+site/
+project/models/
+project/exports/
+logs/
+postgres-data/
