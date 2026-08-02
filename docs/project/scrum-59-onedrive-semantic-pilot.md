@@ -153,6 +153,17 @@ bewust gescheiden. Alleen deze expliciete stap gebruikt internet:
 core semantic model-fetch
 ```
 
+Bouw na een code- of dependencywijziging expliciet het CPU-only benchmarkimage:
+
+```sh
+core semantic benchmark-build
+```
+
+Een gewone benchmark bouwt het image niet opnieuw. Daarmee blijft de stap snel
+en wordt niet bij iedere meting opnieuw een Docker-buildcontext verstuurd. De
+`.dockerignore` sluit lokale modellen, exports, Git-data en gebouwde documentatie
+uit van die context.
+
 Daarna draait inference zonder netwerk, met read-only mounts voor het model en
 `/volume1`:
 
@@ -168,6 +179,69 @@ modelcontext uitkomt. Extractietekst bestaat alleen tijdelijk in het geheugen;
 tekst en vectoren worden niet gelogd, opgeslagen of naar PostgreSQL geschreven.
 De benchmark verandert evenmin `semantic_runs`, `semantic_documents` of
 `semantic_chunks`.
+
+## Eerste benchmark en refinement
+
+De eerste ACC-meting op 2 augustus 2026 verwerkte 32 chunks uit 19 documenten:
+
+| Metriek | Resultaat |
+|---|---:|
+| Model | `intfloat/multilingual-e5-small` |
+| Dimensie | 384 |
+| Batch size | 4 |
+| Model laden | 8,474 seconden |
+| Embeddingtijd | 73,194 seconden |
+| Doorvoer | 0,437 chunks/seconde |
+| Piekgeheugen | 1.142,1 MiB |
+| Tijdelijke float32-vectoromvang | 49.152 bytes |
+| Truncated chunks | 20 van 32 |
+
+De meting bewees dat de bestaande woordchunker van maximaal 600 woorden niet
+past bij de modelcontext van 512 tokens. Woorden en modeltokens zijn niet
+uitwisselbaar. Daarom gebruikt de embeddingbenchmark vanaf
+`e5-tokens-384-overlap-64-v1` de tokenizer van exact de vastgezette modelrevision:
+
+- doelgrootte 384 inhoudstokens;
+- overlap 64 tokens;
+- het verplichte E5-prefix `passage:` wordt daarna toegevoegd;
+- de uiteindelijke modelinput wordt opnieuw geteld inclusief speciale tokens;
+- iedere input boven de modelgrens stopt de benchmark vóór inference;
+- stille truncation is niet toegestaan.
+
+Dit verandert de bestaande `words-600-overlap-75-v1` ACC-run niet. Een nieuwe
+tokenchunker is een nieuwe afgeleide versie en mag oudere metadata niet stil
+overschrijven. Na deployment moet dezelfde 32-chunkbenchmark opnieuw worden
+uitgevoerd. De acceptatiegrens is `truncated_chunks = 0`; daarna volgen metingen
+met batch sizes 1, 2, 4 en eventueel 8.
+
+De eerste containerbuild trok daarnaast een volledige CUDA/NVIDIA-stack binnen
+en verstuurde 1,695 GB buildcontext. De benchmark heeft geen GPU nodig. Het
+benchmarkimage installeert daarom expliciet de CPU-wheel van PyTorch en gebruikt
+een kleine `.dockerignore`-context.
+
+## Plaats in de CORE-flow
+
+```text
+Bronbestanden
+  -> scanner/watcher
+  -> files, events en volledige hashes
+  -> exacte content groups
+  -> persisted golden record
+  -> lokale extractie
+  -> versieerbare tokenchunking
+  -> lokale embeddings
+  -> toekomstige vectorindex en retrieval
+  -> toekomstig classificatie- of AI-voorstel
+  -> menselijke review
+  -> retentie, archief of cleanup
+```
+
+Golden-recordselectie, classificatieconfidence en semantic similarity blijven
+afzonderlijke bewijslagen. Embeddings ondersteunen retrieval en vergelijking,
+maar geven geen autonome toestemming voor een golden-wijziging, doelpad,
+bewaartermijn of verwijderactie. Een toekomstige lokale LLM mag voorstellen
+formuleren op opgehaalde broncontext; menselijke review blijft leidend bij
+risicovolle acties.
 
 ## Veiligheidsgrenzen
 

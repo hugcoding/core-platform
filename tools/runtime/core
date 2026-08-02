@@ -48,6 +48,7 @@ show_help() {
     printf '%s\n' "  core semantic pilot-chunks MANIFEST_JSON"
     printf '%s\n' "  core semantic acc-metadata MANIFEST_JSON --dry-run|--apply"
     printf '%s\n' "  core semantic model-fetch"
+    printf '%s\n' "  core semantic benchmark-build"
     printf '%s\n' "  core semantic embedding-benchmark MANIFEST_JSON [--max-chunks N] [--batch-size N]"
     printf '%s\n' "  core runtime status"
     printf '%s\n' "  core runtime health"
@@ -221,6 +222,9 @@ case "$command_domain" in
                 ;;
             model-fetch)
                 sh ./tools/semantic/model-fetch
+                ;;
+            benchmark-build)
+                sh ./tools/semantic/benchmark-build
                 ;;
             embedding-benchmark)
                 shift 2

@@ -6,13 +6,15 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from core.semantic.chunking import chunk_text
 from core.semantic.extraction import extract_document
 
 
 MODEL_ID = "intfloat/multilingual-e5-small"
 MODEL_REVISION = "fd1525a9fd15316a2d503bf26ab031a61d056e98"
 MODEL_DIRECTORY = "multilingual-e5-small"
+TARGET_TOKENS = 384
+OVERLAP_TOKENS = 64
+TOKEN_CHUNKER_VERSION = "e5-tokens-384-overlap-64-v1"
 
 
 def peak_rss_mib() -> float | None:
@@ -37,11 +39,14 @@ def load_manifest(path: Path) -> dict[str, Any]:
 
 
 def collect_passages(
-    manifest: dict[str, Any], *, max_chunks: int,
+    manifest: dict[str, Any], *, tokenizer: Any, max_chunks: int,
+    target_tokens: int = TARGET_TOKENS, overlap_tokens: int = OVERLAP_TOKENS,
     extractor: Callable[[Path], tuple[str, int]] = extract_document,
 ) -> tuple[list[str], dict[str, int]]:
     if max_chunks < 1:
         raise ValueError("max_chunks must be positive")
+    if overlap_tokens < 0 or overlap_tokens >= target_tokens:
+        raise ValueError("overlap_tokens must be between zero and target_tokens")
     passages: list[str] = []
     stats = {"source_documents": 0, "skipped_no_text": 0, "errors": 0}
     for item in manifest["files"]:
@@ -49,7 +54,15 @@ def collect_passages(
             continue
         try:
             text, _ = extractor(Path(item["path"]))
-            chunks = chunk_text(text)
+            token_ids = tokenizer.encode(text, add_special_tokens=False)
+            chunks = []
+            step = target_tokens - overlap_tokens
+            for start in range(0, len(token_ids), step):
+                if start and len(token_ids) - start <= overlap_tokens:
+                    break
+                token_chunk = token_ids[start : start + target_tokens]
+                if token_chunk:
+                    chunks.append(tokenizer.decode(token_chunk, skip_special_tokens=True))
         except Exception:
             stats["errors"] += 1
             continue
@@ -70,9 +83,6 @@ def run_benchmark(
 ) -> dict[str, Any]:
     if not model_path.is_dir():
         raise FileNotFoundError(f"local model not found: {model_path}")
-    passages, stats = collect_passages(manifest, max_chunks=max_chunks, extractor=extractor)
-    if not passages:
-        raise ValueError("no extractable chunks available for benchmark")
     if model_factory is None:
         from sentence_transformers import SentenceTransformer
         model_factory = lambda path: SentenceTransformer(path, local_files_only=True)
@@ -81,11 +91,21 @@ def run_benchmark(
     model = model_factory(str(model_path))
     load_seconds = time.perf_counter() - load_started
     max_sequence_length = int(getattr(model, "max_seq_length", 0) or 0)
-    truncated_chunks = 0
     tokenizer = getattr(model, "tokenizer", None)
-    if tokenizer is not None and max_sequence_length:
-        tokenized = tokenizer(passages, add_special_tokens=True, truncation=False, padding=False)
-        truncated_chunks = sum(len(ids) > max_sequence_length for ids in tokenized["input_ids"])
+    if tokenizer is None or not max_sequence_length:
+        raise ValueError("model must expose a tokenizer and max_seq_length")
+    passages, stats = collect_passages(
+        manifest, tokenizer=tokenizer, max_chunks=max_chunks, extractor=extractor,
+    )
+    if not passages:
+        raise ValueError("no extractable chunks available for benchmark")
+    tokenized = tokenizer(passages, add_special_tokens=True, truncation=False, padding=False)
+    input_token_counts = [len(ids) for ids in tokenized["input_ids"]]
+    truncated_chunks = sum(count > max_sequence_length for count in input_token_counts)
+    if truncated_chunks:
+        raise RuntimeError(
+            f"token chunker produced {truncated_chunks} inputs above model limit; refusing silent truncation"
+        )
 
     encode_started = time.perf_counter()
     vectors = model.encode(passages, batch_size=batch_size, normalize_embeddings=True, show_progress_bar=False)
@@ -98,6 +118,9 @@ def run_benchmark(
         "schema_version": "semantic-embedding-benchmark-v1",
         "model_id": MODEL_ID,
         "model_revision": MODEL_REVISION,
+        "chunker_version": TOKEN_CHUNKER_VERSION,
+        "target_tokens": TARGET_TOKENS,
+        "overlap_tokens": OVERLAP_TOKENS,
         "dimension": dimension,
         "chunks": chunks,
         **stats,
@@ -108,6 +131,7 @@ def run_benchmark(
         "peak_rss_mib": peak_rss_mib(),
         "estimated_float32_bytes": chunks * dimension * 4,
         "model_max_sequence_length": max_sequence_length or None,
+        "max_input_tokens": max(input_token_counts),
         "truncated_chunks": truncated_chunks,
         "network_enabled": False,
         "database_writes": False,

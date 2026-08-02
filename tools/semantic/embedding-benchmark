@@ -16,7 +16,10 @@ if [ ! -d "$root/project/models/multilingual-e5-small" ]; then
 fi
 
 cd "$root"
-docker build --file Dockerfile.embedding-benchmark --tag "$image" .
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+    echo "Benchmark image missing. Run: core semantic benchmark-build" >&2
+    exit 2
+fi
 docker run --rm \
     --network none \
     --read-only \
