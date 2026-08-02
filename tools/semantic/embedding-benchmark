@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+image=${SEMANTIC_BENCHMARK_IMAGE:-core-semantic-embedding-benchmark:local}
+manifest=${1:-}
+if [ -z "$manifest" ] || [ ! -f "$manifest" ]; then
+    echo "Use: core semantic embedding-benchmark MANIFEST_JSON [--max-chunks N] [--batch-size N]" >&2
+    exit 2
+fi
+shift
+manifest=$(cd "$(dirname "$manifest")" && pwd)/$(basename "$manifest")
+if [ ! -d "$root/project/models/multilingual-e5-small" ]; then
+    echo "Local model missing. Run: core semantic model-fetch" >&2
+    exit 2
+fi
+
+cd "$root"
+docker build --file Dockerfile.embedding-benchmark --tag "$image" .
+docker run --rm \
+    --network none \
+    --read-only \
+    --security-opt no-new-privileges:true \
+    --tmpfs /tmp:rw,noexec,nosuid,size=1g \
+    --volume /volume1:/volume1:ro \
+    --volume "$manifest:/pilot/manifest.json:ro" \
+    --volume "$root/project/models:/models:ro" \
+    "$image" \
+    python -m core.semantic.embedding_benchmark benchmark \
+    --manifest /pilot/manifest.json \
+    --model-path /models/multilingual-e5-small "$@"

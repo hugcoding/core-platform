@@ -47,6 +47,8 @@ show_help() {
     printf '%s\n' "  core semantic pilot-extract MANIFEST_JSON"
     printf '%s\n' "  core semantic pilot-chunks MANIFEST_JSON"
     printf '%s\n' "  core semantic acc-metadata MANIFEST_JSON --dry-run|--apply"
+    printf '%s\n' "  core semantic model-fetch"
+    printf '%s\n' "  core semantic embedding-benchmark MANIFEST_JSON [--max-chunks N] [--batch-size N]"
     printf '%s\n' "  core runtime status"
     printf '%s\n' "  core runtime health"
     printf '%s\n' "  core runtime logs"
@@ -217,9 +219,16 @@ case "$command_domain" in
                 shift 2
                 sh ./tools/runtime/semantic-acc-metadata "$@"
                 ;;
+            model-fetch)
+                sh ./tools/semantic/model-fetch
+                ;;
+            embedding-benchmark)
+                shift 2
+                sh ./tools/semantic/embedding-benchmark "$@"
+                ;;
             *)
                 echo "Unknown semantic command."
-                echo "Use: core semantic onedrive-golden-pilot ... | pilot-extract MANIFEST_JSON | pilot-chunks MANIFEST_JSON"
+                echo "Use: core semantic onedrive-golden-pilot ... | pilot-extract MANIFEST_JSON | pilot-chunks MANIFEST_JSON | acc-metadata MANIFEST_JSON --dry-run|--apply | model-fetch | embedding-benchmark MANIFEST_JSON"
                 exit 1
                 ;;
         esac

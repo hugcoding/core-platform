@@ -1,8 +1,9 @@
 # SCRUM-59 OneDrive golden semantic pilot
 
-Deze pilot maakt een kleine, reproduceerbare documentset voor lokale extractie en
-chunkplanning. De stap is read-only en geeft nog **geen** toestemming voor een
-embeddingmodel, externe AI-dienst of databaseopslag.
+Deze pilot maakt een kleine, reproduceerbare documentset voor lokale extractie,
+chunkplanning en een begrensde lokale embeddingbenchmark. Externe AI blijft
+uitgeschakeld. In ACC mag uitsluitend reproduceerbare technische metadata worden
+opgeslagen; bronbestanden blijven read-only.
 
 ## Selectiecontract
 
@@ -117,10 +118,62 @@ Opgeslagen worden runstatus, versies, `file_id`, `content_group_id`, hash,
 extractiestatistieken, OCR/passwordstatus en per chunk alleen identiteit,
 volgnummer en afmetingen. Ruwe tekst en embeddings worden niet opgeslagen.
 
+## Golden/semantic databaseview
+
+Migratie `database/migrations/20260802_add_semantic_golden_records_view.sql`
+beheert `public.v_semantic_golden_records`. De view bevat per actief golden record
+het aantal exacte kopieÃ«n en de nieuwste semantic-documentrun. De afgeleide
+kolom `semantic_readiness` onderscheidt onder meer `not_processed`, `ready`,
+`stale` en `stale_content_group`; `semantic_metadata_current` is alleen waar als
+hash, contentgroep en geplande status nog overeenkomen.
+
+De migratie gebruikt `CREATE OR REPLACE VIEW` en is daardoor ook toepasbaar als
+de view eerder handmatig in ACC is aangemaakt. Rollback verwijdert alleen deze
+view en haar twee ondersteunende indexen:
+
+```sh
+docker exec -i postgres psql -U hugo -d nasdb_test \
+  < database/migrations/20260802_add_semantic_golden_records_view.sql
+```
+
+Rollback, alleen indien nodig:
+
+```sh
+docker exec -i postgres psql -U hugo -d nasdb_test \
+  < database/migrations/rollback/20260802_add_semantic_golden_records_view.sql
+```
+
+## Lokale embeddingbenchmark in ACC
+
+De eerste CPU-baseline gebruikt de vastgezette revisie van
+`intfloat/multilingual-e5-small` (384 dimensies). Modeldownload en inference zijn
+bewust gescheiden. Alleen deze expliciete stap gebruikt internet:
+
+```sh
+core semantic model-fetch
+```
+
+Daarna draait inference zonder netwerk, met read-only mounts voor het model en
+`/volume1`:
+
+```sh
+core semantic embedding-benchmark \
+  project/exports/semantic-pilot/onedrive-golden-pilot-YYYYMMDD-HHMMSS.json \
+  --max-chunks 32 --batch-size 4
+```
+
+Het resultaat bevat alleen aggregaten: model en revisie, dimensie, aantallen,
+doorvoer, piekgeheugen, geschatte vectoromvang en het aantal chunks dat boven de
+modelcontext uitkomt. Extractietekst bestaat alleen tijdelijk in het geheugen;
+tekst en vectoren worden niet gelogd, opgeslagen of naar PostgreSQL geschreven.
+De benchmark verandert evenmin `semantic_runs`, `semantic_documents` of
+`semantic_chunks`.
+
 ## Veiligheidsgrenzen
 
-- Geen mutaties aan bestanden, golden records of database.
-- Geen vectoren of embeddings.
-- Geen externe AI of netwerktoegang.
+- Geen mutaties aan bestanden of golden records.
+- Alleen expliciet toegepaste, reproduceerbare technische metadata in ACC.
+- Benchmarkvectoren bestaan uitsluitend tijdelijk in geheugen.
+- Geen externe AI; benchmark-inference heeft geen netwerktoegang.
 - Geen gevoelige documenten in deze pilot.
 - Geen autonome classificatie-, cleanup- of verwijderactie.

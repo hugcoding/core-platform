@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+image=${SEMANTIC_BENCHMARK_IMAGE:-core-semantic-embedding-benchmark:local}
+model_dir="$root/project/models/multilingual-e5-small"
+
+cd "$root"
+docker build --file Dockerfile.embedding-benchmark --tag "$image" .
+mkdir -p "$model_dir"
+docker run --rm \
+    --env HF_HUB_OFFLINE=0 \
+    --env TRANSFORMERS_OFFLINE=0 \
+    --volume "$root/project/models:/models" \
+    "$image" \
+    python -m core.semantic.embedding_benchmark fetch \
+    --target /models/multilingual-e5-small
+
+echo "Pinned model downloaded to project/models/multilingual-e5-small"

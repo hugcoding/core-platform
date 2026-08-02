@@ -1,0 +1,12 @@
+FROM python:3.11-slim
+
+RUN pip install --no-cache-dir sentence-transformers huggingface-hub python-docx pypdf cryptography
+
+WORKDIR /app
+COPY core ./core
+
+ENV HF_HOME=/tmp/huggingface \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1
+
+CMD ["python", "-m", "core.semantic.embedding_benchmark"]
