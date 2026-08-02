@@ -46,6 +46,8 @@ class ChunkingTests(unittest.TestCase):
 
         self.assertEqual(first["content_version"], second["content_version"])
         self.assertEqual(first["chunk_ids"], second["chunk_ids"])
+        self.assertEqual(0, first["chunk_metadata"][0]["ordinal"])
+        self.assertNotIn("text", first["chunk_metadata"][0])
         self.assertNotIn("text", first)
 
 

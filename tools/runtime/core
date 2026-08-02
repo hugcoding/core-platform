@@ -46,6 +46,7 @@ show_help() {
     printf '%s\n' "  core semantic onedrive-golden-pilot --cutoff TIMESTAMP --dry-run"
     printf '%s\n' "  core semantic pilot-extract MANIFEST_JSON"
     printf '%s\n' "  core semantic pilot-chunks MANIFEST_JSON"
+    printf '%s\n' "  core semantic acc-metadata MANIFEST_JSON --dry-run|--apply"
     printf '%s\n' "  core runtime status"
     printf '%s\n' "  core runtime health"
     printf '%s\n' "  core runtime logs"
@@ -211,6 +212,10 @@ case "$command_domain" in
             pilot-chunks)
                 shift 2
                 sh ./tools/semantic/pilot-chunks "$@"
+                ;;
+            acc-metadata)
+                shift 2
+                sh ./tools/runtime/semantic-acc-metadata "$@"
                 ;;
             *)
                 echo "Unknown semantic command."

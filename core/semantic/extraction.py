@@ -7,6 +7,7 @@ from typing import Any, Callable, Iterable
 
 
 SUPPORTED_EXTENSIONS = {".docx", ".pdf"}
+EXTRACTOR_VERSION = "local-pypdf-docx-v2"
 
 
 def _docx_text(path: Path) -> tuple[str, int]:
