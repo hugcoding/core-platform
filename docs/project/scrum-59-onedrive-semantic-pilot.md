@@ -228,10 +228,58 @@ De JSON-uitvoer bevat per batchgrootte de embeddingtijd en doorvoer, plus
 volledig document gebruikt stille tokenizerdiagnostiek; alleen een overschrijding
 in de uiteindelijke modelinput is een blokkerende fout.
 
+De matrixmeting van 2 augustus 2026 koos batch size 4 als ACC-default. De
+doorvoer was 0,701 chunks/seconde voor 32 chunks, zonder truncatie en met een
+piekgeheugen van 896,6 MiB. Batch size 2 presteerde vrijwel gelijk; batch size 8
+was trager. Deze default is een gemeten instelling voor de huidige NAS en geen
+algemene modeleigenschap.
+
 De eerste containerbuild trok daarnaast een volledige CUDA/NVIDIA-stack binnen
 en verstuurde 1,695 GB buildcontext. De benchmark heeft geen GPU nodig. Het
 benchmarkimage installeert daarom expliciet de CPU-wheel van PyTorch en gebruikt
 een kleine `.dockerignore`-context.
+
+## Begrensde embeddingopslag in ACC
+
+De legacy tabel `embeddings` gebruikt vectoren met 1.536 dimensies en wordt niet
+hergebruikt voor het 384-dimensionale E5-model. De additive migratie maakt
+afzonderlijke, versieerbare ACC-tabellen:
+
+- `semantic_embedding_runs` voor model-, chunker- en runlineage;
+- `semantic_embeddings_acc` voor tokenchunkmetadata en `vector(384)`;
+- geen ruwe extractietekst in PostgreSQL;
+- een foreign key naar de bestaande semantic document-run;
+- een deterministisch run-ID en idempotente inserts.
+
+Pas eerst de migratie toe:
+
+```sh
+docker exec -i postgres psql -v ON_ERROR_STOP=1 -U hugo -d nasdb_test \
+  < database/migrations/20260802_add_semantic_embeddings_acc.sql
+```
+
+Maak daarna altijd eerst een begrensd plan. Inference blijft lokaal, offline en
+read-only; alleen het afgeleide plan met vectoren wordt als auditexport bewaard:
+
+```sh
+core semantic embedding-acc \
+  project/exports/semantic-pilot/onedrive-golden-pilot-YYYYMMDD-HHMMSS.json \
+  --max-chunks 32 --batch-size 4 --dry-run
+```
+
+Controleer `semantic_run_id`, aantallen, fouten en het planpad. Schrijf pas na
+die controle naar ACC:
+
+```sh
+core semantic embedding-acc \
+  project/exports/semantic-pilot/onedrive-golden-pilot-YYYYMMDD-HHMMSS.json \
+  --max-chunks 32 --batch-size 4 --apply
+```
+
+`--apply` schrijft uitsluitend naar `nasdb_test`. De database valideert dat de
+semantic run en golden-documentkoppeling al bestaan. Een gewijzigde contenthash,
+onbekend bestand, verkeerde vectordimensie of afwijkend aantal chunks blokkeert
+de transactie. De rollback verwijdert alleen de nieuwe ACC-tabellen.
 
 ## Plaats in de CORE-flow
 
