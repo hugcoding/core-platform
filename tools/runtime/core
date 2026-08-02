@@ -61,7 +61,7 @@ show_help() {
     printf '%s\n' "  core runtime restart"
     printf '%s\n' "  core scanner full"
     printf '%s\n' "  core scanner hash-backfill --source PATH"
-    printf '%s\n' "  core git pull  (run from Windows PowerShell)"
+    printf '%s\n' "  core git pull [--rebuild-docs|--skip-docs]"
     printf '%s\n' "  core version"
     printf '%s\n' ""
 }
@@ -292,11 +292,12 @@ case "$command_domain" in
     git)
         case "$command_action" in
             pull)
-                sh ./tools/runtime/git-pull
+                shift 2
+                sh ./tools/runtime/git-pull "$@"
                 ;;
             *)
                 echo "Unknown git command."
-                echo "Use: core git pull"
+                echo "Use: core git pull [--rebuild-docs|--skip-docs]"
                 exit 1
                 ;;
         esac

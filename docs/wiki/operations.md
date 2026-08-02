@@ -215,11 +215,22 @@ core git pull
 
 CORE gebruikt hiervoor een tijdelijke Git-container; Git hoeft niet als
 Synology-pakket geïnstalleerd te zijn. Als `docs/`, `mkdocs.yml`, de docs-
-Dockerfile of nginx-configuratie is gewijzigd, rebuildt `core git pull`
-automatisch `nas-docs-1`. Bij andere wijzigingen blijft de docs-container
-ongemoeid.
+Dockerfile of nginx-configuratie is gewijzigd, toont de pull de gewijzigde
+bestanden en vraagt `Permanente Wiki opnieuw bouwen? [j/N]`. Enter of `N` slaat
+de langdurige rebuild over.
 
-Controleer na een automatische publicatie de containerstatus met
+Voor expliciet, niet-interactief gedrag zijn twee opties beschikbaar:
+
+```bash
+core git pull --rebuild-docs  # bouwen als documentatiewijzigingen zijn gevonden
+core git pull --skip-docs     # tijdens deze pull nooit bouwen
+```
+
+Een niet-interactieve pull zonder optie blokkeert niet en slaat de Wiki-rebuild
+over. De repository wordt wel op dezelfde veilige manier fast-forward bijgewerkt.
+Bij andere wijzigingen blijft de docs-container ongemoeid.
+
+Controleer na een expliciet gekozen publicatie de containerstatus met
 `docker compose ps docs` en open `/wiki/` in de browser.
 
 De Material for MkDocs 2.0-waarschuwing is upstream en geen build failure
