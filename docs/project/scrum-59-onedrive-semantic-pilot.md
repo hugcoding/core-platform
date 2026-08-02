@@ -214,6 +214,20 @@ overschrijven. Na deployment moet dezelfde 32-chunkbenchmark opnieuw worden
 uitgevoerd. De acceptatiegrens is `truncated_chunks = 0`; daarna volgen metingen
 met batch sizes 1, 2, 4 en eventueel 8.
 
+Gebruik voor die vergelijking één matrixrun. Het model wordt één keer geladen en
+dezelfde voorbereide chunks worden voor iedere batchgrootte gebruikt:
+
+```sh
+core semantic embedding-benchmark \
+  project/exports/semantic-pilot/onedrive-golden-pilot-YYYYMMDD-HHMMSS.json \
+  --max-chunks 32 --batch-sizes 1,2,4,8
+```
+
+De JSON-uitvoer bevat per batchgrootte de embeddingtijd en doorvoer, plus
+`fastest_batch_size` en het globale piekgeheugen. De voor-tokenisatie van een
+volledig document gebruikt stille tokenizerdiagnostiek; alleen een overschrijding
+in de uiteindelijke modelinput is een blokkerende fout.
+
 De eerste containerbuild trok daarnaast een volledige CUDA/NVIDIA-stack binnen
 en verstuurde 1,695 GB buildcontext. De benchmark heeft geen GPU nodig. Het
 benchmarkimage installeert daarom expliciet de CPU-wheel van PyTorch en gebruikt
