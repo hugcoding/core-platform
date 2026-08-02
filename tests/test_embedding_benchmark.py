@@ -5,7 +5,7 @@ from pathlib import Path
 
 from core.semantic.embedding_benchmark import (
     MODEL_ID, MODEL_REVISION, TOKEN_CHUNKER_VERSION, collect_passages,
-    load_manifest, run_benchmark,
+    load_manifest, run_benchmark, run_benchmark_matrix,
 )
 
 
@@ -19,7 +19,7 @@ class FakeModel:
 
     class Tokenizer:
         @staticmethod
-        def encode(text, add_special_tokens=False):
+        def encode(text, add_special_tokens=False, **kwargs):
             return text.split()
 
         @staticmethod
@@ -120,6 +120,34 @@ class EmbeddingBenchmarkTests(unittest.TestCase):
                 run_benchmark(
                     self.manifest(), Path(directory), model_factory=lambda path: TinyModel(),
                     extractor=lambda path: ("one two three four", 1),
+                )
+
+    def test_matrix_reuses_prepared_model_and_reports_fastest_batch(self):
+        created = []
+
+        def factory(path):
+            model = FakeModel()
+            created.append(model)
+            return model
+
+        with tempfile.TemporaryDirectory() as directory:
+            result = run_benchmark_matrix(
+                self.manifest(), Path(directory), batch_sizes=[1, 2, 4, 4],
+                model_factory=factory, extractor=lambda path: ("one two three", 1),
+            )
+        self.assertEqual(1, len(created))
+        self.assertEqual([1, 2, 4], [item["batch_size"] for item in result["measurements"]])
+        self.assertIn(result["fastest_batch_size"], {1, 2, 4})
+        self.assertEqual(0, result["truncated_chunks"])
+        self.assertFalse(result["vectors_stored"])
+
+    def test_matrix_rejects_invalid_batch_sizes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "positive integers"):
+                run_benchmark_matrix(
+                    self.manifest(), Path(directory), batch_sizes=[0],
+                    model_factory=lambda path: FakeModel(),
+                    extractor=lambda path: ("one", 1),
                 )
 
 

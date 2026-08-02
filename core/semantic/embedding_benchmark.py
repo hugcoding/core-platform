@@ -54,7 +54,7 @@ def collect_passages(
             continue
         try:
             text, _ = extractor(Path(item["path"]))
-            token_ids = tokenizer.encode(text, add_special_tokens=False)
+            token_ids = tokenizer.encode(text, add_special_tokens=False, verbose=False)
             chunks = []
             step = target_tokens - overlap_tokens
             for start in range(0, len(token_ids), step):
@@ -140,6 +140,84 @@ def run_benchmark(
     }
 
 
+def run_benchmark_matrix(
+    manifest: dict[str, Any], model_path: Path, *, batch_sizes: list[int],
+    max_chunks: int = 32, model_factory: Callable[[str], Any] | None = None,
+    extractor: Callable[[Path], tuple[str, int]] = extract_document,
+) -> dict[str, Any]:
+    if not batch_sizes or any(size < 1 for size in batch_sizes):
+        raise ValueError("batch_sizes must contain positive integers")
+    ordered_sizes = list(dict.fromkeys(batch_sizes))
+    if not model_path.is_dir():
+        raise FileNotFoundError(f"local model not found: {model_path}")
+    if model_factory is None:
+        from sentence_transformers import SentenceTransformer
+        model_factory = lambda path: SentenceTransformer(path, local_files_only=True)
+
+    load_started = time.perf_counter()
+    model = model_factory(str(model_path))
+    load_seconds = time.perf_counter() - load_started
+    tokenizer = getattr(model, "tokenizer", None)
+    max_sequence_length = int(getattr(model, "max_seq_length", 0) or 0)
+    if tokenizer is None or not max_sequence_length:
+        raise ValueError("model must expose a tokenizer and max_seq_length")
+    passages, stats = collect_passages(
+        manifest, tokenizer=tokenizer, max_chunks=max_chunks, extractor=extractor,
+    )
+    if not passages:
+        raise ValueError("no extractable chunks available for benchmark")
+    tokenized = tokenizer(passages, add_special_tokens=True, truncation=False, padding=False)
+    input_token_counts = [len(ids) for ids in tokenized["input_ids"]]
+    truncated_chunks = sum(count > max_sequence_length for count in input_token_counts)
+    if truncated_chunks:
+        raise RuntimeError(
+            f"token chunker produced {truncated_chunks} inputs above model limit; refusing silent truncation"
+        )
+
+    measurements = []
+    dimension = None
+    for batch_size in ordered_sizes:
+        started = time.perf_counter()
+        vectors = model.encode(
+            passages, batch_size=batch_size, normalize_embeddings=True, show_progress_bar=False,
+        )
+        seconds = time.perf_counter() - started
+        dimension = int(vectors.shape[1])
+        chunks = int(vectors.shape[0])
+        measurements.append({
+            "batch_size": batch_size,
+            "embedding_seconds": round(seconds, 3),
+            "chunks_per_second": round(chunks / seconds, 3) if seconds else None,
+        })
+        del vectors
+
+    del passages
+    fastest = max(measurements, key=lambda item: item["chunks_per_second"] or 0)
+    return {
+        "schema_version": "semantic-embedding-benchmark-matrix-v1",
+        "model_id": MODEL_ID,
+        "model_revision": MODEL_REVISION,
+        "chunker_version": TOKEN_CHUNKER_VERSION,
+        "target_tokens": TARGET_TOKENS,
+        "overlap_tokens": OVERLAP_TOKENS,
+        "dimension": dimension,
+        "chunks": chunks,
+        **stats,
+        "model_load_seconds": round(load_seconds, 3),
+        "model_max_sequence_length": max_sequence_length,
+        "max_input_tokens": max(input_token_counts),
+        "truncated_chunks": 0,
+        "measurements": measurements,
+        "fastest_batch_size": fastest["batch_size"],
+        "peak_rss_mib": peak_rss_mib(),
+        "estimated_float32_bytes": chunks * int(dimension) * 4,
+        "network_enabled": False,
+        "database_writes": False,
+        "vectors_stored": False,
+        "raw_text_stored": False,
+    }
+
+
 def fetch_model(target: Path) -> None:
     from huggingface_hub import snapshot_download
     target.mkdir(parents=True, exist_ok=True)
@@ -156,12 +234,27 @@ def main(argv: list[str] | None = None) -> int:
     benchmark.add_argument("--model-path", required=True, type=Path)
     benchmark.add_argument("--max-chunks", type=int, default=32)
     benchmark.add_argument("--batch-size", type=int, default=4)
+    benchmark.add_argument(
+        "--batch-sizes",
+        help="comma-separated batch sizes for one prepared benchmark matrix, e.g. 1,2,4,8",
+    )
     args = parser.parse_args(argv)
     if args.command == "fetch":
         fetch_model(args.target)
         return 0
-    result = run_benchmark(load_manifest(args.manifest), args.model_path,
-                           max_chunks=args.max_chunks, batch_size=args.batch_size)
+    manifest = load_manifest(args.manifest)
+    if args.batch_sizes:
+        try:
+            batch_sizes = [int(value.strip()) for value in args.batch_sizes.split(",") if value.strip()]
+        except ValueError as exc:
+            parser.error(f"invalid --batch-sizes: {exc}")
+        result = run_benchmark_matrix(
+            manifest, args.model_path, max_chunks=args.max_chunks, batch_sizes=batch_sizes,
+        )
+    else:
+        result = run_benchmark(
+            manifest, args.model_path, max_chunks=args.max_chunks, batch_size=args.batch_size,
+        )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
 
