@@ -281,6 +281,36 @@ semantic run en golden-documentkoppeling al bestaan. Een gewijzigde contenthash,
 onbekend bestand, verkeerde vectordimensie of afwijkend aantal chunks blokkeert
 de transactie. De rollback verwijdert alleen de nieuwe ACC-tabellen.
 
+## Read-only similarity retrieval
+
+Na een toegepaste embedding-run kan CORE lokaal zoeken in dezelfde vastgezette
+E5-vectorruimte. De retrieval schrijft niets naar PostgreSQL en retourneert
+alleen actuele golden records waarvan `file_id`, `semantic_run_id`, modelrevision
+en tokenchunker overeenkomen. Oude embeddings worden daardoor niet stil onder
+nieuwere semantic metadata getoond.
+
+Vrije tekst wordt lokaal met het verplichte E5-prefix `query:` omgezet naar een
+vector. De query verlaat de NAS niet en wordt niet door CORE opgeslagen:
+
+```sh
+core semantic similarity query "golden records en documentbeheer" \
+  --limit 10 --threshold 0.50
+```
+
+Een bestaand golden document kan eveneens als bron worden gebruikt. CORE neemt
+dan per kandidaat de beste cosine-overeenkomst tussen bron- en doelchunks:
+
+```sh
+core semantic similarity document 3361606 \
+  --limit 10 --threshold 0.50
+```
+
+Het resultaat bevat het golden pad, contentgroep, exact-copy-count, semantic
+runlineage, matched chunk en een cosine similarity. Die similarity is alleen een
+rangschikkingssignaal. Het is geen classificatieconfidence, duplicatebesluit,
+golden-recordbesluit of toestemming voor cleanup. Met slechts 32 pilotchunks is
+de recall bovendien bewust beperkt tot de huidige ACC-pilotset.
+
 ## Plaats in de CORE-flow
 
 ```text
