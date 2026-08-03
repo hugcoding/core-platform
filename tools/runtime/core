@@ -53,6 +53,7 @@ show_help() {
     printf '%s\n' "  core semantic embedding-acc MANIFEST_JSON [--max-chunks N] [--batch-size N] --dry-run|--apply"
     printf '%s\n' "  core semantic similarity query TEXT [--limit N] [--threshold SCORE]"
     printf '%s\n' "  core semantic similarity document FILE_ID [--limit N] [--threshold SCORE]"
+    printf '%s\n' "  core semantic retrieval-evaluate CONFIG_JSON"
     printf '%s\n' "  core runtime status"
     printf '%s\n' "  core runtime health"
     printf '%s\n' "  core runtime logs"
@@ -241,9 +242,13 @@ case "$command_domain" in
                 shift 2
                 sh ./tools/runtime/semantic-similarity "$@"
                 ;;
+            retrieval-evaluate)
+                shift 2
+                sh ./tools/runtime/semantic-retrieval-evaluate "$@"
+                ;;
             *)
                 echo "Unknown semantic command."
-                echo "Use: core semantic onedrive-golden-pilot ... | pilot-extract MANIFEST_JSON | pilot-chunks MANIFEST_JSON | acc-metadata MANIFEST_JSON --dry-run|--apply | model-fetch | embedding-benchmark MANIFEST_JSON | embedding-acc MANIFEST_JSON --dry-run|--apply | similarity query|document ..."
+                echo "Use: core semantic onedrive-golden-pilot ... | pilot-extract MANIFEST_JSON | pilot-chunks MANIFEST_JSON | acc-metadata MANIFEST_JSON --dry-run|--apply | model-fetch | embedding-benchmark MANIFEST_JSON | embedding-acc MANIFEST_JSON --dry-run|--apply | similarity query|document ... | retrieval-evaluate CONFIG_JSON"
                 exit 1
                 ;;
         esac

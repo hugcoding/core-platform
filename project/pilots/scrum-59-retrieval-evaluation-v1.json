@@ -1,0 +1,36 @@
+{
+  "schema_version": "semantic-retrieval-evaluation-v1",
+  "description": "Small, manually reviewable ACC baseline; expand only with reviewed expectations.",
+  "queries": [
+    {
+      "id": "vve-riolering",
+      "query": "VvE memo riolering",
+      "expected_file_ids": [3361765, 3361766],
+      "irrelevant_file_ids": [3362201, 3362202, 3362203, 3362204]
+    },
+    {
+      "id": "vve-reglement",
+      "query": "VvE afsprakenreglement Eksterlaan",
+      "expected_file_ids": [3361767],
+      "irrelevant_file_ids": [3361839, 3361862]
+    },
+    {
+      "id": "data-engineering",
+      "query": "Data engineering cursus certificaat",
+      "expected_file_ids": [3362203],
+      "irrelevant_file_ids": [3361765, 3361766]
+    },
+    {
+      "id": "sql-cursus",
+      "query": "SQL cursus certificaat",
+      "expected_file_ids": [3362201, 3362204],
+      "irrelevant_file_ids": [3361765, 3361766]
+    },
+    {
+      "id": "salaris-jaaropgaaf",
+      "query": "Salaris payroll jaaropgaaf 2025",
+      "expected_file_ids": [3361839, 3361862],
+      "irrelevant_file_ids": [3362201, 3362204]
+    }
+  ]
+}

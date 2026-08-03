@@ -2,10 +2,12 @@ import json
 import unittest
 from pathlib import Path
 
-from core.semantic.query_embedding import embed_query
+from core.semantic.query_embedding import embed_queries, embed_query
 from core.semantic.similarity import (
-    render_document_similarity_sql, render_query_similarity_sql, vector_literal,
+    query_terms, render_document_similarity_sql, render_hybrid_query_similarity_sql,
+    render_query_similarity_sql, vector_literal,
 )
+from core.semantic.retrieval_evaluation import evaluate_results, load_evaluation
 
 
 class FakeVectors(list):
@@ -16,7 +18,7 @@ class FakeVectors(list):
 class FakeModel:
     def encode(self, passages, **kwargs):
         self.passages = passages
-        return FakeVectors([[0.1] * 384])
+        return FakeVectors([[0.1] * 384 for _ in passages])
 
 
 class SemanticSimilarityTests(unittest.TestCase):
@@ -33,6 +35,15 @@ class SemanticSimilarityTests(unittest.TestCase):
             embed_query("query", Path("."), model_factory=lambda path: type(
                 "Bad", (), {"encode": lambda self, *args, **kwargs: FakeVectors([[0.1]])}
             )())
+
+    def test_query_batch_loads_model_once(self):
+        created = []
+        vectors = embed_queries(
+            ["python", "data science"], Path("."),
+            model_factory=lambda path: created.append(FakeModel()) or created[0],
+        )
+        self.assertEqual(1, len(created))
+        self.assertEqual(2, len(vectors))
 
     def test_query_sql_is_read_only_and_filters_current_golden_records(self):
         sql = render_query_similarity_sql([0.1] * 384, limit=5, threshold=0.5)
@@ -51,6 +62,15 @@ class SemanticSimilarityTests(unittest.TestCase):
         self.assertIn("source_run.model_revision = target_run.model_revision", sql)
         self.assertIn("source_v.semantic_run_id = source.semantic_run_id", sql)
 
+    def test_hybrid_sql_combines_embedding_and_path_terms(self):
+        sql = render_hybrid_query_similarity_sql(
+            [0.1] * 384, "SQL cursus certificaat", limit=5,
+        )
+        self.assertIn("0.85 *", sql)
+        self.assertIn("lexical_similarity", sql)
+        self.assertIn("%sql%", sql)
+        self.assertEqual(["sql", "cursus", "certificaat"], query_terms("SQL cursus en certificaat"))
+
     def test_search_bounds_and_vector_dimension_are_validated(self):
         with self.assertRaisesRegex(ValueError, "limit"):
             render_query_similarity_sql([0.1] * 384, limit=0)
@@ -66,6 +86,20 @@ class SemanticSimilarityTests(unittest.TestCase):
         self.assertIn('"--network", "none"', runtime)
         self.assertIn('"--read-only"', runtime)
         self.assertIn("similarity)", cli)
+        self.assertIn("retrieval-evaluate)", cli)
+
+    def test_evaluation_config_and_metrics(self):
+        root = Path(__file__).resolve().parents[1]
+        config = load_evaluation(root / "project/pilots/scrum-59-retrieval-evaluation-v1.json")
+        self.assertEqual(5, len(config["queries"]))
+        expected = config["queries"][0]["expected_file_ids"][0]
+        runs = {
+            "embedding-v1": [[{"file_id": 999}, {"file_id": expected}]] + [[{"file_id": item["expected_file_ids"][0]}] for item in config["queries"][1:]],
+            "hybrid-v1": [[{"file_id": item["expected_file_ids"][0]}] for item in config["queries"]],
+        }
+        report = evaluate_results(config, runs)
+        self.assertEqual(1.0, report["rankings"]["hybrid-v1"]["hit_at_1"])
+        self.assertLess(report["rankings"]["embedding-v1"]["mean_reciprocal_rank"], 1.0)
 
 
 if __name__ == "__main__":
