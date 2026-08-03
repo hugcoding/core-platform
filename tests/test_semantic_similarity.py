@@ -93,7 +93,9 @@ class SemanticSimilarityTests(unittest.TestCase):
     def test_evaluation_config_and_metrics(self):
         root = Path(__file__).resolve().parents[1]
         config = load_evaluation(root / "project/pilots/scrum-59-retrieval-evaluation-v1.json")
-        self.assertEqual(5, len(config["queries"]))
+        self.assertEqual(15, len(config["queries"]))
+        self.assertTrue(any(item["id"].startswith("semantic-") for item in config["queries"]))
+        self.assertTrue(any(item["id"].startswith("hard-negative-") for item in config["queries"]))
         expected = config["queries"][0]["expected_file_ids"][0]
         runs = {
             "embedding-v1": [[{"file_id": 999}, {"file_id": expected}]] + [[{"file_id": item["expected_file_ids"][0]}] for item in config["queries"][1:]],

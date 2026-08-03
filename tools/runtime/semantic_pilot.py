@@ -36,7 +36,7 @@ ORDER BY f.path, f.id;
 """
 REVIEW_FIELDS = [
     "file_id", "content_group_id", "path", "extension", "size_bytes",
-    "modified_at_fs", "pilot_category", "selection_status", "selection_reason",
+    "modified_at_fs", "pilot_category", "pilot_size_bucket", "selection_status", "selection_reason",
 ]
 
 
@@ -93,6 +93,8 @@ def main(argv: list[str] | None = None) -> int:
     write_dict_rows(review_path, ({field: row.get(field, "") for field in REVIEW_FIELDS} for row in [*selected, *excluded]), REVIEW_FIELDS)
     reasons = Counter(row["selection_reason"] for row in excluded)
     categories = Counter(row["pilot_category"] for row in selected)
+    extensions = Counter(str(row["extension"]).lower().lstrip(".") for row in selected)
+    sizes = Counter(row["pilot_size_bucket"] for row in selected)
     report = [
         "# SCRUM-59 OneDrive golden semantic pilot", "",
         f"- Generated: `{generated_at.isoformat()}`", f"- Source: `{source}`",
@@ -100,7 +102,11 @@ def main(argv: list[str] | None = None) -> int:
         f"- Pilot limit: **{args.limit}**", "- Mode: **read-only, local-only dry-run**",
         "- Embeddings: **disabled**", "- External AI: **disabled**", "- Database writes: **disabled**", "",
         "## Selected categories", "",
-        *[f"- `{category}`: **{categories.get(category, 0)}**" for category in ("study", "work", "administration", "general")], "",
+        *[f"- `{category}`: **{categories.get(category, 0)}**" for category in ("study", "work", "project", "administration", "general")], "",
+        "## Selected formats", "",
+        *[f"- `{extension}`: **{extensions.get(extension, 0)}**" for extension in ("pdf", "docx")], "",
+        "## Selected size buckets", "",
+        *[f"- `{bucket}`: **{sizes.get(bucket, 0)}**" for bucket in ("small", "medium", "large")], "",
         "## Exclusions", "",
         *[f"- `{reason}`: **{count}**" for reason, count in sorted(reasons.items())], "",
         "Mutation time only limits the recent pilot corpus; it never influences golden-record selection.",
