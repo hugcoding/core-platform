@@ -31,6 +31,7 @@ def main(argv: list[str] | None = None) -> int:
     image = os.getenv("SEMANTIC_BENCHMARK_IMAGE", "core-semantic-embedding-benchmark:local")
     command = [
         "docker", "run", "--rm", "--network", "none", "--read-only",
+        "--tmpfs", "/tmp:rw,noexec,nosuid,size=1g",
         "--volume", "/volume1:/volume1:ro",
         "--volume", f"{manifest}:/pilot/manifest.json:ro",
         "--volume", f"{ROOT / 'project/models'}:/models:ro",
@@ -38,7 +39,13 @@ def main(argv: list[str] | None = None) -> int:
         "--manifest", "/pilot/manifest.json", "--model-path", "/models/multilingual-e5-small",
         "--max-chunks", str(args.max_chunks), "--batch-size", str(args.batch_size),
     ]
-    completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=True)
+    completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
+    if completed.returncode:
+        if completed.stdout:
+            print(completed.stdout, file=sys.stderr, end="")
+        if completed.stderr:
+            print(completed.stderr, file=sys.stderr, end="")
+        return completed.returncode
     plan = json.loads(completed.stdout.strip().splitlines()[-1])
     export_dir = ROOT / "project/exports/semantic-pilot"
     export_dir.mkdir(parents=True, exist_ok=True)
