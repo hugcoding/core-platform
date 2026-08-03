@@ -69,6 +69,8 @@ class SemanticSimilarityTests(unittest.TestCase):
         self.assertIn("0.85 *", sql)
         self.assertIn("lexical_similarity", sql)
         self.assertIn("%sql%", sql)
+        self.assertIn("regexp_replace(v.golden_path", sql)
+        self.assertNotIn("lower(v.golden_filename || ' ' || v.golden_path)", sql)
         self.assertEqual(["sql", "cursus", "certificaat"], query_terms("SQL cursus en certificaat"))
 
     def test_search_bounds_and_vector_dimension_are_validated(self):

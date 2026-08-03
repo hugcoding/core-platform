@@ -94,8 +94,12 @@ def render_hybrid_query_similarity_sql(
     if not terms:
         return render_query_similarity_sql(vector, limit=limit, threshold=threshold)
     literal = _quoted(vector_literal(vector))
+    # Keep source/storage prefixes out of lexical scoring. The final three path
+    # segments retain the document neighbourhood (for example Studie/datacamp)
+    # without rewarding every OneDrive item for the shared /volume1/data prefix.
+    lexical_haystack = "lower(v.golden_filename || ' ' || regexp_replace(v.golden_path, '^.*/([^/]+/[^/]+/[^/]+)$', '\\1'))"
     matches = " + ".join(
-        f"CASE WHEN lower(v.golden_filename || ' ' || v.golden_path) LIKE {_quoted('%' + term + '%')} THEN 1.0 ELSE 0.0 END"
+        f"CASE WHEN {lexical_haystack} LIKE {_quoted('%' + term + '%')} THEN 1.0 ELSE 0.0 END"
         for term in terms
     )
     lexical = f"(({matches}) / {len(terms)}.0)"
