@@ -298,8 +298,10 @@ core semantic similarity query "golden records en documentbeheer" \
 ```
 
 De optionele hybride ranking combineert de embedding score voor 85% met een
-deterministische filename/path-termdekking voor 15%. Stopwoorden en termen korter
-dan drie tekens tellen niet mee. De output houdt `similarity`,
+deterministische filename/path-termdekking voor 15%. Alleen de filename en de
+laatste drie padsegmenten tellen mee; gedeelde opslag- en importprefixen zoals
+`/volume1/data/import/cloud/onedrive/current` worden uitgesloten. Stopwoorden en
+termen korter dan drie tekens tellen niet mee. De output houdt `similarity`,
 `lexical_similarity` en `ranking_score` afzonderlijk zichtbaar:
 
 ```sh
