@@ -103,7 +103,9 @@ class SemanticEmbeddingStorageTests(unittest.TestCase):
         runtime = (root / "tools/runtime/semantic_embedding_acc.py").read_text("utf-8")
         command = (root / "tools/runtime/core").read_text("utf-8")
         self.assertIn('"--network", "none"', runtime)
+        self.assertIn('"--tmpfs", "/tmp:rw,noexec,nosuid,size=1g"', runtime)
         self.assertIn('mode.add_argument("--apply"', runtime)
+        self.assertIn("completed.stderr", runtime)
         self.assertIn("embedding-acc)", command)
 
 
