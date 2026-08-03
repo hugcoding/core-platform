@@ -33,11 +33,13 @@ def load_evaluation(path: Path) -> dict[str, Any]:
 def evaluate_results(config: dict[str, Any], runs: dict[str, list[list[dict]]]) -> dict[str, Any]:
     output: dict[str, Any] = {"schema_version": SCHEMA_VERSION, "query_count": len(config["queries"]), "rankings": {}}
     for ranking, result_sets in runs.items():
+        if len(result_sets) != len(config["queries"]):
+            raise ValueError(f"result count for {ranking} does not match evaluation query count")
         details = []
         reciprocal_sum = 0.0
         hits = {1: 0, 3: 0, 10: 0}
         irrelevant_top3 = 0
-        for item, rows in zip(config["queries"], result_sets, strict=True):
+        for item, rows in zip(config["queries"], result_sets):
             ids = [int(row["file_id"]) for row in rows]
             ranks = [ids.index(file_id) + 1 for file_id in item["expected_file_ids"] if file_id in ids]
             best_rank = min(ranks) if ranks else None
