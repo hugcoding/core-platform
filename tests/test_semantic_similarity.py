@@ -101,6 +101,14 @@ class SemanticSimilarityTests(unittest.TestCase):
         self.assertEqual(1.0, report["rankings"]["hybrid-v1"]["hit_at_1"])
         self.assertLess(report["rankings"]["embedding-v1"]["mean_reciprocal_rank"], 1.0)
 
+    def test_nas_host_runtime_avoids_python_310_zip_strict(self):
+        root = Path(__file__).resolve().parents[1]
+        host_runtime = (root / "tools/runtime/semantic_retrieval_evaluate.py").read_text("utf-8")
+        evaluation = (root / "core/semantic/retrieval_evaluation.py").read_text("utf-8")
+        self.assertNotIn("strict=True", host_runtime)
+        self.assertNotIn("strict=True", evaluation)
+        self.assertIn("does not match evaluation query count", host_runtime)
+
 
 if __name__ == "__main__":
     unittest.main()

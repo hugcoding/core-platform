@@ -83,7 +83,10 @@ def build_embedding_plan(
     vectors = model.encode(
         passages, batch_size=batch_size, normalize_embeddings=True, show_progress_bar=False,
     )
-    for chunk, vector in zip(chunks, vectors.tolist(), strict=True):
+    vector_rows = vectors.tolist()
+    if len(vector_rows) != len(chunks):
+        raise ValueError("embedding count does not match prepared chunk count")
+    for chunk, vector in zip(chunks, vector_rows):
         chunk["embedding"] = vector
     return build_storage_plan(manifest_bytes, chunks, batch_size=batch_size, errors=errors)
 

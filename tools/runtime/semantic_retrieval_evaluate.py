@@ -26,8 +26,10 @@ def main(argv: list[str] | None = None) -> int:
     config = load_evaluation(config_path)
     queries = [item["query"] for item in config["queries"]]
     vectors = query_vectors(queries)
+    if len(vectors) != len(queries):
+        raise ValueError("query embedding count does not match evaluation query count")
     runs = {"embedding-v1": [], "hybrid-v1": []}
-    for query, vector in zip(queries, vectors, strict=True):
+    for query, vector in zip(queries, vectors):
         runs["embedding-v1"].append(psql(render_query_similarity_sql(vector, limit=10)))
         runs["hybrid-v1"].append(psql(render_hybrid_query_similarity_sql(vector, query, limit=10)))
     report = evaluate_results(config, runs)
