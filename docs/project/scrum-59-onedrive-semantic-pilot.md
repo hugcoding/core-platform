@@ -297,6 +297,16 @@ core semantic similarity query "golden records en documentbeheer" \
   --limit 10 --threshold 0.50
 ```
 
+De optionele hybride ranking combineert de embedding score voor 85% met een
+deterministische filename/path-termdekking voor 15%. Stopwoorden en termen korter
+dan drie tekens tellen niet mee. De output houdt `similarity`,
+`lexical_similarity` en `ranking_score` afzonderlijk zichtbaar:
+
+```sh
+core semantic similarity query "Python programmeren en data science" \
+  --ranking hybrid --limit 10 --threshold 0.40
+```
+
 Een bestaand golden document kan eveneens als bron worden gebruikt. CORE neemt
 dan per kandidaat de beste cosine-overeenkomst tussen bron- en doelchunks:
 
@@ -310,6 +320,31 @@ runlineage, matched chunk en een cosine similarity. Die similarity is alleen een
 rangschikkingssignaal. Het is geen classificatieconfidence, duplicatebesluit,
 golden-recordbesluit of toestemming voor cleanup. Met slechts 32 pilotchunks is
 de recall bovendien bewust beperkt tot de huidige ACC-pilotset.
+
+### Versieerbare retrieval-evaluatie
+
+`project/pilots/scrum-59-retrieval-evaluation-v1.json` bevat vijf handmatig te
+reviewen zoekvragen met verwachte en expliciet irrelevante file-ID's uit de
+huidige pilot. De configuratie is testdata: zij traint het model niet en verandert
+geen databasegegevens.
+
+```sh
+core semantic retrieval-evaluate \
+  project/pilots/scrum-59-retrieval-evaluation-v1.json
+```
+
+Het model wordt eenmaal geladen en alle queryvectoren worden lokaal in één batch
+gemaakt. Daarna vergelijkt de evaluator `embedding-v1` en `hybrid-v1` met:
+
+- Hit@1, Hit@3 en Hit@10;
+- mean reciprocal rank (MRR);
+- expliciet irrelevante documenten in de top 3;
+- de rang van het eerste verwachte document per zoekvraag.
+
+JSON- en Markdownrapporten komen onder `project/exports/semantic-pilot/`. De
+queries of meetresultaten worden niet in PostgreSQL geschreven. Bij uitbreiding
+van de corpusset moeten verwachte file-ID's handmatig worden gereviewd; metrics
+op een verkeerd labelbestand geven slechts schijnkwaliteit.
 
 ## Plaats in de CORE-flow
 
