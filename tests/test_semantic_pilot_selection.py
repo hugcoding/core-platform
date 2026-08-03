@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from core.semantic.pilot_selection import (
     build_manifest, parse_timestamp, pilot_category, select_candidates, sensitivity_reason,
+    size_bucket,
 )
 
 
@@ -90,8 +91,14 @@ class SemanticPilotSelectionTests(unittest.TestCase):
     def test_category_detection_is_path_based(self):
         self.assertEqual("study", pilot_category("/volume1/Documenten/Studie/les.pdf"))
         self.assertEqual("work", pilot_category("/volume1/Documenten/Werk/plan.pdf"))
+        self.assertEqual("project", pilot_category("/volume1/Documenten/Projecten/plan.pdf"))
         self.assertEqual("administration", pilot_category("/volume1/Documenten/Administratie/brief.pdf"))
         self.assertEqual("general", pilot_category("/volume1/Documenten/notitie.pdf"))
+
+    def test_size_buckets_are_explicit(self):
+        self.assertEqual("small", size_bucket(255 * 1024))
+        self.assertEqual("medium", size_bucket(256 * 1024))
+        self.assertEqual("large", size_bucket(2 * 1024 * 1024))
 
     def test_selection_round_robins_across_available_categories(self):
         rows = [
@@ -129,6 +136,8 @@ class SemanticPilotSelectionTests(unittest.TestCase):
         self.assertFalse(manifest["database_writes_enabled"])
         self.assertEqual("approved", manifest["files"][0]["approval"])
         self.assertNotIn("text", manifest["files"][0])
+        self.assertEqual("onedrive-golden-representative-v2", manifest["selection_version"])
+        self.assertEqual("small", manifest["files"][0]["pilot_size_bucket"])
 
 
 if __name__ == "__main__":

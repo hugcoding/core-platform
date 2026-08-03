@@ -20,6 +20,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Plan or persist local E5 embeddings in ACC.")
     parser.add_argument("manifest")
     parser.add_argument("--max-chunks", type=int, default=32)
+    parser.add_argument("--max-chunks-per-document", type=int, default=3)
+    parser.add_argument("--max-documents", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=4)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--dry-run", action="store_true")
@@ -38,6 +40,8 @@ def main(argv: list[str] | None = None) -> int:
         image, "python", "-m", "core.semantic.embedding_persist",
         "--manifest", "/pilot/manifest.json", "--model-path", "/models/multilingual-e5-small",
         "--max-chunks", str(args.max_chunks), "--batch-size", str(args.batch_size),
+        "--max-chunks-per-document", str(args.max_chunks_per_document),
+        "--max-documents", str(args.max_documents),
     ]
     completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
     if completed.returncode:
@@ -68,6 +72,7 @@ def main(argv: list[str] | None = None) -> int:
         "chunks": plan["chunk_count"],
         "errors": plan["error_count"],
         "batch_size": plan["batch_size"],
+        "max_chunks_per_document": args.max_chunks_per_document,
         "model_id": plan["model_id"],
         "vectors_stored": bool(args.apply),
         "raw_text_stored": False,

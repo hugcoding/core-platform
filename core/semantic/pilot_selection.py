@@ -19,7 +19,8 @@ SENSITIVE_PHRASES = {
     "employment": {"employer s certificate", "curriculum vitae", "werkplan ww"},
     "personal": {"gezamenlijke documenten inkomen", "ticketorder"},
 }
-CATEGORY_ORDER = ("study", "work", "administration", "general")
+CATEGORY_ORDER = ("study", "work", "project", "administration", "general")
+SIZE_BUCKET_ORDER = ("small", "medium", "large")
 
 
 def parse_timestamp(value: str) -> datetime:
@@ -55,11 +56,21 @@ def pilot_category(path: str) -> str:
     searchable = "/".join(parts)
     if parts.intersection({"studie", "opleiding", "training"}) or "datacamp" in parts:
         return "study"
-    if parts.intersection({"werk", "projecten", "projects"}) or "project" in searchable:
+    if parts.intersection({"projecten", "projects"}) or "project" in searchable:
+        return "project"
+    if "werk" in parts:
         return "work"
     if parts.intersection({"administratie", "administration", "vve"}):
         return "administration"
     return "general"
+
+
+def size_bucket(size_bytes: int) -> str:
+    if size_bytes < 256 * 1024:
+        return "small"
+    if size_bytes < 2 * 1024 * 1024:
+        return "medium"
+    return "large"
 
 
 def select_candidates(
@@ -104,21 +115,34 @@ def select_candidates(
             excluded.append({**row, "pilot_category": category, "selection_status": "excluded", "selection_reason": reason})
             continue
         seen_groups.add(group_id)
-        eligible.append({**row, "pilot_category": category})
+        eligible.append({
+            **row,
+            "pilot_category": category,
+            "pilot_size_bucket": size_bucket(int(row["size_bytes"])),
+        })
 
-    buckets = {
-        category: [row for row in eligible if row["pilot_category"] == category]
+    bucket_keys = [
+        (category, extension, bucket)
         for category in CATEGORY_ORDER
+        for extension in sorted(SUPPORTED_EXTENSIONS)
+        for bucket in SIZE_BUCKET_ORDER
+    ]
+    buckets = {
+        key: [
+            row for row in eligible
+            if (row["pilot_category"], str(row["extension"]).lower().lstrip("."), row["pilot_size_bucket"]) == key
+        ]
+        for key in bucket_keys
     }
     selected: list[dict[str, Any]] = []
     while len(selected) < limit and any(buckets.values()):
-        for category in CATEGORY_ORDER:
-            if buckets[category] and len(selected) < limit:
-                selected.append({**buckets[category].pop(0), "selection_status": "selected", "selection_reason": "recent_onedrive_golden"})
-    for category in CATEGORY_ORDER:
+        for key in bucket_keys:
+            if buckets[key] and len(selected) < limit:
+                selected.append({**buckets[key].pop(0), "selection_status": "selected", "selection_reason": "representative_recent_onedrive_golden"})
+    for key in bucket_keys:
         excluded.extend(
             {**row, "selection_status": "excluded", "selection_reason": "pilot_limit"}
-            for row in buckets[category]
+            for row in buckets[key]
         )
     return selected, excluded
 
@@ -127,8 +151,8 @@ def build_manifest(
     selected: list[dict[str, Any]], *, source: str, cutoff: datetime, generated_at: datetime
 ) -> dict[str, Any]:
     return {
-        "schema_version": "semantic-pilot-manifest-v2",
-        "selection_version": "onedrive-golden-v1",
+        "schema_version": "semantic-pilot-manifest-v3",
+        "selection_version": "onedrive-golden-representative-v2",
         "generated_at": generated_at.astimezone(timezone.utc).isoformat(),
         "source": source,
         "cutoff": cutoff.astimezone(timezone.utc).isoformat(),
@@ -146,7 +170,8 @@ def build_manifest(
                 "path": str(row["path"]),
                 "approval": "approved",
                 "pilot_category": str(row["pilot_category"]),
-                "selection_reason": "recent_onedrive_golden",
+                "pilot_size_bucket": str(row["pilot_size_bucket"]),
+                "selection_reason": "representative_recent_onedrive_golden",
             }
             for row in selected
         ],

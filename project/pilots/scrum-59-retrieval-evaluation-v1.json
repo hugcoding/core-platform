@@ -31,6 +31,66 @@
       "query": "Salaris payroll jaaropgaaf 2025",
       "expected_file_ids": [3361839, 3361862],
       "irrelevant_file_ids": [3362201, 3362204]
+    },
+    {
+      "id": "semantic-afvoerprobleem",
+      "query": "document over problemen met afvoer en leiding",
+      "expected_file_ids": [3361765, 3361766],
+      "irrelevant_file_ids": [3362201, 3362203]
+    },
+    {
+      "id": "semantic-bewonersregels",
+      "query": "regels en afspraken voor bewoners van een appartementencomplex",
+      "expected_file_ids": [3361767],
+      "irrelevant_file_ids": [3361839, 3361862]
+    },
+    {
+      "id": "semantic-databasebewijs",
+      "query": "bewijs dat een opleiding over relationele databases is afgerond",
+      "expected_file_ids": [3362201, 3362204],
+      "irrelevant_file_ids": [3361765, 3361766]
+    },
+    {
+      "id": "semantic-sollicitatie",
+      "query": "brief waarin iemand uitlegt waarom hij geschikt is voor een baan",
+      "expected_file_ids": [3362354],
+      "irrelevant_file_ids": [3361765, 3361767]
+    },
+    {
+      "id": "semantic-inkomensbewijs",
+      "query": "document met inkomsten over een volledig kalenderjaar",
+      "expected_file_ids": [3361839],
+      "irrelevant_file_ids": [3362202, 3362203]
+    },
+    {
+      "id": "hard-negative-cloud",
+      "query": "cloud infrastructuur opleiding",
+      "expected_file_ids": [3362202],
+      "irrelevant_file_ids": [3362203, 3362201, 3362204]
+    },
+    {
+      "id": "hard-negative-data-pipeline",
+      "query": "gegevensstromen ETL en data pipelines",
+      "expected_file_ids": [3362203],
+      "irrelevant_file_ids": [3362201, 3362204, 3362202]
+    },
+    {
+      "id": "hard-negative-vve-communicatie",
+      "query": "communicatie met mede-eigenaren van de VvE",
+      "expected_file_ids": [3361769],
+      "irrelevant_file_ids": [3361765, 3361766, 3361767]
+    },
+    {
+      "id": "hard-negative-payroll",
+      "query": "maandelijkse salarisverwerking van werkgever",
+      "expected_file_ids": [3361862],
+      "irrelevant_file_ids": [3361839, 3362354]
+    },
+    {
+      "id": "hard-negative-sql-level",
+      "query": "gevorderde SQL training",
+      "expected_file_ids": [3362204],
+      "irrelevant_file_ids": [3362201, 3362202, 3362203]
     }
   ]
 }

@@ -348,6 +348,53 @@ queries of meetresultaten worden niet in PostgreSQL geschreven. Bij uitbreiding
 van de corpusset moeten verwachte file-ID's handmatig worden gereviewd; metrics
 op een verkeerd labelbestand geven slechts schijnkwaliteit.
 
+## Representatieve pilot van maximaal 100 documenten
+
+De tweede pilotselectie gebruikt `onedrive-golden-representative-v2`. Zij blijft
+read-only en selecteert maximaal 100 recente, actuele OneDrive golden records.
+De deterministische round-robin verdeelt kandidaten over:
+
+- `study`, `work`, `project`, `administration` en `general`;
+- PDF en DOCX;
+- `small` (< 256 KiB), `medium` (< 2 MiB) en `large`.
+
+De bestaande eisen voor recency, volledige SHA-256, persisted golden status,
+ondersteund formaat en conservatieve gevoeligheidsuitsluiting blijven gelden.
+Mutatiedatum begrenst alleen het pilotcorpus en bepaalt nooit het golden record.
+
+Reviewmoment 1 genereert alleen manifest, rapport en CSV:
+
+```sh
+core semantic representative-pilot \
+  --cutoff 2024-08-03T00:00:00+02:00 \
+  --limit 100 \
+  --dry-run
+```
+
+Na inhoudelijke goedkeuring wordt eerst semantic metadata toegepast. De lokale
+embeddingstap gebruikt vervolgens maximaal drie tokenchunks per document. Bij
+lange documenten worden begin, midden en einde gelijkmatig gekozen. De globale
+hard limit blijft expliciet 300:
+
+```sh
+core semantic embedding-acc MANIFEST_JSON \
+  --max-documents 100 \
+  --max-chunks-per-document 3 \
+  --max-chunks 300 \
+  --batch-size 4 \
+  --dry-run
+```
+
+Een manifest met meer dan 100 goedgekeurde documenten of een resultaat boven de
+300 chunks wordt geweigerd in plaats van stil afgekapt. Extractiefouten blijven
+zichtbaar als fouttelling; veiligheidslimieten worden niet als extractiefout
+weggeschreven.
+
+De retrieval-evaluatieset bevat vanaf deze pilot 15 vragen: vijf bestaande
+baselinevragen, vijf semantische parafrases zonder directe filenametermen en vijf
+hard-negativevragen. De verwachte file-ID's zijn testlabels en moeten bij iedere
+corpusuitbreiding handmatig worden gecontroleerd.
+
 ## Plaats in de CORE-flow
 
 ```text

@@ -108,6 +108,31 @@ class SemanticEmbeddingStorageTests(unittest.TestCase):
         self.assertIn("completed.stderr", runtime)
         self.assertIn("embedding-acc)", command)
 
+    def test_representative_chunks_are_evenly_spread_and_bounded_per_document(self):
+        manifest = json.loads(self.manifest())
+        chunks, errors = collect_embedding_chunks(
+            manifest, tokenizer=FakeModel.tokenizer, max_chunks=3,
+            max_chunks_per_document=3, max_documents=1,
+            extractor=lambda path: (" ".join(f"w{i}" for i in range(2000)), 10),
+        )
+        self.assertEqual(0, errors)
+        self.assertEqual([0, 3, 6], [chunk["ordinal"] for chunk in chunks])
+
+    def test_manifest_document_and_chunk_hard_limits_are_enforced(self):
+        manifest = json.loads(self.manifest())
+        manifest["files"].append({**manifest["files"][0], "file_id": 8})
+        with self.assertRaisesRegex(ValueError, "exceed max_documents=1"):
+            collect_embedding_chunks(
+                manifest, tokenizer=FakeModel.tokenizer, max_chunks=3,
+                max_documents=1, extractor=lambda path: ("one", 1),
+            )
+        with self.assertRaisesRegex(ValueError, "exceed max_chunks=1"):
+            collect_embedding_chunks(
+                json.loads(self.manifest()), tokenizer=FakeModel.tokenizer,
+                max_chunks=1, max_chunks_per_document=3,
+                extractor=lambda path: (" ".join(f"w{i}" for i in range(1000)), 1),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
