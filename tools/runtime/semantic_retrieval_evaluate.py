@@ -46,10 +46,14 @@ def main(argv: list[str] | None = None) -> int:
     markdown_path = export_dir / f"semantic-retrieval-evaluation-{stamp}.md"
     json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     markdown_path.write_text(render_markdown(report), encoding="utf-8")
+    summaries = {
+        name: {key: value for key, value in metrics.items() if key != "queries"}
+        for name, metrics in report["rankings"].items()
+    }
     print(json.dumps({
         "status": "completed", "read_only": True,
-        "embedding": report["rankings"]["embedding-v1"],
-        "hybrid": report["rankings"]["hybrid-v1"],
+        "embedding": summaries["embedding-v1"],
+        "hybrid": summaries["hybrid-v1"],
         "json_report": str(json_path.relative_to(ROOT)),
         "markdown_report": str(markdown_path.relative_to(ROOT)),
     }, ensure_ascii=False, indent=2))

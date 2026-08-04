@@ -348,6 +348,38 @@ queries of meetresultaten worden niet in PostgreSQL geschreven. Bij uitbreiding
 van de corpusset moeten verwachte file-ID's handmatig worden gereviewd; metrics
 op een verkeerd labelbestand geven slechts schijnkwaliteit.
 
+### Retrieval-evaluatie v2: families en graded relevance
+
+De v1-config blijft ondersteund voor reproduceerbaarheid. Nieuwe reviews gebruiken
+`project/pilots/scrum-59-retrieval-evaluation-v2.json`. Deze configuratie kan
+file-ID's groeperen tot herbruikbare documentfamilies, zoals alle beoordeelde
+payrolldocumenten of SQL-trainingen. Een testvraag hoeft daardoor niet langer
+één willekeurige maand of documentversie als enige juiste uitkomst te behandelen.
+
+Per vraag worden vier expliciete judgments gebruikt:
+
+- `relevant`: direct bruikbaar antwoord (gain 2);
+- `related`: inhoudelijk bruikbare context (gain 1);
+- `hard_negative`: lijkt door termen of context passend, maar is inhoudelijk fout;
+- `irrelevant`: handmatig beoordeeld als niet bruikbaar.
+
+Resultaten zonder judgment blijven `unjudged`; ze worden niet stil als handmatig
+irrelevant gepresenteerd. De evaluator rapporteert naast Hit@k en MRR ook
+NDCG@10. Deze metriek beloont relevante documenten boven related documenten en
+weegt hoge posities zwaarder. Hard negatives en expliciet irrelevante treffers
+in de top 3 blijven afzonderlijk zichtbaar.
+
+```sh
+core semantic retrieval-evaluate \
+  project/pilots/scrum-59-retrieval-evaluation-v2.json
+```
+
+Het Markdownrapport bevat voor iedere ranking en zoekvraag een top-10-review met
+rang, judgment, file-ID, bestandsnaam, pad en score. Zo kan de evaluatieset eerst
+inhoudelijk worden gecorrigeerd voordat model, chunking of hybride gewichten
+worden bijgesteld. Ook v2 is volledig read-only: er worden geen queries,
+judgments of resultaten naar PostgreSQL geschreven.
+
 ## Representatieve pilot van maximaal 100 documenten
 
 De tweede pilotselectie gebruikt `onedrive-golden-representative-v2`. Zij blijft
