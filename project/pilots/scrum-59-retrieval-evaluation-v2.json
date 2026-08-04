@@ -1,0 +1,28 @@
+{
+  "schema_version": "semantic-retrieval-evaluation-v2",
+  "description": "Initial ACC review set with graded relevance and reusable document families; judgments require top-10 review before tuning.",
+  "document_families": [
+    {"id": "vve-riool", "file_ids": [3361765, 3361766]},
+    {"id": "sql-training", "file_ids": [3362201, 3362204]},
+    {"id": "payroll", "file_ids": [3361862]},
+    {"id": "annual-income", "file_ids": [3361839]},
+    {"id": "data-engineering-training", "file_ids": [3362203]}
+  ],
+  "queries": [
+    {"id": "vve-riolering", "query": "VvE memo riolering", "relevant_families": ["vve-riool"], "related_file_ids": [3361767], "irrelevant_families": ["sql-training"]},
+    {"id": "vve-reglement", "query": "VvE afsprakenreglement Eksterlaan", "relevant_file_ids": [3361767], "related_families": ["vve-riool"], "irrelevant_families": ["payroll", "annual-income"]},
+    {"id": "data-engineering", "query": "Data engineering cursus certificaat", "relevant_families": ["data-engineering-training"], "related_families": ["sql-training"], "irrelevant_families": ["vve-riool"]},
+    {"id": "sql-cursus", "query": "SQL cursus certificaat", "relevant_families": ["sql-training"], "related_families": ["data-engineering-training"], "irrelevant_families": ["vve-riool"]},
+    {"id": "salaris-jaaropgaaf", "query": "Salaris payroll jaaropgaaf 2025", "relevant_families": ["payroll", "annual-income"], "hard_negative_file_ids": [3362354], "irrelevant_families": ["sql-training"]},
+    {"id": "semantic-afvoerprobleem", "query": "document over problemen met afvoer en leiding", "relevant_families": ["vve-riool"], "related_file_ids": [3361767], "irrelevant_families": ["data-engineering-training"]},
+    {"id": "semantic-bewonersregels", "query": "regels en afspraken voor bewoners van een appartementencomplex", "relevant_file_ids": [3361767], "related_families": ["vve-riool"], "irrelevant_families": ["payroll", "annual-income"]},
+    {"id": "semantic-databasebewijs", "query": "bewijs dat een opleiding over relationele databases is afgerond", "relevant_families": ["sql-training"], "related_families": ["data-engineering-training"], "irrelevant_families": ["vve-riool"]},
+    {"id": "semantic-sollicitatie", "query": "brief waarin iemand uitlegt waarom hij geschikt is voor een baan", "relevant_file_ids": [3362354], "hard_negative_families": ["payroll"], "irrelevant_file_ids": [3361765, 3361767]},
+    {"id": "semantic-inkomensbewijs", "query": "document met inkomsten over een volledig kalenderjaar", "relevant_families": ["annual-income"], "related_families": ["payroll"], "irrelevant_file_ids": [3362202, 3362203]},
+    {"id": "hard-negative-cloud", "query": "cloud infrastructuur opleiding", "relevant_file_ids": [3362202], "related_families": ["data-engineering-training"], "hard_negative_families": ["sql-training"]},
+    {"id": "hard-negative-data-pipeline", "query": "gegevensstromen ETL en data pipelines", "relevant_families": ["data-engineering-training"], "related_file_ids": [3362202], "hard_negative_families": ["sql-training"]},
+    {"id": "hard-negative-vve-communicatie", "query": "communicatie met mede-eigenaren van de VvE", "relevant_file_ids": [3361769], "related_file_ids": [3361767], "hard_negative_families": ["vve-riool"]},
+    {"id": "hard-negative-payroll", "query": "maandelijkse salarisverwerking van werkgever", "relevant_families": ["payroll"], "related_families": ["annual-income"], "hard_negative_file_ids": [3362354]},
+    {"id": "hard-negative-sql-level", "query": "gevorderde SQL training", "relevant_file_ids": [3362204], "related_file_ids": [3362201], "hard_negative_file_ids": [3362202, 3362203]}
+  ]
+}
