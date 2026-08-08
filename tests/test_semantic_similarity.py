@@ -7,7 +7,7 @@ from core.semantic.similarity import (
     query_terms, render_document_similarity_sql, render_hybrid_query_similarity_sql,
     render_query_similarity_sql, vector_literal,
 )
-from core.semantic.retrieval_evaluation import evaluate_results, load_evaluation
+from core.semantic.retrieval_evaluation import evaluate_results, load_evaluation, render_markdown, review_rows
 
 
 class FakeVectors(list):
@@ -104,6 +104,53 @@ class SemanticSimilarityTests(unittest.TestCase):
         report = evaluate_results(config, runs)
         self.assertEqual(1.0, report["rankings"]["hybrid-v1"]["hit_at_1"])
         self.assertLess(report["rankings"]["embedding-v1"]["mean_reciprocal_rank"], 1.0)
+
+    def test_v2_expands_document_families_and_calculates_graded_ndcg(self):
+        root = Path(__file__).resolve().parents[1]
+        config = load_evaluation(root / "project/pilots/scrum-59-retrieval-evaluation-v2.json")
+        self.assertEqual("semantic-retrieval-evaluation-v2", config["schema_version"])
+        self.assertEqual(5, config["document_family_count"])
+        self.assertEqual([3361765, 3361766], config["queries"][0]["judgments"]["relevant"])
+        query = config["queries"][0]
+        rows = [
+            {"file_id": 3361767, "filename": "rules.pdf", "path": "/vve/rules.pdf", "ranking_score": 0.8},
+            {"file_id": 3361765, "filename": "riool.pdf", "path": "/vve/riool.pdf", "ranking_score": 0.7},
+            {"file_id": 999, "filename": "unknown.pdf", "path": "/unknown.pdf", "ranking_score": 0.6},
+        ]
+        report = evaluate_results({
+            "schema_version": config["schema_version"],
+            "document_family_count": config["document_family_count"],
+            "queries": [query],
+        }, {"hybrid-v1": [rows]})
+        metrics = report["rankings"]["hybrid-v1"]
+        self.assertEqual(2, metrics["queries"][0]["best_relevant_rank"])
+        self.assertGreater(metrics["ndcg_at_10"], 0.0)
+        self.assertLess(metrics["ndcg_at_10"], 1.0)
+        review = metrics["queries"][0]["top_10_review"]
+        self.assertEqual(["related", "relevant", "unjudged"], [row["judgment"] for row in review])
+        markdown = render_markdown(report)
+        self.assertIn("NDCG@10", markdown)
+        self.assertIn("riool.pdf", markdown)
+        self.assertIn("/vve/riool.pdf", markdown)
+        rows = review_rows(report)
+        self.assertEqual(3, len(rows))
+        self.assertEqual("related", rows[0]["review_judgment"])
+        self.assertEqual("", rows[2]["review_judgment"])
+        self.assertIn("document_family", rows[0])
+        self.assertIn("reviewer_notes", rows[0])
+
+    def test_v2_rejects_conflicting_or_unknown_family_judgments(self):
+        import tempfile
+        for query in (
+            {"id": "q", "query": "test", "relevant_families": ["missing"]},
+            {"id": "q", "query": "test", "relevant_file_ids": [1], "related_file_ids": [1]},
+        ):
+            config = {"schema_version": "semantic-retrieval-evaluation-v2", "queries": [query]}
+            with tempfile.TemporaryDirectory() as temp_dir:
+                path = Path(temp_dir) / "evaluation.json"
+                path.write_text(json.dumps(config), encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    load_evaluation(path)
 
     def test_nas_host_runtime_avoids_python_310_zip_strict(self):
         root = Path(__file__).resolve().parents[1]

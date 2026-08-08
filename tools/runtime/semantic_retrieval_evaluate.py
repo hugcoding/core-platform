@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sys
 from datetime import datetime
@@ -11,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.semantic.retrieval_evaluation import evaluate_results, load_evaluation, render_markdown
+from core.semantic.retrieval_evaluation import REVIEW_FIELDS, evaluate_results, load_evaluation, render_markdown, review_rows
 from core.semantic.similarity import render_hybrid_query_similarity_sql, render_query_similarity_sql
 from tools.runtime.semantic_similarity import psql, query_vectors
 
@@ -44,14 +45,25 @@ def main(argv: list[str] | None = None) -> int:
     stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
     json_path = export_dir / f"semantic-retrieval-evaluation-{stamp}.json"
     markdown_path = export_dir / f"semantic-retrieval-evaluation-{stamp}.md"
+    review_path = export_dir / f"semantic-retrieval-evaluation-review-{stamp}.csv"
     json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     markdown_path.write_text(render_markdown(report), encoding="utf-8")
+    rows = review_rows(report)
+    with review_path.open("w", newline="", encoding="utf-8-sig") as handle:
+        writer = csv.DictWriter(handle, fieldnames=REVIEW_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+    summaries = {
+        name: {key: value for key, value in metrics.items() if key != "queries"}
+        for name, metrics in report["rankings"].items()
+    }
     print(json.dumps({
         "status": "completed", "read_only": True,
-        "embedding": report["rankings"]["embedding-v1"],
-        "hybrid": report["rankings"]["hybrid-v1"],
+        "embedding": summaries["embedding-v1"],
+        "hybrid": summaries["hybrid-v1"],
         "json_report": str(json_path.relative_to(ROOT)),
         "markdown_report": str(markdown_path.relative_to(ROOT)),
+        "review_csv": str(review_path.relative_to(ROOT)),
     }, ensure_ascii=False, indent=2))
     return 0
 
