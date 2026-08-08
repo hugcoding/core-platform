@@ -371,8 +371,14 @@ in de top 3 blijven afzonderlijk zichtbaar.
 
 ```sh
 core semantic retrieval-evaluate \
-  project/pilots/scrum-59-retrieval-evaluation-v2.json
+  project/pilots/scrum-59-retrieval-evaluation-v2.json \
+  --review-csv project/exports/semantic-pilot/semantic-retrieval-top3-review-compact-20260808.csv
 ```
+
+Met een compacte review rapporteert CORE NDCG@3 en menselijke reviewdekking
+voor de top 3. NDCG@10 blijft expliciet voorlopig zolang posities 4–10 niet
+volledig zijn beoordeeld. Dit voorkomt dat onbeoordeelde resultaten stil als
+irrelevant worden beschouwd bij het go/no-go voor de lokale LLM/RAG-pilot.
 
 Naast JSON en Markdown ontstaat een Excel-vriendelijke UTF-8-CSV met voor iedere
 ranking en zoekvraag de top 10. Beoordeel daarin vooral regels met een lege

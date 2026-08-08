@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.semantic.retrieval_evaluation import REVIEW_FIELDS, evaluate_results, load_evaluation, render_markdown, review_rows
+from core.semantic.retrieval_evaluation import REVIEW_FIELDS, apply_review_csv, evaluate_results, load_evaluation, render_markdown, review_rows
 from core.semantic.similarity import render_hybrid_query_similarity_sql, render_query_similarity_sql
 from tools.runtime.semantic_similarity import psql, query_vectors
 
@@ -20,11 +20,17 @@ from tools.runtime.semantic_similarity import psql, query_vectors
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Evaluate read-only semantic rankings in ACC.")
     parser.add_argument("config")
+    parser.add_argument("--review-csv", help="Apply reviewed query/file judgments from a compact semicolon CSV.")
     args = parser.parse_args(argv)
     config_path = Path(args.config).resolve()
     if not config_path.is_file():
         parser.error(f"evaluation config not found: {config_path}")
     config = load_evaluation(config_path)
+    if args.review_csv:
+        review_path = Path(args.review_csv).resolve()
+        if not review_path.is_file():
+            parser.error(f"review CSV not found: {review_path}")
+        apply_review_csv(config, review_path)
     queries = [item["query"] for item in config["queries"]]
     vectors = query_vectors(queries)
     if len(vectors) != len(queries):
