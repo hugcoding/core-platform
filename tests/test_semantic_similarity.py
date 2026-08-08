@@ -7,7 +7,7 @@ from core.semantic.similarity import (
     query_terms, render_document_similarity_sql, render_hybrid_query_similarity_sql,
     render_query_similarity_sql, vector_literal,
 )
-from core.semantic.retrieval_evaluation import evaluate_results, load_evaluation, render_markdown, review_rows
+from core.semantic.retrieval_evaluation import apply_review_csv, evaluate_results, load_evaluation, render_markdown, review_rows
 
 
 class FakeVectors(list):
@@ -151,6 +151,28 @@ class SemanticSimilarityTests(unittest.TestCase):
                 path.write_text(json.dumps(config), encoding="utf-8")
                 with self.assertRaises(ValueError):
                     load_evaluation(path)
+
+    def test_compact_review_overrides_judgment_and_reports_top3_coverage(self):
+        import tempfile
+        root = Path(__file__).resolve().parents[1]
+        config = load_evaluation(root / "project/pilots/scrum-59-retrieval-evaluation-v2.json")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            review = Path(temp_dir) / "review.csv"
+            review.write_text(
+                "query_id;file_id;review_judgment\n"
+                "vve-riolering;999;hard_negative\n",
+                encoding="utf-8",
+            )
+            apply_review_csv(config, review)
+        query = config["queries"][0]
+        report = evaluate_results(
+            {"schema_version": config["schema_version"], "queries": [query]},
+            {"hybrid-v1": [[{"file_id": 999}, {"file_id": 3361765}]]},
+        )
+        metrics = report["rankings"]["hybrid-v1"]
+        self.assertEqual(1, metrics["hard_negative_in_top_3"])
+        self.assertEqual(0.5, metrics["human_review_coverage_at_3"])
+        self.assertIn("NDCG@3", render_markdown(report))
 
     def test_nas_host_runtime_avoids_python_310_zip_strict(self):
         root = Path(__file__).resolve().parents[1]

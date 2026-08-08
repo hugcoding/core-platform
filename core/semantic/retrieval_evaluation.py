@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import csv
 from pathlib import Path
 from typing import Any
 
@@ -123,13 +124,40 @@ def load_evaluation(path: Path) -> dict[str, Any]:
     return config
 
 
+def apply_review_csv(config: dict[str, Any], path: Path) -> dict[str, Any]:
+    queries = {item["id"]: item for item in config["queries"]}
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        rows = list(csv.DictReader(handle, delimiter=";"))
+    if not rows:
+        raise ValueError("review CSV must contain review rows")
+    applied = 0
+    for row in rows:
+        query_id = str(row.get("query_id", "")).strip()
+        judgment = str(row.get("review_judgment", "")).strip()
+        if query_id not in queries:
+            raise ValueError(f"unknown review query: {query_id}")
+        if judgment not in RELEVANCE_GRADES:
+            raise ValueError(f"invalid review judgment: {judgment or '<empty>'}")
+        file_id = int(row["file_id"])
+        item = queries[query_id]
+        for values in item["judgments"].values():
+            if file_id in values:
+                values.remove(file_id)
+        item["judgments"][judgment].append(file_id)
+        item.setdefault("human_reviewed_file_ids", []).append(file_id)
+        applied += 1
+    config["review_csv"] = str(path)
+    config["reviewed_judgment_count"] = applied
+    return config
+
+
 def _dcg(grades: list[int]) -> float:
     return sum((2 ** grade - 1) / math.log2(rank + 1) for rank, grade in enumerate(grades, start=1))
 
 
-def _ndcg_at_10(rows: list[dict], judgment_by_id: dict[int, str]) -> float:
-    actual = [RELEVANCE_GRADES.get(judgment_by_id.get(int(row["file_id"]), "irrelevant"), 0) for row in rows[:10]]
-    ideal = sorted((RELEVANCE_GRADES[grade] for grade in judgment_by_id.values()), reverse=True)[:10]
+def _ndcg_at_k(rows: list[dict], judgment_by_id: dict[int, str], cutoff: int) -> float:
+    actual = [RELEVANCE_GRADES.get(judgment_by_id.get(int(row["file_id"]), "irrelevant"), 0) for row in rows[:cutoff]]
+    ideal = sorted((RELEVANCE_GRADES[grade] for grade in judgment_by_id.values()), reverse=True)[:cutoff]
     ideal_dcg = _dcg(ideal)
     return _dcg(actual) / ideal_dcg if ideal_dcg else 0.0
 
@@ -145,7 +173,7 @@ def evaluate_results(config: dict[str, Any], runs: dict[str, list[list[dict]]]) 
         if len(result_sets) != len(config["queries"]):
             raise ValueError(f"result count for {ranking} does not match evaluation query count")
         details = []
-        reciprocal_sum = ndcg_sum = 0.0
+        reciprocal_sum = ndcg_sum = ndcg3_sum = coverage3_sum = 0.0
         hits = {1: 0, 3: 0, 10: 0}
         hard_negative_top3 = irrelevant_top3 = 0
         for item, rows in zip(config["queries"], result_sets):
@@ -160,8 +188,13 @@ def evaluate_results(config: dict[str, Any], runs: dict[str, list[list[dict]]]) 
                 reciprocal_sum += 1.0 / best_rank
                 for cutoff in hits:
                     hits[cutoff] += best_rank <= cutoff
-            ndcg = _ndcg_at_10(rows, judgment_by_id)
+            ndcg = _ndcg_at_k(rows, judgment_by_id, 10)
+            ndcg3 = _ndcg_at_k(rows, judgment_by_id, 3)
             ndcg_sum += ndcg
+            ndcg3_sum += ndcg3
+            human_reviewed = set(item.get("human_reviewed_file_ids", []))
+            coverage3 = sum(int(row["file_id"]) in human_reviewed for row in rows[:3]) / max(1, min(3, len(rows)))
+            coverage3_sum += coverage3
             top3_grades = [judgment_by_id.get(file_id, "unjudged") for file_id in ids[:3]]
             hard_negative_top3 += top3_grades.count("hard_negative")
             irrelevant_top3 += top3_grades.count("irrelevant")
@@ -179,7 +212,8 @@ def evaluate_results(config: dict[str, Any], runs: dict[str, list[list[dict]]]) 
                 })
             details.append({
                 "id": item["id"], "query": item["query"], "best_relevant_rank": best_rank,
-                "ndcg_at_10": round(ndcg, 4), "judgments": item["judgments"],
+                "ndcg_at_3": round(ndcg3, 4), "ndcg_at_10": round(ndcg, 4),
+                "human_review_coverage_at_3": round(coverage3, 4), "judgments": item["judgments"],
                 "top_10_review": reviewed_results,
                 # Preserve the v1 report keys for existing report consumers.
                 "best_expected_rank": best_rank,
@@ -193,6 +227,8 @@ def evaluate_results(config: dict[str, Any], runs: dict[str, list[list[dict]]]) 
             "hit_at_10": round(hits[10] / count, 4),
             "mean_reciprocal_rank": round(reciprocal_sum / count, 4),
             "ndcg_at_10": round(ndcg_sum / count, 4),
+            "ndcg_at_3": round(ndcg3_sum / count, 4),
+            "human_review_coverage_at_3": round(coverage3_sum / count, 4),
             "hard_negative_in_top_3": hard_negative_top3,
             "irrelevant_in_top_3": irrelevant_top3,
             "queries": details,
@@ -206,13 +242,14 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"Schema: **{report['schema_version']}**  ",
         f"Queries: **{report['query_count']}**  ",
         f"Document families: **{report.get('document_family_count', 0)}**", "",
-        "| Ranking | Hit@1 | Hit@3 | Hit@10 | MRR | NDCG@10 | Hard negatives top 3 | Irrelevant top 3 |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| Ranking | Hit@1 | Hit@3 | Hit@10 | MRR | NDCG@3 | Review coverage@3 | NDCG@10* | Hard negatives top 3 | Irrelevant top 3 |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for name, metrics in report["rankings"].items():
         lines.append(
             f"| `{name}` | {metrics['hit_at_1']:.4f} | {metrics['hit_at_3']:.4f} | "
             f"{metrics['hit_at_10']:.4f} | {metrics['mean_reciprocal_rank']:.4f} | "
+            f"{metrics['ndcg_at_3']:.4f} | {metrics['human_review_coverage_at_3']:.4f} | "
             f"{metrics['ndcg_at_10']:.4f} | {metrics['hard_negative_in_top_3']} | "
             f"{metrics['irrelevant_in_top_3']} |"
         )
@@ -239,6 +276,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "Judgments: `relevant` = direct antwoord, `related` = bruikbare context, "
         "`hard_negative` = lijkt passend maar is inhoudelijk fout, `irrelevant` = beoordeeld als niet bruikbaar. "
         "Niet-beoordeelde resultaten staan als `unjudged`.", "",
+        "`NDCG@10*` is provisional while results below rank 3 are not fully human-reviewed.", "",
         "Scores are evaluation metrics, not classification confidence or cleanup authorization.", "",
     ])
     return "\n".join(lines)
