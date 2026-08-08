@@ -7,7 +7,7 @@ from core.semantic.similarity import (
     query_terms, render_document_similarity_sql, render_hybrid_query_similarity_sql,
     render_query_similarity_sql, vector_literal,
 )
-from core.semantic.retrieval_evaluation import evaluate_results, load_evaluation, render_markdown
+from core.semantic.retrieval_evaluation import evaluate_results, load_evaluation, render_markdown, review_rows
 
 
 class FakeVectors(list):
@@ -132,6 +132,12 @@ class SemanticSimilarityTests(unittest.TestCase):
         self.assertIn("NDCG@10", markdown)
         self.assertIn("riool.pdf", markdown)
         self.assertIn("/vve/riool.pdf", markdown)
+        rows = review_rows(report)
+        self.assertEqual(3, len(rows))
+        self.assertEqual("related", rows[0]["review_judgment"])
+        self.assertEqual("", rows[2]["review_judgment"])
+        self.assertIn("document_family", rows[0])
+        self.assertIn("reviewer_notes", rows[0])
 
     def test_v2_rejects_conflicting_or_unknown_family_judgments(self):
         import tempfile

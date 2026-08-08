@@ -10,6 +10,11 @@ SCHEMA_VERSION_V1 = "semantic-retrieval-evaluation-v1"
 SCHEMA_VERSION_V2 = "semantic-retrieval-evaluation-v2"
 SCHEMA_VERSIONS = {SCHEMA_VERSION_V1, SCHEMA_VERSION_V2}
 RELEVANCE_GRADES = {"irrelevant": 0, "hard_negative": 0, "related": 1, "relevant": 2}
+REVIEW_FIELDS = (
+    "ranking", "query_id", "query", "rank", "file_id", "filename", "path",
+    "similarity", "lexical_similarity", "ranking_score", "proposed_judgment",
+    "review_judgment", "document_family", "reviewer_notes",
+)
 
 
 def _ids(values: Any, field: str) -> list[int]:
@@ -34,6 +39,31 @@ def _families(config: dict[str, Any]) -> dict[str, list[int]]:
             raise ValueError(f"document family {family_id} requires file_ids")
         output[family_id] = file_ids
     return output
+
+
+def review_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = []
+    for ranking, metrics in report["rankings"].items():
+        for query in metrics["queries"]:
+            for result in query["top_10_review"]:
+                proposed = result["judgment"]
+                rows.append({
+                    "ranking": ranking,
+                    "query_id": query["id"],
+                    "query": query["query"],
+                    "rank": result["rank"],
+                    "file_id": result["file_id"],
+                    "filename": result.get("filename") or "",
+                    "path": result.get("path") or "",
+                    "similarity": result.get("similarity") or "",
+                    "lexical_similarity": result.get("lexical_similarity") or "",
+                    "ranking_score": result.get("ranking_score") or "",
+                    "proposed_judgment": proposed,
+                    "review_judgment": "" if proposed == "unjudged" else proposed,
+                    "document_family": "",
+                    "reviewer_notes": "",
+                })
+    return rows
 
 
 def _expand_families(item: dict[str, Any], grade: str, families: dict[str, list[int]]) -> list[int]:

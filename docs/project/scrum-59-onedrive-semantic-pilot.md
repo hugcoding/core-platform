@@ -374,11 +374,17 @@ core semantic retrieval-evaluate \
   project/pilots/scrum-59-retrieval-evaluation-v2.json
 ```
 
-Het Markdownrapport bevat voor iedere ranking en zoekvraag een top-10-review met
-rang, judgment, file-ID, bestandsnaam, pad en score. Zo kan de evaluatieset eerst
-inhoudelijk worden gecorrigeerd voordat model, chunking of hybride gewichten
-worden bijgesteld. Ook v2 is volledig read-only: er worden geen queries,
-judgments of resultaten naar PostgreSQL geschreven.
+Naast JSON en Markdown ontstaat een Excel-vriendelijke UTF-8-CSV met voor iedere
+ranking en zoekvraag de top 10. Beoordeel daarin vooral regels met een lege
+`review_judgment`. Vul uitsluitend `review_judgment`, `document_family` en
+`reviewer_notes` aan; behoud file-ID, ranking en score als auditcontext.
+
+Toegestane judgments zijn `relevant`, `related`, `hard_negative` en
+`irrelevant`. De kolom `proposed_judgment` is alleen een startvoorstel en geen
+ground truth. Zo wordt de evaluatieset eerst inhoudelijk gecorrigeerd voordat
+model, chunking of hybride gewichten worden bijgesteld. Ook v2 is volledig
+read-only: er worden geen queries, judgments of resultaten naar PostgreSQL
+geschreven.
 
 ## Representatieve pilot van maximaal 100 documenten
 
