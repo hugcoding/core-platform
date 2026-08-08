@@ -478,6 +478,40 @@ class EmptyGoldenGroupTests(unittest.TestCase):
 
         cursor.execute.assert_not_called()
 
+    def test_nonempty_group_passes_size_bytes_to_golden_ranking(self):
+        class CandidateCursor:
+            def __init__(self):
+                self.query = ""
+
+            def execute(self, query, params=None):
+                self.query = query
+
+            def fetchall(self):
+                candidate = {
+                    "file_id": 42,
+                    "path": "/volume1/data/document.txt",
+                    "created_at": None,
+                    "updated_at": None,
+                }
+                if "size_bytes" in self.query.partition("FROM files")[0]:
+                    candidate["size_bytes"] = 123
+                return [candidate]
+
+            def fetchone(self):
+                return None
+
+        def assert_candidate(candidate_rows):
+            self.assertEqual(123, candidate_rows[0]["size_bytes"])
+            raise StopIteration
+
+        with mock.patch.object(
+            metadata_worker, "rank_candidates", side_effect=assert_candidate
+        ):
+            with self.assertRaises(StopIteration):
+                metadata_worker.recompute_golden_group(
+                    CandidateCursor(), "full-sha", 123, "polling_scanner"
+                )
+
 
 class FullHashTests(unittest.TestCase):
     def test_full_sha256_reads_the_entire_file(self):

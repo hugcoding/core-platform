@@ -237,7 +237,7 @@ def recompute_golden_group(cur, content_sha256, size_bytes, source):
         # Empty files remain inventoried; the migration audits legacy cleanup.
         return
     cur.execute(
-        """SELECT id AS file_id, path, created_at, updated_at
+        """SELECT id AS file_id, path, size_bytes, created_at, updated_at
            FROM files
            WHERE content_sha256 = %s
              AND size_bytes = %s
