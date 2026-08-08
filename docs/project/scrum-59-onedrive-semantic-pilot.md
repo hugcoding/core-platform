@@ -471,3 +471,53 @@ risicovolle acties.
 - Geen externe AI; benchmark-inference heeft geen netwerktoegang.
 - Geen gevoelige documenten in deze pilot.
 - Geen autonome classificatie-, cleanup- of verwijderactie.
+
+## Read-only lokale RAG-pilot
+
+De RAG-pilot bouwt voort op `hybrid-v1` en maakt geen nieuwe waarheid in CORE.
+Per vraag worden maximaal vijf resultaten opgehaald. De geselecteerde tokenchunks
+worden tijdelijk en lokaal opnieuw uit het originele document opgebouwd; ruwe
+tekst wordt niet aan PostgreSQL of het rapport toegevoegd.
+
+```text
+Vraag
+  -> lokale query-embedding
+  -> hybrid-v1 retrieval
+  -> maximaal 1-5 bronchunks uit originele bestanden
+  -> lokale provider-onafhankelijke LLM-interface
+  -> antwoord met [S1]-broncitaten of abstention
+  -> read-only JSON-rapport
+```
+
+De eerste adapter gebruikt het OpenAI-compatible HTTP-contract, zodat onder meer
+lokale inference-servers uitwisselbaar blijven. CORE accepteert uitsluitend een
+localhost-, privé-IP- of `.local`-endpoint. Het promptcontract staat versieerbaar
+in `project/prompts/scrum-59-rag-v1.json`. Een providermodel moet JSON retourneren
+met `answer`, `abstained`, `citations`, `confidence` en `reason`.
+
+Controleer eerst retrieval en contextopbouw zonder LLM-call:
+
+```sh
+core semantic rag "gegevensstromen ETL en data pipelines" \
+  --limit 3 \
+  --threshold 0.40 \
+  --dry-run
+```
+
+Voer daarna een lokale inference-run uit, bijvoorbeeld tegen een lokaal
+OpenAI-compatible endpoint:
+
+```sh
+core semantic rag "gegevensstromen ETL en data pipelines" \
+  --model LOCAL_MODEL_ID \
+  --endpoint http://127.0.0.1:11434/v1 \
+  --limit 3 \
+  --threshold 0.40
+```
+
+Een antwoord wordt technisch afgekeurd en vervangen door een expliciete
+abstention wanneer JSON ongeldig is, citaten ontbreken, een onbekende bron wordt
+genoemd of de citation marker niet in het antwoord staat. Dit bewijst grounding
+niet volledig, maar voorkomt dat een ongecontroleerd antwoord als geldig
+pilotresultaat wordt gepresenteerd. De pilot wijzigt geen documenten, golden
+records, embeddings of andere databasegegevens.
