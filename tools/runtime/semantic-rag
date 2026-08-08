@@ -1,0 +1,3 @@
+#!/bin/sh
+set -eu
+exec python3 tools/runtime/semantic_rag.py "$@"
