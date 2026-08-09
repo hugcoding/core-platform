@@ -819,13 +819,6 @@ CREATE INDEX idx_folders_parent_id ON public.folders USING btree (parent_id);
 
 
 --
--- Name: idx_metadata_file_id; Type: INDEX; Schema: public; Owner: hugo
---
-
-CREATE INDEX idx_metadata_file_id ON public.metadata USING btree (file_id);
-
-
---
 -- Name: idx_metadata_width_height; Type: INDEX; Schema: public; Owner: hugo
 --
 
