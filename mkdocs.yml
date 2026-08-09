@@ -40,7 +40,11 @@ markdown_extensions:
   - toc:
       permalink: true
   - pymdownx.highlight
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.details
   - pymdownx.emoji
   - pymdownx.tabbed:
@@ -49,6 +53,7 @@ markdown_extensions:
 nav:
   - Home: wiki/index.md
   - Architecture: wiki/architecture.md
+  - CORE-ketendiagrammen: wiki/core-flows.md
   - CORE: wiki/core.md
   - Configuration: wiki/configuration.md
   - Operations: wiki/operations.md

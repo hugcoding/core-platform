@@ -2,6 +2,9 @@
 
 De NAS Metadata Stack bestaat uit een polling scanner, Redis Streams, een metadata worker en PostgreSQL.
 
+De end-to-end datastromen, read/write-grenzen en toekomstige OTAP-promotie staan
+in [CORE-ketendiagrammen](core-flows.md).
+
 ## Ontwerpkeuzes
 
 - Geen host watcher meer.
