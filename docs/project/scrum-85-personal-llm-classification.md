@@ -210,3 +210,42 @@ tabellen inclusief reviewhistorie:
 docker exec -i postgres psql -v ON_ERROR_STOP=1 -U hugo -d nasdb_test \
   < database/migrations/rollback/20260809_add_classification_acc_storage.sql
 ```
+
+## Taal- en padbeleid
+
+CORE scheidt technische identiteit van gebruikerspresentatie:
+
+- interne enums en canonieke sleutels blijven stabiel Engels, bijvoorbeeld
+  `finance`, `active_candidate` en `income_tax_return`;
+- zichtbare labels worden Nederlands, bijvoorbeeld `Financiën`, `Actief` en
+  `Aangifte inkomstenbelasting`;
+- fysieke doelpaden worden eveneens Nederlands;
+- de omzetting wordt configuration-driven en krijgt een expliciete
+  padbeleidversie, bijvoorbeeld `personal-path-policy-nl-v1`;
+- het oorspronkelijke technische voorstel blijft als lineage beschikbaar.
+
+Een toekomstig beoordeeld doelpad kan daardoor bijvoorbeeld zijn:
+
+```text
+Actief/Financiën/Aangifte inkomstenbelasting/Aangifte_2025.pdf
+Archief/Werk/Curriculum vitae/CV.pdf
+Beoordelen/Wonen/VvE technische memo/MEMO_riolering.pdf
+```
+
+De huidige Engelse `suggested_path`-waarden zijn model-/beleidsvoorstellen en
+blijven `pending_review`. Ze worden niet geaccepteerd en nooit gebruikt voor
+bestandsmutaties voordat het Nederlandstalige padbeleid is toegepast.
+
+## Stand van de pilot op 9 augustus 2026
+
+- Het eerste gevalideerde ACC-opslagplan bevat zes goedgekeurde documenten,
+  zes voorstellen en nul technische fouten.
+- Alle voorstellen blijven `pending_review`; de current-view bevat hierdoor nog
+  geen definitieve classificaties.
+- Negentien bestanden uit het oorspronkelijke manifest waren expliciet
+  uitgesloten en zijn niet geclassificeerd of opgeslagen.
+- De volgende stap is het configuration-driven Nederlandse padbeleid, gevolgd
+  door een compacte menselijke reviewflow.
+- Dagelijkse kleine batches en een copy/move-plan volgen pas na beoordeling van
+  deze pilot. Cleanup en bestandsmutaties blijven afzonderlijke, expliciet
+  geautoriseerde processen.
