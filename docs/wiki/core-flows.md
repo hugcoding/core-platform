@@ -49,29 +49,39 @@ flowchart LR
 De implementatie en meetresultaten staan in
 [SCRUM-59 OneDrive Semantic Pilot](../project/scrum-59-onedrive-semantic-pilot.md).
 
-## Classificatie, review en current-view
+## Classificatie, fall-out en menselijke goedkeuring
 
-De lokale LLM levert uitsluitend een voorstel. Technische codes blijven Engels;
-Nederlandse labels en fysieke doelpaden worden via een versieerbaar padbeleid
-afgeleid. Alleen het nieuwste expliciet geaccepteerde besluit voor een nog
-actueel golden record verschijnt in de current-view.
+CORE is de classificatie-engine. Business rules, metadata en uitsluitend
+menselijk geaccepteerde voorbeelden vormen de standaardroute. De lokale LLM is
+een optionele fallback die CORE kan adviseren, maar nooit zonder menselijke
+goedkeuring start. Technische codes blijven Engels; Nederlandse labels en
+fysieke doelpaden worden via een versieerbaar padbeleid afgeleid.
 
 ```mermaid
 flowchart TD
-    SEL["Representatieve golden-recordselectie"] --> LLM["Lokale LLM-classificatie"]
-    LLM --> CAN["Canoniek contract<br/>Engelse technische codes"]
-    CAN --> PROP[("classification_proposals<br/>pending_review")]
+    SEL["Golden record<br/>documenten in toegestane scope"] --> RULES["CORE business rules<br/>metadata + rulesetversie"]
+    RULES --> EXAMPLES["Menselijk geaccepteerde voorbeelden<br/>embeddingvergelijking"]
+    EXAMPLES --> CONF{"CORE-confidence<br/>voldoende en conflictvrij?"}
+    CONF -->|"ja"| PROP["CORE-voorstel<br/>pending_review"]
+    CONF -->|"nee"| FALL["Classification fall-out<br/>uitlegbare reden"]
+    FALL --> GATE1{"Gate 1: mens kiest vervolgstap"}
+    GATE1 -->|"zelf classificeren"| PROP
+    GATE1 -->|"uitstellen / uitsluiten"| HOLD["deferred / excluded"]
+    GATE1 -->|"lokale LLM goedkeuren"| LLM["Lokale LLM-fallback<br/>begrensde passages"]
+    LLM --> CAN["CORE valideert en normaliseert"]
+    CAN --> PROP
     PROP --> POL["Padbeleid<br/>Nederlandse labels en fysieke paden"]
-    POL --> REV{"Menselijke review"}
-    REV -->|"accepted / corrected"| AR[("append-only classification_reviews")]
-    REV -->|"rejected"| RR[("append-only classification_reviews")]
+    POL --> GATE2{"Gate 2: mens beoordeelt resultaat"}
+    GATE2 -->|"accepted / corrected"| AR[("append-only classification_reviews")]
+    GATE2 -->|"rejected / deferred"| RR[("append-only classification_reviews")]
     AR --> CUR[("v_current_file_classification")]
-    CUR -->|"alleen na afzonderlijke autorisatie"| PLAN["Toekomstig copy/move-plan"]
-    RR -.-> PROP
+    CUR -->|"afzonderlijke apply-autorisatie"| PLAN["Actieve-werkset copy-plan"]
 ```
 
 Details staan in
 [SCRUM-85 Persoonlijke LLM-classificatie](../project/scrum-85-personal-llm-classification.md).
+Gate 1 geeft alleen toestemming voor lokaal LLM-gebruik. Het is nooit een
+acceptatie van de modeluitkomst; daarvoor is Gate 2 vereist.
 
 ## Actief, archief, review en cleanup
 

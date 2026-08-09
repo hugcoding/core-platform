@@ -249,3 +249,144 @@ bestandsmutaties voordat het Nederlandstalige padbeleid is toegepast.
 - Dagelijkse kleine batches en een copy/move-plan volgen pas na beoordeling van
   deze pilot. Cleanup en bestandsmutaties blijven afzonderlijke, expliciet
   geautoriseerde processen.
+
+## CORE-first classificatie
+
+CORE is verantwoordelijk voor classificatie, routing en confidence. De lokale
+LLM is geen standaardverwerker, maar een optionele fallback of een handmatig
+aangevraagde adviseur.
+
+De standaardroute gebruikt:
+
+1. versieerbare business rules en technische metadata;
+2. documenteigenschappen en extractiesignalen;
+3. uitsluitend menselijk geaccepteerde classificaties als voorbeelden;
+4. embeddingvergelijking met die geaccepteerde voorbeelden;
+5. een door CORE berekende confidence en conflictcontrole.
+
+Machinevoorstellen mogen zichzelf niet als nieuw voorbeeld bevestigen. Een
+nieuwe voorbeeldset wordt versieerbaar en in batches geëvalueerd voordat deze
+actief wordt.
+
+### Classification fall-out
+
+Bij onvoldoende confidence, conflicterende signalen of een onbekende
+documentfamilie maakt CORE geen geforceerde classificatie. Het maakt een
+uitlegbaar fall-outrecord met minimaal:
+
+- gebruikte regels en rulesetversie;
+- dichtstbijzijnde geaccepteerde voorbeelden en scoremarge;
+- CORE-confidence en conflicten;
+- reden waarom lokale LLM-analyse wel of niet wordt geadviseerd;
+- voorgesteld model, promptversie, maximale chunks en sensitivitywaarschuwing.
+
+De mens kiest vervolgens `manual_classification`, `approve_local_llm`, `defer`
+of `exclude`.
+
+### Twee menselijke gates
+
+**Gate 1 — toestemming voor LLM-gebruik**
+
+Gate 1 staat CORE toe om voor één zichtbaar document of een vooraf afgebakende
+batch maximaal het goedgekeurde aantal passages aan het geconfigureerde lokale
+model aan te bieden. Zonder deze approval wordt geen LLM aangeroepen.
+
+**Gate 2 — beoordeling van het resultaat**
+
+Na de LLM-run valideert en normaliseert CORE de output. Het resultaat blijft
+`pending_review`. De mens accepteert, corrigeert, wijst af of stelt uit. Gate 1
+is nadrukkelijk nooit een automatische Gate-2-acceptatie.
+
+```mermaid
+flowchart LR
+    D["Golden record"] --> C["CORE rules + geaccepteerde voorbeelden"]
+    C --> Q{"Voldoende confidence?"}
+    Q -->|"ja"| P["pending_review voorstel"]
+    Q -->|"nee"| F["fall-out + LLM-advies"]
+    F --> A{"Gate 1"}
+    A -->|"goedgekeurd"| L["lokale LLM"]
+    A -->|"zelf / later / uitsluiten"| H["menselijke keuze"]
+    L --> N["CORE-validatie en normalisatie"]
+    N --> P
+    H --> P
+    P --> R{"Gate 2"}
+    R -->|"accepted / corrected"| V["current classification"]
+    R -->|"rejected / deferred"| X["geen current classification"]
+```
+
+## Gefaseerd implementatieplan
+
+### Fase 0 — database- en contractgrens
+
+- Meet tabel-, index- en groeivolumes via SCRUM-78.
+- Hergebruik `files`, `content_groups`, proposals en append-only reviews.
+- Voeg geen nieuwe brede waarheidstabel toe wanneer een view volstaat.
+- Ontwerp classificatiecontract v3 met afzonderlijk `domain`, `document_role`,
+  `document_family`, routing en CORE-confidence.
+
+### Fase 1 — Nederlands actief padbeleid
+
+- Implementeer `personal-path-policy-nl-v1` configuration-driven.
+- Houd technische codes Engels en fysieke labels Nederlands.
+- Gebruik inhoudelijke domeinen: Persoonlijk, Werk en loopbaan, Financiën,
+  Wonen, Leren en ontwikkeling en Projecten.
+- Gebruik `administration` nooit als fysieke hoofdmap; normaliseer naar een
+  inhoudsdomein of `Beoordelen`.
+
+### Fase 2 — rules-only MVP
+
+- Selecteer uitsluitend ondersteunde persoonlijke documenten en golden records.
+- Bouw een kleine, versieerbare ruleset voor bekende families uit de pilot.
+- Produceer rules-only voorstellen en fall-out zonder LLM-call.
+- Leg routing, evidence, conflict en CORE-confidence vast.
+
+### Fase 3 — beoordeelde voorbeelden
+
+- Gebruik alleen Gate-2-geaccepteerde classificaties als voorbeelden.
+- Zoek semantisch vergelijkbare voorbeelden met de bestaande lokale embeddings.
+- Combineer rule- en voorbeeldsignalen; meet scoremarge en disagreement.
+- Laat onzekere gevallen in fall-out staan.
+
+### Fase 4 — approval-gated LLM-fallback
+
+- Presenteer fall-out mobiel met advies en privacy-/resourcescope.
+- Implementeer append-only Gate-1-approval per document en kleine batch.
+- Start de lokale LLM uitsluitend na geldige approval.
+- Sla het genormaliseerde resultaat opnieuw als `pending_review` op.
+
+### Fase 5 — compacte menselijke review
+
+- Bouw Gate 2 als mobiele quiz met preview, domein, rol, familie, lifecycle en
+  Nederlands doelpad.
+- Ondersteun accepteren, corrigeren, afwijzen, uitstellen en notities.
+- Publiceer alleen geaccepteerde current classifications.
+
+### Fase 6 — actieve-werksetpilot
+
+- Selecteer 20–50 actuele of blijvend belangrijke geaccepteerde documenten.
+- Genereer eerst een idempotent, read-only copy-plan.
+- Kopieer pas na afzonderlijke apply-goedkeuring naar de Nederlandse `Actief/`
+  structuur.
+- Verifieer contenthash, aantallen, collisions en provenance.
+- Verwijder of wijzig geen OneDrive- of historische bronbestanden.
+
+### Fase 7 — dagelijkse achtergrondbatch
+
+- Zet dagelijks een kleine batch nieuwe, gewijzigde of ongeclassificeerde golden
+  records klaar.
+- Laat CORE bekende gevallen zelf voorstellen.
+- Vraag alleen voor fall-out menselijke actie of LLM-toestemming.
+- Houd archief, retention en cleanup buiten het actieve-werkset-MVP; deze volgen
+  later als afzonderlijke gecontroleerde processen.
+
+## MVP-go/no-go
+
+De actieve-werksetpilot mag pas kopiëren wanneer:
+
+- de databasegroei en indeximpact bekend en acceptabel zijn;
+- het Nederlandse padbeleid is goedgekeurd;
+- iedere kandidaat een current, menselijk geaccepteerde classificatie heeft;
+- Gate-1- en Gate-2-besluiten afzonderlijk auditbaar zijn;
+- dry-run, idempotency, hashverificatie en collisioncontrole slagen;
+- rollback betekent dat uitsluitend de nieuw gemaakte doelkopieën veilig kunnen
+  worden verwijderd, zonder de bronnen te raken.
