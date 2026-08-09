@@ -42,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     _mode(review)
     args = parser.parse_args(argv)
 
-    source = Path(getattr(args, args.command)).resolve()
+    source = Path(args.report if args.command == "proposals" else args.review).resolve()
     if not source.is_file():
         parser.error(f"input not found: {source}")
     payload = source.read_bytes()

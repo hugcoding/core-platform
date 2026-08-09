@@ -1,4 +1,5 @@
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -101,6 +102,21 @@ class ClassificationStorageTests(unittest.TestCase):
         command = (root / "tools/runtime/core").read_text("utf-8")
         self.assertIn("add_mutually_exclusive_group(required=True)", runtime)
         self.assertIn("classification-acc)", command)
+
+    def test_cli_proposals_uses_report_argument(self):
+        from unittest.mock import patch
+        from tools.runtime.semantic_classification_acc import main
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "manifest.json"
+            report = root / "report.json"
+            manifest.write_bytes(self.manifest())
+            payload = json.loads(self.report())
+            payload["manifest"] = str(manifest)
+            report.write_text(json.dumps(payload), encoding="utf-8")
+            with patch("tools.runtime.semantic_classification_acc.ROOT", root):
+                self.assertEqual(0, main(["proposals", str(report), "--dry-run"]))
 
 
 if __name__ == "__main__":
