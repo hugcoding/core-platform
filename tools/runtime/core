@@ -58,6 +58,8 @@ show_help() {
     printf '%s\n' "  core semantic rag QUERY [--model MODEL --endpoint LOCAL_URL] [--limit 1..5] [--threshold SCORE] [--timeout-seconds 600] [--dry-run]"
     printf '%s\n' "  core semantic personal-classification --cutoff TIMESTAMP [--limit 25] --dry-run"
     printf '%s\n' "  core semantic personal-classification --manifest REVIEWED_JSON --model MODEL --endpoint LOCAL_URL"
+    printf '%s\n' "  core semantic classification-acc proposals REPORT_JSON --dry-run|--apply"
+    printf '%s\n' "  core semantic classification-acc review REVIEW_JSON --dry-run|--apply"
     printf '%s\n' "  core runtime status"
     printf '%s\n' "  core runtime health"
     printf '%s\n' "  core runtime logs"
@@ -262,9 +264,13 @@ case "$command_domain" in
                 shift 2
                 sh ./tools/runtime/semantic-personal-classification "$@"
                 ;;
+            classification-acc)
+                shift 2
+                sh ./tools/runtime/semantic-classification-acc "$@"
+                ;;
             *)
                 echo "Unknown semantic command."
-                echo "Use: core semantic onedrive-golden-pilot ... | representative-pilot ... | pilot-extract MANIFEST_JSON | pilot-chunks MANIFEST_JSON | acc-metadata MANIFEST_JSON --dry-run|--apply | model-fetch | embedding-benchmark MANIFEST_JSON | embedding-acc MANIFEST_JSON --dry-run|--apply | similarity query|document ... | retrieval-evaluate CONFIG_JSON | rag QUERY --dry-run|--model MODEL | personal-classification --cutoff TIMESTAMP --dry-run | personal-classification --manifest REVIEWED_JSON --model MODEL"
+                echo "Use: core semantic onedrive-golden-pilot ... | representative-pilot ... | pilot-extract MANIFEST_JSON | pilot-chunks MANIFEST_JSON | acc-metadata MANIFEST_JSON --dry-run|--apply | model-fetch | embedding-benchmark MANIFEST_JSON | embedding-acc MANIFEST_JSON --dry-run|--apply | similarity query|document ... | retrieval-evaluate CONFIG_JSON | rag QUERY --dry-run|--model MODEL | personal-classification ... | classification-acc proposals|review ..."
                 exit 1
                 ;;
         esac

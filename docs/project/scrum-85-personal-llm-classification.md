@@ -117,3 +117,96 @@ zonder het vrije modelvoorstel als operationele waarheid te behandelen.
 De JSON-, Markdown- en compacte CSV-uitvoer zijn reviewmateriaal. Pas na
 menselijke beoordeling en een afzonderlijk go/no-go kan een copy/move-plan worden
 ontworpen. Cleanup, archivering en retentie blijven aparte geautoriseerde stappen.
+
+## ACC-opslag van voorstellen en reviews
+
+De acceptatieomgeving kan classificaties versieerbaar opslaan zonder documenten
+te muteren of geÃ«xtraheerde tekst te bewaren. De opslag gebruikt drie gescheiden
+entiteiten:
+
+- `classification_runs`: manifest-, prompt-, contract-, provider- en
+  modelprovenance van een afgeronde lokale run;
+- `classification_proposals`: canonieke machinevoorstellen met de bijbehorende
+  contenthash en status `pending_review`;
+- `classification_reviews`: append-only menselijke besluiten. Een review wordt
+  nooit overschreven; een correctie is een nieuw besluit met een nieuwe
+  `idempotency_key`.
+
+`ai_output` wordt hiervoor niet hergebruikt. Die legacy-tabel mist het
+classificatiecontract, reviewhistorie en voldoende lineage. Semantic extractie,
+embeddings en classificatie blijven zo afzonderlijke processtappen.
+
+Pas eerst de migratie toe op `nasdb_test`:
+
+```sh
+docker exec -i postgres psql -v ON_ERROR_STOP=1 -U hugo -d nasdb_test \
+  < database/migrations/20260809_add_classification_acc_storage.sql
+```
+
+Maak daarna eerst een opslagplan van een afgerond v2-classificatierapport:
+
+```sh
+core semantic classification-acc proposals \
+  project/exports/semantic-pilot/personal-golden-classification-YYYYMMDD-HHMMSS.json \
+  --dry-run
+```
+
+Controleer het JSON-plan. Met exact dezelfde invoer ontstaat dezelfde run-ID,
+proposal-ID en proposalhash. Opslaan in ACC gebeurt pas expliciet:
+
+```sh
+core semantic classification-acc proposals \
+  project/exports/semantic-pilot/personal-golden-classification-YYYYMMDD-HHMMSS.json \
+  --apply
+```
+
+De transactie weigert een voorstel wanneer file-ID, volledige SHA-256,
+contentgroep en huidig golden record niet meer overeenkomen. Opnieuw uitvoeren
+is idempotent. Een gelijk gebleven deterministische ID met een afwijkende
+proposalhash wordt als provenancefout geweigerd.
+
+Een geaccepteerde menselijke review gebruikt bijvoorbeeld:
+
+```json
+{
+  "proposal_id": "00000000-0000-0000-0000-000000000000",
+  "idempotency_key": "hugo-review-3361755-v1",
+  "decision": "accepted",
+  "reviewer": "hugo",
+  "reviewed_at": "2026-08-09T13:00:00+02:00",
+  "category": "administration",
+  "document_family": "government_correspondence",
+  "lifecycle": "active_candidate",
+  "suggested_path": "Active/Administration/government_correspondence/brief.pdf",
+  "sensitivity": "personal",
+  "confidence": "medium",
+  "notes": "Inhoud en doelpad beoordeeld"
+}
+```
+
+Ook reviews doorlopen eerst `--dry-run` en daarna optioneel `--apply`:
+
+```sh
+core semantic classification-acc review review.json --dry-run
+core semantic classification-acc review review.json --apply
+```
+
+`v_current_file_classification` toont maximaal Ã©Ã©n nieuwste geaccepteerd besluit
+per bestand, en alleen zolang het bestand actief, nog het golden record en qua
+contenthash ongewijzigd is. Pending en afgewezen voorstellen worden nooit als
+huidige classificatie gepubliceerd. Controleer bijvoorbeeld:
+
+```sql
+SELECT file_id, category, document_family, lifecycle, suggested_path,
+       sensitivity, confidence, reviewer, reviewed_at
+FROM v_current_file_classification
+ORDER BY reviewed_at DESC;
+```
+
+Rollback is alleen bedoeld voor ACC en verwijdert de view en alle drie de nieuwe
+tabellen inclusief reviewhistorie:
+
+```sh
+docker exec -i postgres psql -v ON_ERROR_STOP=1 -U hugo -d nasdb_test \
+  < database/migrations/rollback/20260809_add_classification_acc_storage.sql
+```
