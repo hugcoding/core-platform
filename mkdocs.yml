@@ -62,6 +62,7 @@ nav:
       - SCRUM-53 Database Review: project/scrum-53-database-schema-review.md
       - SCRUM-55 Realtime Scanning: project/scrum-55-realtime-scanning.md
       - SCRUM-76 OneDrive Baseline: project/scrum-76-onedrive-baseline.md
+      - SCRUM-78 Databasegroei: project/scrum-78-database-growth-review.md
       - SCRUM-59 OneDrive Semantic Pilot: project/scrum-59-onedrive-semantic-pilot.md
       - SCRUM-85 Persoonlijke LLM-classificatie: project/scrum-85-personal-llm-classification.md
   - Runtime:
