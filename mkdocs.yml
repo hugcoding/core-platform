@@ -58,6 +58,7 @@ nav:
       - SCRUM-55 Realtime Scanning: project/scrum-55-realtime-scanning.md
       - SCRUM-76 OneDrive Baseline: project/scrum-76-onedrive-baseline.md
       - SCRUM-59 OneDrive Semantic Pilot: project/scrum-59-onedrive-semantic-pilot.md
+      - SCRUM-85 Persoonlijke LLM-classificatie: project/scrum-85-personal-llm-classification.md
   - Runtime:
       - Scanner: wiki/scanner.md
       - Metadata Worker: wiki/metadata-worker.md
