@@ -45,8 +45,9 @@ REVIEW_FIELDS = [
 ]
 RESULT_FIELDS = [
     "file_id", "filename", "source_path", "status", "document_type", "category",
-    "document_family", "topics", "lifecycle", "suggested_path", "sensitivity",
-    "confidence", "reason", "needs_review",
+    "model_category", "document_family", "model_document_family", "topics", "lifecycle",
+    "suggested_path", "sensitivity", "model_sensitivity", "sensitivity_signals",
+    "confidence", "model_confidence", "normalization_warnings", "reason", "needs_review",
 ]
 
 
@@ -97,7 +98,9 @@ def classify_documents(documents: list[dict], *, prompt: dict, model: str,
             system, user = build_classification_prompt(document, prompt["system_prompt"])
             try:
                 generated = provider.generate(GenerationRequest(model, system, user))
-                result = validate_classification(generated["content"], file_id)
+                result = validate_classification(
+                    generated["content"], file_id, document["filename"],
+                )
                 usage.update({key: int(value) for key, value in generated.get("usage", {}).items()
                               if isinstance(value, (int, float))})
             except Exception as exc:
@@ -122,6 +125,7 @@ def render_report(manifest: dict, results: list[dict], provider: dict | None) ->
     statuses = Counter(row["status"] for row in results)
     categories = Counter(row["category"] for row in results)
     lifecycles = Counter(row["lifecycle"] for row in results)
+    normalized = sum(bool(row.get("normalization_warnings")) for row in results)
     pending = sum(item.get("approval") == "pending_review" for item in manifest["files"])
     lines = [
         "# SCRUM-85 persoonlijke golden-recordclassificatie", "",
@@ -130,6 +134,7 @@ def render_report(manifest: dict, results: list[dict], provider: dict | None) ->
         f"- Geclassificeerd: **{statuses['classified']}**",
         f"- Technisch niet geclassificeerd: **{len(results) - statuses['classified']}**",
         f"- Menselijke review vereist: **{len(results)}**",
+        f"- Canoniek gecorrigeerd: **{normalized}**",
         "- Read-only: **ja**", "- Bestandsmutaties: **nee**", "- Databasewrites: **nee**", "",
         "## Categorieën", "",
         *[f"- `{key}`: **{value}**" for key, value in sorted(categories.items())], "",
@@ -161,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model")
     parser.add_argument("--endpoint", default="http://127.0.0.1:11434/v1")
     parser.add_argument("--timeout-seconds", type=int, default=600)
-    parser.add_argument("--prompt", default=str(ROOT / "project/prompts/scrum-85-personal-classification-v1.json"))
+    parser.add_argument("--prompt", default=str(ROOT / "project/prompts/scrum-85-personal-classification-v2.json"))
     parser.add_argument("--resume", help="Resume from a personal-classification checkpoint JSON")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
@@ -239,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
     json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     md_path.write_text(render_report(manifest, results, provider), encoding="utf-8")
     write_dict_rows(csv_path, ({
-        field: " | ".join(row["topics"]) if field == "topics" else row.get(field, "")
+        field: " | ".join(row[field]) if field in {"topics", "sensitivity_signals", "normalization_warnings"} else row.get(field, "")
         for field in RESULT_FIELDS
     } for row in results), RESULT_FIELDS)
     summary = {

@@ -100,28 +100,65 @@ class PersonalClassificationTests(unittest.TestCase):
             "file_id": 42, "document_type": "motivatiebrief", "category": "work",
             "document_family": "sollicitatie", "topics": ["data engineering", "UWV"],
             "lifecycle": "active_candidate",
-            "suggested_path": "Active/Work/Sollicitaties/UWV/brief.docx",
-            "sensitivity": "personal", "confidence": "high", "reason": "Recente brief.",
-        }), 42)
+            "sensitivity": "personal", "sensitivity_signals": ["employment"],
+            "confidence": "high", "reason": "Recente brief.",
+        }), 42, "brief.docx")
         self.assertEqual("classified", result["status"])
         self.assertTrue(result["needs_review"])
+        self.assertEqual("Active/Work/motivation_letters/brief.docx", result["suggested_path"])
 
-    def test_unsafe_or_wrong_lifecycle_path_goes_to_review(self):
+    def test_path_is_deterministic_and_model_path_is_ignored(self):
         value = {
             "file_id": 42, "document_type": "factuur", "category": "finance",
             "document_family": "facturen", "topics": [], "lifecycle": "archive_candidate",
             "suggested_path": "Active/Finance/factuur.pdf", "sensitivity": "sensitive",
-            "confidence": "high", "reason": "Oud document.",
+            "sensitivity_signals": ["financial"], "confidence": "high", "reason": "Oud document.",
         }
-        result = validate_classification(json.dumps(value), 42)
-        self.assertEqual("needs_review", result["status"])
-        self.assertEqual("invalid_suggested_path", result["reason"])
+        result = validate_classification(json.dumps(value), 42, "Factuur 2026.pdf")
+        self.assertEqual("classified", result["status"])
+        self.assertEqual("Archive/Finance/invoices/Factuur 2026.pdf", result["suggested_path"])
+
+    def test_category_family_sensitivity_and_confidence_are_normalized(self):
+        result = validate_classification(json.dumps({
+            "file_id": 9, "document_type": "belastingaangifte", "category": "personal",
+            "document_family": "inkomstenbelasting_aangiftes", "topics": ["inkomstenbelasting"],
+            "lifecycle": "archive_candidate", "sensitivity": "personal",
+            "sensitivity_signals": ["financial", "government_identifier"],
+            "confidence": "high", "reason": "Aangifte met BSN en inkomen.",
+        }), 9, "aangifte.pdf")
+        self.assertEqual("finance", result["category"])
+        self.assertEqual("income_tax", result["document_family"])
+        self.assertEqual("highly_sensitive", result["sensitivity"])
+        self.assertEqual("medium", result["confidence"])
+        self.assertIn("category_normalized:personal->finance", result["normalization_warnings"])
+        self.assertEqual("Archive/Finance/income_tax/aangifte.pdf", result["suggested_path"])
+
+    def test_equivalent_vve_memos_share_family(self):
+        base = {
+            "file_id": 1, "document_type": "memo", "category": "home",
+            "topics": ["riolering", "VvE"], "lifecycle": "active_candidate",
+            "sensitivity": "normal", "sensitivity_signals": ["none"],
+            "confidence": "high", "reason": "Technische memo.",
+        }
+        first = validate_classification(json.dumps({**base, "document_family": "vve_building_memo"}), 1, "memo.docx")
+        second = validate_classification(json.dumps({**base, "document_family": "VvE_technical_memo"}), 1, "memo.pdf")
+        self.assertEqual("vve_technical_memos", first["document_family"])
+        self.assertEqual(first["document_family"], second["document_family"])
 
     def test_invalid_json_goes_to_review(self):
         self.assertEqual(
             "provider_response_not_valid_json",
             validate_classification("not-json", 1)["reason"],
         )
+
+    def test_none_cannot_be_combined_with_sensitive_signal(self):
+        result = validate_classification(json.dumps({
+            "file_id": 7, "document_type": "brief", "category": "personal",
+            "document_family": "letters", "topics": [], "lifecycle": "active_candidate",
+            "sensitivity": "personal", "sensitivity_signals": ["none", "relationship"],
+            "confidence": "medium", "reason": "Brief.",
+        }), 7, "brief.docx")
+        self.assertEqual("conflicting_sensitivity_signals", result["reason"])
 
 
 if __name__ == "__main__":
