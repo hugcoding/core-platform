@@ -58,6 +58,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--endpoint", default="http://127.0.0.1:11434/v1")
     parser.add_argument("--limit", type=int, default=3, choices=range(1, 6), metavar="1..5")
     parser.add_argument("--threshold", type=float, default=0.40)
+    parser.add_argument("--timeout-seconds", type=int, default=600)
     parser.add_argument("--prompt", default=str(ROOT / "project/prompts/scrum-59-rag-v1.json"))
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
@@ -83,7 +84,9 @@ def main(argv: list[str] | None = None) -> int:
         answer = abstention("no_sources_above_threshold")
         status = "abstained"
     else:
-        provider = OpenAICompatibleLocalProvider(args.endpoint)
+        provider = OpenAICompatibleLocalProvider(
+            args.endpoint, timeout_seconds=args.timeout_seconds,
+        )
         generated = provider.generate(GenerationRequest(
             model=args.model, system_prompt=system_prompt, user_prompt=user_prompt,
         ))

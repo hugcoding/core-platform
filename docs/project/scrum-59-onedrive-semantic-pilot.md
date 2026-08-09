@@ -512,8 +512,13 @@ core semantic rag "gegevensstromen ETL en data pipelines" \
   --model LOCAL_MODEL_ID \
   --endpoint http://127.0.0.1:11434/v1 \
   --limit 3 \
-  --threshold 0.40
+  --threshold 0.40 \
+  --timeout-seconds 600
 ```
+
+De timeout is standaard tien minuten, omdat een groot lokaal model bij een koude
+start eerst vanaf schijf naar RAM of VRAM moet worden geladen. Voor een al warm
+model kan de limiet bij een meetrun expliciet lager worden gezet.
 
 Een antwoord wordt technisch afgekeurd en vervangen door een expliciete
 abstention wanneer JSON ongeldig is, citaten ontbreken, een onbekende bron wordt

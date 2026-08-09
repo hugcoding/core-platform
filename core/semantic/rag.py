@@ -45,9 +45,11 @@ class OpenAICompatibleLocalProvider:
 
     provider_id = "openai-compatible-local-v1"
 
-    def __init__(self, endpoint: str, *, timeout_seconds: int = 120) -> None:
+    def __init__(self, endpoint: str, *, timeout_seconds: int = 600) -> None:
         if not _is_local_endpoint(endpoint):
             raise ValueError("LLM endpoint must be localhost, a private IP, or a .local host")
+        if not 1 <= timeout_seconds <= 3600:
+            raise ValueError("timeout_seconds must be between 1 and 3600")
         self.endpoint = endpoint.rstrip("/")
         self.timeout_seconds = timeout_seconds
 
@@ -65,8 +67,14 @@ class OpenAICompatibleLocalProvider:
             f"{self.endpoint}/chat/completions", data=body,
             headers={"Content-Type": "application/json"}, method="POST",
         )
-        with urlopen(http_request, timeout=self.timeout_seconds) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        try:
+            with urlopen(http_request, timeout=self.timeout_seconds) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except TimeoutError as exc:
+            raise RuntimeError(
+                f"local LLM did not respond within {self.timeout_seconds} seconds; "
+                "check 'ollama ps' or increase --timeout-seconds"
+            ) from exc
         content = payload["choices"][0]["message"]["content"]
         return {
             "content": content,
