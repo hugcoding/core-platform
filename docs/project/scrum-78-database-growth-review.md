@@ -82,9 +82,32 @@ metadata_file_id_unique  circa 10 MB
 idx_metadata_file_id     circa 10 MB
 ```
 
-De unieke B-tree kan dezelfde `file_id`-lookups ondersteunen. De extra index is
-een sterke kandidaat om later met migratie, rollback, queryplancheck en tests te
-verwijderen. Nog niet toepassen in deze assessmentstap.
+De unieke B-tree kan dezelfde `file_id`-lookups ondersteunen. Een meting met
+`EXPLAIN (ANALYZE, BUFFERS)` bevestigde dat de lookup een B-tree-index gebruikt.
+De twee indexdefinities waren, afgezien van de unieke constraint, gelijk. De
+extra index wordt daarom verwijderd door:
+
+```text
+database/migrations/20260809_remove_redundant_metadata_file_id_index.sql
+```
+
+De migratie gebruikt `DROP INDEX CONCURRENTLY` om normale metadatawrites niet
+langdurig te blokkeren en bespaart circa 10 MB. Zij moet daarom zonder expliciete
+transactiewrapper worden uitgevoerd. De rollback maakt de index eveneens
+concurrent opnieuw aan.
+
+Toepassen op ACC:
+
+```sh
+docker exec -i postgres psql -v ON_ERROR_STOP=1 -U hugo -d nasdb_test \
+  < database/migrations/20260809_remove_redundant_metadata_file_id_index.sql
+
+docker exec -i postgres psql -v ON_ERROR_STOP=1 -U hugo -d nasdb_test \
+  < database/assessment/scrum78_verify_metadata_file_id_index.sql
+```
+
+De post-check moet alleen `metadata_file_id_unique` tonen en de representatieve
+lookup moet die index gebruiken. Controleer daarna ook de metadata-workerhealth.
 
 ### Kandidaat B — oude inode/mtime-index
 
@@ -121,7 +144,8 @@ velden bewust gaat gebruiken. Prioriteit is lager dan dubbele indexen.
 ## Aanbevolen vervolg
 
 1. Sla deze meting periodiek op om werkelijke dag-/weekgroei vast te stellen.
-2. Maak een kleine migratietaak voor de aantoonbaar dubbele metadata-index.
+2. Pas de migratie voor de aantoonbaar dubbele metadata-index toe op ACC en voer
+   de meegeleverde post-check uit.
 3. Meet `EXPLAIN (ANALYZE, BUFFERS)` voor identity- en width/heightqueries.
 4. Beslis daarna afzonderlijk over inode/mtime en width/height-indexen.
 5. Definieer runretentie: `pinned`, `current`, `superseded` en `rebuildable` voor
