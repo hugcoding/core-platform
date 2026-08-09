@@ -19,8 +19,8 @@ if str(ROOT) not in sys.path:
 
 from core.exports.csv_format import write_dict_rows
 from core.semantic.personal_classification import (
-    PROMPT_VERSION, SCHEMA_VERSION, build_classification_prompt, build_manifest,
-    review_result, select_personal_candidates, validate_classification,
+    PROMPT_VERSION, SCHEMA_VERSION, approved_manifest, build_classification_prompt,
+    build_manifest, review_result, select_personal_candidates, validate_classification,
 )
 from core.semantic.pilot_selection import parse_timestamp
 from core.semantic.rag import GenerationRequest, OpenAICompatibleLocalProvider
@@ -122,9 +122,12 @@ def render_report(manifest: dict, results: list[dict], provider: dict | None) ->
     statuses = Counter(row["status"] for row in results)
     categories = Counter(row["category"] for row in results)
     lifecycles = Counter(row["lifecycle"] for row in results)
+    pending = sum(item.get("approval") == "pending_review" for item in manifest["files"])
     lines = [
         "# SCRUM-85 persoonlijke golden-recordclassificatie", "",
-        f"- Geselecteerd: **{len(manifest['files'])}**", f"- Geclassificeerd: **{statuses['classified']}**",
+        f"- Geselecteerd: **{len(manifest['files'])}**",
+        f"- Wacht op manifestreview: **{pending}**",
+        f"- Geclassificeerd: **{statuses['classified']}**",
         f"- Technisch niet geclassificeerd: **{len(results) - statuses['classified']}**",
         f"- Menselijke review vereist: **{len(results)}**",
         "- Read-only: **ja**", "- Bestandsmutaties: **nee**", "- Databasewrites: **nee**", "",
@@ -151,8 +154,9 @@ def render_report(manifest: dict, results: list[dict], provider: dict | None) ->
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Read-only local classification of personal golden records.")
     parser.add_argument("--source", default=DEFAULT_SOURCE)
-    parser.add_argument("--cutoff", required=True)
+    parser.add_argument("--cutoff")
     parser.add_argument("--limit", type=int, default=25)
+    parser.add_argument("--manifest", help="Reviewed personal classification manifest JSON")
     parser.add_argument("--max-chunks", type=int, default=3, choices=(1, 2, 3))
     parser.add_argument("--model")
     parser.add_argument("--endpoint", default="http://127.0.0.1:11434/v1")
@@ -161,29 +165,43 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--resume", help="Resume from a personal-classification checkpoint JSON")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
-    if not args.dry_run and not args.model:
-        parser.error("--model is required unless --dry-run is used")
-    source = args.source.rstrip("/")
-    if not source.startswith("/volume1/") or source == "/volume1/data":
-        parser.error("source must be an absolute path below /volume1 and may not be /volume1/data")
-    try:
-        cutoff = parse_timestamp(args.cutoff)
-    except ValueError:
-        parser.error("cutoff must be a valid ISO 8601 timestamp")
-    rows = load_rows(source)
-    selected, excluded = select_personal_candidates(rows, cutoff=cutoff, limit=args.limit)
-    manifest = build_manifest(selected, source=source, cutoff=cutoff)
+    if args.dry_run:
+        if args.manifest or args.model:
+            parser.error("--dry-run cannot be combined with --manifest or --model")
+        if not args.cutoff:
+            parser.error("--cutoff is required for --dry-run selection")
+    elif not args.manifest or not args.model:
+        parser.error("classification requires both --manifest and --model")
+
     stamp = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d-%H%M%S")
     export_dir = ROOT / "project/exports/semantic-pilot"
     export_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = export_dir / f"personal-golden-classification-manifest-{stamp}.json"
-    review_path = export_dir / f"personal-golden-classification-selection-{stamp}.csv"
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    write_dict_rows(review_path, ({field: row.get(field, "") for field in REVIEW_FIELDS}
-                                  for row in [*selected, *excluded]), REVIEW_FIELDS)
     if args.dry_run:
+        source = args.source.rstrip("/")
+        if not source.startswith("/volume1/") or source == "/volume1/data":
+            parser.error("source must be an absolute path below /volume1 and may not be /volume1/data")
+        try:
+            cutoff = parse_timestamp(args.cutoff)
+        except ValueError:
+            parser.error("cutoff must be a valid ISO 8601 timestamp")
+        rows = load_rows(source)
+        selected, excluded = select_personal_candidates(rows, cutoff=cutoff, limit=args.limit)
+        manifest = build_manifest(selected, source=source, cutoff=cutoff)
+        manifest_path = export_dir / f"personal-golden-classification-manifest-{stamp}.json"
+        review_path = export_dir / f"personal-golden-classification-selection-{stamp}.csv"
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        write_dict_rows(review_path, ({field: row.get(field, "") for field in REVIEW_FIELDS}
+                                      for row in [*selected, *excluded]), REVIEW_FIELDS)
         results, provider = [], None
     else:
+        input_manifest_path = Path(args.manifest).resolve()
+        manifest = json.loads(input_manifest_path.read_text(encoding="utf-8"))
+        source = str(manifest.get("source") or "").rstrip("/")
+        if not source.startswith("/volume1/") or source == "/volume1/data":
+            raise ValueError("manifest source is outside the allowed personal source scope")
+        manifest = approved_manifest(manifest, load_rows(source))
+        selected, review_path = manifest["files"], None
+        manifest_path = input_manifest_path
         prompt = json.loads(Path(args.prompt).read_text(encoding="utf-8"))
         if prompt.get("prompt_version") != PROMPT_VERSION:
             raise ValueError("unsupported prompt version")
@@ -212,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
         "schema_version": SCHEMA_VERSION, "prompt_version": PROMPT_VERSION,
         "status": "planned" if args.dry_run else "completed",
         "read_only": True, "database_writes": False, "file_mutations": False,
-        "manifest": str(manifest_path.relative_to(ROOT)), "selected": len(selected),
+        "manifest": str(manifest_path), "selected": len(selected),
         "results": results, "provider": provider,
     }
     json_path = export_dir / f"personal-golden-classification-{stamp}.json"
@@ -224,12 +242,15 @@ def main(argv: list[str] | None = None) -> int:
         field: " | ".join(row["topics"]) if field == "topics" else row.get(field, "")
         for field in RESULT_FIELDS
     } for row in results), RESULT_FIELDS)
-    print(json.dumps({
+    summary = {
         "status": report["status"], "selected": len(selected), "read_only": True,
-        "manifest": str(manifest_path.relative_to(ROOT)), "selection_csv": str(review_path.relative_to(ROOT)),
+        "manifest": str(manifest_path),
         "json_report": str(json_path.relative_to(ROOT)), "markdown_report": str(md_path.relative_to(ROOT)),
         "review_csv": str(csv_path.relative_to(ROOT)),
-    }, ensure_ascii=False, indent=2))
+    }
+    if review_path is not None:
+        summary["selection_csv"] = str(review_path.relative_to(ROOT))
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
 
 

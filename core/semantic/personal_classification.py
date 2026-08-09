@@ -125,8 +125,48 @@ def build_manifest(selected: list[dict[str, Any]], *, source: str, cutoff: datet
             "size_bytes": int(row["size_bytes"]), "modified_at_fs": str(row["modified_at_fs"]),
             "selection_stratum": row["selection_stratum"],
             "selection_size_bucket": row["selection_size_bucket"],
+            "approval": "pending_review",
         } for row in selected],
     }
+
+
+def approved_manifest(manifest: dict[str, Any], current_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if manifest.get("schema_version") != "personal-classification-manifest-v1":
+        raise ValueError("unsupported personal classification manifest")
+    if manifest.get("processing") != "local_only":
+        raise ValueError("manifest must require local_only processing")
+    for flag in ("database_writes_enabled", "file_mutations_enabled", "external_ai_enabled"):
+        if manifest.get(flag) is not False:
+            raise ValueError(f"manifest must keep {flag}=false")
+    files = manifest.get("files")
+    if not isinstance(files, list) or not 1 <= len(files) <= 25:
+        raise ValueError("manifest must contain between 1 and 25 selected files")
+    ids = [int(item["file_id"]) for item in files]
+    if len(ids) != len(set(ids)):
+        raise ValueError("manifest contains duplicate file IDs")
+    approvals = {str(item.get("approval") or "") for item in files}
+    if not approvals.issubset({"approved", "excluded", "pending_review"}):
+        raise ValueError("approval must be approved, excluded, or pending_review")
+    if "pending_review" in approvals:
+        raise ValueError("manifest review is incomplete; resolve every pending_review")
+    approved = [item for item in files if item["approval"] == "approved"]
+    if not approved:
+        raise ValueError("manifest must approve at least one file")
+
+    current = {int(row["file_id"]): row for row in current_rows}
+    for item in approved:
+        row = current.get(int(item["file_id"]))
+        if row is None:
+            raise ValueError(f"approved file_id={item['file_id']} is no longer an active golden record")
+        comparisons = (
+            ("content_group_id", str), ("content_sha256", str), ("path", str),
+        )
+        for field, cast in comparisons:
+            if cast(row.get(field) or "") != cast(item.get(field) or ""):
+                raise ValueError(f"approved file_id={item['file_id']} changed field {field}")
+        if str(row.get("golden_file_id")) != str(item["file_id"]):
+            raise ValueError(f"approved file_id={item['file_id']} is no longer golden")
+    return {**manifest, "files": approved}
 
 
 def build_classification_prompt(document: dict[str, Any], system_prompt: str) -> tuple[str, str]:
