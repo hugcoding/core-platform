@@ -38,14 +38,23 @@ wonen, werk, studie, projecten en algemeen persoonlijk, en over PDF/DOCX en
 groottes. Financiële, werk- en andere persoonlijke documenten mogen deelnemen,
 omdat inhoud lokaal blijft. Duidelijke secretbestanden worden uitgesloten.
 
+Ieder geselecteerd manifestitem start met:
+
+```json
+"approval": "pending_review"
+```
+
+Controleer de paden en wijzig elk item expliciet naar `approved` of `excluded`.
+De classifier weigert een manifest zolang ook maar één `pending_review` resteert.
+Minstens één document moet zijn goedgekeurd.
+
 ## Lokale classificatie uitvoeren
 
 Na controle van het manifest:
 
 ```sh
 core semantic personal-classification \
-  --cutoff 2024-08-09T00:00:00+02:00 \
-  --limit 25 \
+  --manifest project/exports/semantic-pilot/personal-golden-classification-manifest-YYYYMMDD-HHMMSS.json \
   --max-chunks 3 \
   --model qwen3.6:latest \
   --endpoint http://192.168.68.107:11434/v1 \
@@ -58,6 +67,11 @@ lokale LLM aangeboden en komt niet in rapport, CSV of database. Na ieder documen
 wordt een tijdelijk checkpoint geschreven, zodat bij een onderbreking reeds
 verkregen voorstellen niet verloren gaan. Hervat met dezelfde selectieparameters
 en `--resume project/exports/semantic-pilot/personal-golden-classification-checkpoint-....json`.
+
+Vlak voor extractie vergelijkt CORE ieder goedgekeurd item opnieuw met de
+operationele database. De volledige SHA-256, contentgroep, golden file-ID en het
+bronpad moeten nog exact overeenkomen. Bij afwijking wordt de hele run geweigerd;
+CORE vervangt of actualiseert nooit stil een beoordeeld document.
 
 ## Classificatiecontract
 

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from core.semantic.personal_classification import (
-    build_manifest, select_personal_candidates, selection_stratum,
+    approved_manifest, build_manifest, select_personal_candidates, selection_stratum,
     validate_classification,
 )
 
@@ -54,6 +54,39 @@ class PersonalSelectionTests(unittest.TestCase):
         self.assertFalse(manifest["database_writes_enabled"])
         self.assertFalse(manifest["file_mutations_enabled"])
         self.assertFalse(manifest["external_ai_enabled"])
+        self.assertEqual("pending_review", manifest["files"][0]["approval"])
+
+    def test_manifest_requires_completed_review_and_unchanged_golden(self):
+        selected, _ = select_personal_candidates(
+            [row(1, "/volume1/Documenten/brief.docx")],
+            cutoff=datetime(2024, 8, 1, tzinfo=timezone.utc), limit=25,
+        )
+        manifest = build_manifest(
+            selected, source="/volume1/Documenten",
+            cutoff=datetime(2024, 8, 1, tzinfo=timezone.utc),
+        )
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            approved_manifest(manifest, selected)
+        manifest["files"][0]["approval"] = "approved"
+        approved = approved_manifest(manifest, selected)
+        self.assertEqual([1], [item["file_id"] for item in approved["files"]])
+        changed = [{**selected[0], "content_sha256": "b" * 64}]
+        with self.assertRaisesRegex(ValueError, "content_sha256"):
+            approved_manifest(manifest, changed)
+
+    def test_excluded_manifest_item_is_not_classified(self):
+        selected, _ = select_personal_candidates(
+            [row(1, "/volume1/Documenten/a.docx"), row(2, "/volume1/Documenten/b.docx")],
+            cutoff=datetime(2024, 8, 1, tzinfo=timezone.utc), limit=25,
+        )
+        manifest = build_manifest(
+            selected, source="/volume1/Documenten",
+            cutoff=datetime(2024, 8, 1, tzinfo=timezone.utc),
+        )
+        manifest["files"][0]["approval"] = "approved"
+        manifest["files"][1]["approval"] = "excluded"
+        approved = approved_manifest(manifest, selected)
+        self.assertEqual(1, len(approved["files"]))
 
     def test_core_cli_exposes_personal_classification(self):
         cli = Path("tools/runtime/core").read_text(encoding="utf-8")
