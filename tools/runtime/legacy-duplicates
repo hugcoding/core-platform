@@ -125,11 +125,11 @@ summary_query="$candidate_cte
 SELECT 'candidate_legacy_files' AS metric, COUNT(*)::text AS value FROM candidates
 UNION ALL SELECT 'distinct_canonical_files', COUNT(DISTINCT canonical_id)::text FROM candidates
 UNION ALL SELECT 'legacy_with_metadata', COUNT(DISTINCT c.legacy_id)::text FROM candidates c JOIN metadata m ON m.file_id = c.legacy_id
-UNION ALL SELECT 'legacy_with_embeddings', COUNT(DISTINCT c.legacy_id)::text FROM candidates c JOIN embeddings e ON e.file_id = c.legacy_id
-UNION ALL SELECT 'legacy_with_ai_output', COUNT(DISTINCT c.legacy_id)::text FROM candidates c JOIN ai_output a ON a.file_id = c.legacy_id
+UNION ALL SELECT 'legacy_with_embeddings', '0' -- retired legacy table; metric kept for CSV compatibility
+UNION ALL SELECT 'legacy_with_ai_output', '0' -- retired legacy table; metric kept for CSV compatibility
 UNION ALL SELECT 'metadata_rows_to_cascade', COUNT(m.*)::text FROM candidates c JOIN metadata m ON m.file_id = c.legacy_id
-UNION ALL SELECT 'embedding_rows_to_cascade', COUNT(e.*)::text FROM candidates c JOIN embeddings e ON e.file_id = c.legacy_id
-UNION ALL SELECT 'ai_output_rows_to_cascade', COUNT(a.*)::text FROM candidates c JOIN ai_output a ON a.file_id = c.legacy_id
+UNION ALL SELECT 'embedding_rows_to_cascade', '0' -- retired legacy table; metric kept for CSV compatibility
+UNION ALL SELECT 'ai_output_rows_to_cascade', '0' -- retired legacy table; metric kept for CSV compatibility
 UNION ALL SELECT 'size_mismatch_candidates', COUNT(*)::text FROM candidates WHERE legacy_size_bytes IS DISTINCT FROM canonical_size_bytes;
 "
 
@@ -185,16 +185,12 @@ SELECT c.legacy_id,
        c.canonical_id,
        c.reconstructed_path,
        COUNT(DISTINCT m.file_id) AS metadata_rows,
-       COUNT(DISTINCT e.file_id) AS embedding_rows,
-       COUNT(DISTINCT a.file_id) AS ai_output_rows
+       0::bigint AS embedding_rows,
+       0::bigint AS ai_output_rows
 FROM candidates c
 LEFT JOIN metadata m ON m.file_id = c.legacy_id
-LEFT JOIN embeddings e ON e.file_id = c.legacy_id
-LEFT JOIN ai_output a ON a.file_id = c.legacy_id
 GROUP BY c.legacy_id, c.canonical_id, c.reconstructed_path
 HAVING COUNT(DISTINCT m.file_id) > 0
-    OR COUNT(DISTINCT e.file_id) > 0
-    OR COUNT(DISTINCT a.file_id) > 0
 ORDER BY c.reconstructed_path
 LIMIT 5000;
 "
@@ -244,8 +240,8 @@ LEFT JOIN canonical c ON c.canonical_path = l.reconstructed_path
 WHERE c.canonical_id IS NULL;
 ")
 metadata_count=$(psql_value "$candidate_cte SELECT COUNT(m.*) FROM candidates c JOIN metadata m ON m.file_id = c.legacy_id;")
-embeddings_count=$(psql_value "$candidate_cte SELECT COUNT(e.*) FROM candidates c JOIN embeddings e ON e.file_id = c.legacy_id;")
-ai_output_count=$(psql_value "$candidate_cte SELECT COUNT(a.*) FROM candidates c JOIN ai_output a ON a.file_id = c.legacy_id;")
+embeddings_count=0
+ai_output_count=0
 size_mismatch_count=$(psql_value "$candidate_cte SELECT COUNT(*) FROM candidates WHERE legacy_size_bytes IS DISTINCT FROM canonical_size_bytes;")
 deleted_count=0
 post_candidate_count="$candidate_count"

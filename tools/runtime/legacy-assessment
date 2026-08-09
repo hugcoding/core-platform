@@ -56,8 +56,8 @@ UNION ALL SELECT 'files_active', COUNT(*)::text FROM files WHERE deleted_at IS N
 UNION ALL SELECT 'files_deleted', COUNT(*)::text FROM files WHERE deleted_at IS NOT NULL
 UNION ALL SELECT 'folders_total', COUNT(*)::text FROM folders
 UNION ALL SELECT 'metadata_total', COUNT(*)::text FROM metadata
-UNION ALL SELECT 'embeddings_total', COUNT(*)::text FROM embeddings
-UNION ALL SELECT 'ai_output_total', COUNT(*)::text FROM ai_output
+UNION ALL SELECT 'embeddings_total', '0' -- retired legacy table; metric kept for CSV compatibility
+UNION ALL SELECT 'ai_output_total', '0' -- retired legacy table; metric kept for CSV compatibility
 UNION ALL SELECT 'missing_path', COUNT(*)::text FROM files WHERE path IS NULL OR path = ''
 UNION ALL SELECT 'reconstructable_legacy_path', COUNT(*)::text FROM files f JOIN folders fo ON fo.id = f.folder_id WHERE (f.path IS NULL OR f.path = '') AND f.filename IS NOT NULL AND f.filename <> '' AND fo.path IS NOT NULL AND fo.path <> ''
 UNION ALL SELECT 'missing_hash_content', COUNT(*)::text FROM files WHERE hash_content IS NULL OR hash_content = ''
@@ -70,8 +70,8 @@ UNION ALL SELECT 'duplicate_name_size_mtime_groups', COUNT(*)::text FROM (SELECT
 UNION ALL SELECT 'duplicate_inode_mtime_groups', COUNT(*)::text FROM (SELECT inode, modified_at_fs, size_bytes FROM files WHERE inode IS NOT NULL AND modified_at_fs IS NOT NULL AND size_bytes IS NOT NULL GROUP BY inode, modified_at_fs, size_bytes HAVING COUNT(*) > 1) d
 UNION ALL SELECT 'duplicate_hash_groups', COUNT(*)::text FROM (SELECT hash_content FROM files WHERE hash_content IS NOT NULL AND hash_content <> '' GROUP BY hash_content HAVING COUNT(*) > 1) d
 UNION ALL SELECT 'orphan_metadata', COUNT(*)::text FROM metadata m LEFT JOIN files f ON f.id = m.file_id WHERE f.id IS NULL
-UNION ALL SELECT 'orphan_embeddings', COUNT(*)::text FROM embeddings e LEFT JOIN files f ON f.id = e.file_id WHERE f.id IS NULL
-UNION ALL SELECT 'orphan_ai_output', COUNT(*)::text FROM ai_output a LEFT JOIN files f ON f.id = a.file_id WHERE f.id IS NULL;
+UNION ALL SELECT 'orphan_embeddings', '0' -- retired legacy table; metric kept for CSV compatibility
+UNION ALL SELECT 'orphan_ai_output', '0'; -- retired legacy table; metric kept for CSV compatibility
 "
 
 extensions_query="
