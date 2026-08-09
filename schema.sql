@@ -43,17 +43,11 @@ DECLARE
     dir_folders INT := 0;
     dir_files INT := 0;
     dir_meta INT := 0;
-    dir_emb INT := 0;
-    dir_ai INT := 0;
 
     file_files INT := 0;
     file_meta INT := 0;
-    file_emb INT := 0;
-    file_ai INT := 0;
 
     orphan_metadata INT := 0;
-    orphan_embeddings INT := 0;
-    orphan_ai INT := 0;
     orphan_files INT := 0;
     orphan_folders INT := 0;
 BEGIN
@@ -76,13 +70,11 @@ BEGIN
     SELECT
         (SELECT COUNT(*) FROM excluded_folders),
         (SELECT COUNT(*) FROM files_to_delete),
-        (SELECT COUNT(*) FROM metadata WHERE file_id IN (SELECT file_id FROM files_to_delete)),
-        (SELECT COUNT(*) FROM embeddings WHERE file_id IN (SELECT file_id FROM files_to_delete)),
-        (SELECT COUNT(*) FROM ai_output WHERE file_id IN (SELECT file_id FROM files_to_delete))
-    INTO dir_folders, dir_files, dir_meta, dir_emb, dir_ai;
+        (SELECT COUNT(*) FROM metadata WHERE file_id IN (SELECT file_id FROM files_to_delete))
+    INTO dir_folders, dir_files, dir_meta;
 
-    RAISE NOTICE 'DIRS → removing % folders, % files, % metadata, % embeddings, % ai_output',
-        dir_folders, dir_files, dir_meta, dir_emb, dir_ai;
+    RAISE NOTICE 'DIRS: removing % folders, % files, % metadata',
+        dir_folders, dir_files, dir_meta;
 
     -- DELETE using fresh CTE
     WITH files_to_delete AS (
@@ -96,30 +88,6 @@ BEGIN
         )
     )
     DELETE FROM metadata WHERE file_id IN (SELECT file_id FROM files_to_delete);
-
-    WITH files_to_delete AS (
-        SELECT id AS file_id FROM files
-        WHERE folder_id IN (
-            SELECT id FROM folders
-            WHERE path LIKE '%/@eaDir%'
-               OR path LIKE '%/@appstore%'
-               OR path LIKE '%/@tmp%'
-               OR path LIKE '%/@%'
-        )
-    )
-    DELETE FROM embeddings WHERE file_id IN (SELECT file_id FROM files_to_delete);
-
-    WITH files_to_delete AS (
-        SELECT id AS file_id FROM files
-        WHERE folder_id IN (
-            SELECT id FROM folders
-            WHERE path LIKE '%/@eaDir%'
-               OR path LIKE '%/@appstore%'
-               OR path LIKE '%/@tmp%'
-               OR path LIKE '%/@%'
-        )
-    )
-    DELETE FROM ai_output WHERE file_id IN (SELECT file_id FROM files_to_delete);
 
     WITH files_to_delete AS (
         SELECT id AS file_id FROM files
@@ -154,13 +122,10 @@ BEGIN
     )
     SELECT
         (SELECT COUNT(*) FROM excluded_files),
-        (SELECT COUNT(*) FROM metadata WHERE file_id IN (SELECT file_id FROM excluded_files)),
-        (SELECT COUNT(*) FROM embeddings WHERE file_id IN (SELECT file_id FROM excluded_files)),
-        (SELECT COUNT(*) FROM ai_output WHERE file_id IN (SELECT file_id FROM excluded_files))
-    INTO file_files, file_meta, file_emb, file_ai;
+        (SELECT COUNT(*) FROM metadata WHERE file_id IN (SELECT file_id FROM excluded_files))
+    INTO file_files, file_meta;
 
-    RAISE NOTICE 'FILES → removing % files, % metadata, % embeddings, % ai_output',
-        file_files, file_meta, file_emb, file_ai;
+    RAISE NOTICE 'FILES: removing % files, % metadata', file_files, file_meta;
 
     -- DELETE using fresh CTE
     WITH excluded_files AS (
@@ -185,34 +150,10 @@ BEGIN
            OR filename LIKE '%.swp'
            OR filename LIKE '%.bak'
     )
-    DELETE FROM embeddings WHERE file_id IN (SELECT file_id FROM excluded_files);
-
-    WITH excluded_files AS (
-        SELECT id AS file_id FROM files
-        WHERE filename LIKE '~$%'
-           OR filename LIKE '._%'
-           OR filename = '.DS_Store'
-           OR filename = 'Thumbs.db'
-           OR filename LIKE '%.tmp'
-           OR filename LIKE '%.swp'
-           OR filename LIKE '%.bak'
-    )
-    DELETE FROM ai_output WHERE file_id IN (SELECT file_id FROM excluded_files);
-
-    WITH excluded_files AS (
-        SELECT id AS file_id FROM files
-        WHERE filename LIKE '~$%'
-           OR filename LIKE '._%'
-           OR filename = '.DS_Store'
-           OR filename = 'Thumbs.db'
-           OR filename LIKE '%.tmp'
-           OR filename LIKE '%.swp'
-           OR filename LIKE '%.bak'
-    )
     DELETE FROM files WHERE id IN (SELECT file_id FROM excluded_files);
 
     --------------------------------------------------------------------
-    -- 3. ORPHANS (metadata, embeddings, ai_output, files, folders)
+    -- 3. ORPHANS (metadata, files, folders)
     --------------------------------------------------------------------
     SELECT COUNT(*) INTO orphan_metadata
     FROM metadata m LEFT JOIN files f ON f.id = m.file_id
@@ -222,24 +163,6 @@ BEGIN
 
     DELETE FROM metadata m
     WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.id = m.file_id);
-
-    SELECT COUNT(*) INTO orphan_embeddings
-    FROM embeddings e LEFT JOIN files f ON f.id = e.file_id
-    WHERE f.id IS NULL;
-
-    RAISE NOTICE 'ORPHANS → removing % orphaned embeddings', orphan_embeddings;
-
-    DELETE FROM embeddings e
-    WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.id = e.file_id);
-
-    SELECT COUNT(*) INTO orphan_ai
-    FROM ai_output a LEFT JOIN files f ON f.id = a.file_id
-    WHERE f.id IS NULL;
-
-    RAISE NOTICE 'ORPHANS → removing % orphaned ai_output', orphan_ai;
-
-    DELETE FROM ai_output a
-    WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.id = a.file_id);
 
     SELECT COUNT(*) INTO orphan_files
     FROM files fl LEFT JOIN folders fo ON fo.id = fl.folder_id
@@ -378,81 +301,6 @@ ALTER FUNCTION public.is_scan_complete(sid uuid) OWNER TO hugo;
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
-
---
--- Name: ai_output; Type: TABLE; Schema: public; Owner: hugo
---
-
-CREATE TABLE public.ai_output (
-    id integer NOT NULL,
-    file_id integer,
-    summary text,
-    tags text[],
-    categories text[],
-    embedding public.vector(1536),
-    created_at timestamp without time zone DEFAULT now()
-);
-
-
-ALTER TABLE public.ai_output OWNER TO hugo;
-
---
--- Name: ai_output_id_seq; Type: SEQUENCE; Schema: public; Owner: hugo
---
-
-CREATE SEQUENCE public.ai_output_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE public.ai_output_id_seq OWNER TO hugo;
-
---
--- Name: ai_output_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: hugo
---
-
-ALTER SEQUENCE public.ai_output_id_seq OWNED BY public.ai_output.id;
-
-
---
--- Name: embeddings; Type: TABLE; Schema: public; Owner: hugo
---
-
-CREATE TABLE public.embeddings (
-    id integer NOT NULL,
-    file_id integer NOT NULL,
-    embedding public.vector(1536),
-    created_at timestamp without time zone DEFAULT now()
-);
-
-
-ALTER TABLE public.embeddings OWNER TO hugo;
-
---
--- Name: embeddings_id_seq; Type: SEQUENCE; Schema: public; Owner: hugo
---
-
-CREATE SEQUENCE public.embeddings_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE public.embeddings_id_seq OWNER TO hugo;
-
---
--- Name: embeddings_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: hugo
---
-
-ALTER SEQUENCE public.embeddings_id_seq OWNED BY public.embeddings.id;
-
 
 --
 -- Name: files; Type: TABLE; Schema: public; Owner: hugo
@@ -691,20 +539,6 @@ CREATE VIEW public.v_test_documents AS
 ALTER VIEW public.v_test_documents OWNER TO hugo;
 
 --
--- Name: ai_output id; Type: DEFAULT; Schema: public; Owner: hugo
---
-
-ALTER TABLE ONLY public.ai_output ALTER COLUMN id SET DEFAULT nextval('public.ai_output_id_seq'::regclass);
-
-
---
--- Name: embeddings id; Type: DEFAULT; Schema: public; Owner: hugo
---
-
-ALTER TABLE ONLY public.embeddings ALTER COLUMN id SET DEFAULT nextval('public.embeddings_id_seq'::regclass);
-
-
---
 -- Name: files id; Type: DEFAULT; Schema: public; Owner: hugo
 --
 
@@ -723,22 +557,6 @@ ALTER TABLE ONLY public.folders ALTER COLUMN id SET DEFAULT nextval('public.fold
 --
 
 ALTER TABLE ONLY public.metadata ALTER COLUMN id SET DEFAULT nextval('public.metadata_id_seq'::regclass);
-
-
---
--- Name: ai_output ai_output_pkey; Type: CONSTRAINT; Schema: public; Owner: hugo
---
-
-ALTER TABLE ONLY public.ai_output
-    ADD CONSTRAINT ai_output_pkey PRIMARY KEY (id);
-
-
---
--- Name: embeddings embeddings_pkey; Type: CONSTRAINT; Schema: public; Owner: hugo
---
-
-ALTER TABLE ONLY public.embeddings
-    ADD CONSTRAINT embeddings_pkey PRIMARY KEY (id);
 
 
 --
@@ -837,22 +655,6 @@ CREATE INDEX idx_metadata_width_height ON public.metadata USING btree (width, he
 --
 
 CREATE INDEX idx_scan_sessions_started_at ON public.scan_sessions USING btree (started_at DESC);
-
-
---
--- Name: ai_output ai_output_file_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: hugo
---
-
-ALTER TABLE ONLY public.ai_output
-    ADD CONSTRAINT ai_output_file_id_fkey FOREIGN KEY (file_id) REFERENCES public.files(id) ON DELETE CASCADE;
-
-
---
--- Name: embeddings embeddings_file_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: hugo
---
-
-ALTER TABLE ONLY public.embeddings
-    ADD CONSTRAINT embeddings_file_id_fkey FOREIGN KEY (file_id) REFERENCES public.files(id) ON DELETE CASCADE;
 
 
 --

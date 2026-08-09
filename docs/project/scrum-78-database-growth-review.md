@@ -141,6 +141,39 @@ velden bewust gaat gebruiken. Prioriteit is lager dan dubbele indexen.
 - Geen extra current-state-tabel naast de bestaande view maken.
 - Geen `VACUUM FULL` of andere blokkerende ruimteoperatie zonder noodzaak.
 
+## Retirement legacy AI-tabellen
+
+De oorspronkelijke tabellen `embeddings` en `ai_output` bevatten op ACC beide
+nul records en hebben geen actieve runtimewriter. De actuele contracten zijn de
+versieerbare `semantic_*`, `semantic_embeddings_acc` en `classification_*`
+tabellen. De oude tabellen worden daarom verwijderd door:
+
+```text
+database/migrations/20260809_remove_legacy_ai_tables.sql
+```
+
+De migratie stopt expliciet wanneer een van de tabellen onverwacht records bevat.
+Voor het verwijderen wordt `cleanup_all_execute()` vervangen door een versie die
+alleen de actuele operationele tabellen opruimt. De legacy assessment- en
+duplicate-tools behouden hun bestaande CSV-metrieknamen met waarde nul, zodat
+bestaande rapportverwerking niet breekt.
+
+Toepassen en verifiëren op ACC:
+
+```sh
+docker exec -i postgres psql -v ON_ERROR_STOP=1 -U hugo -d nasdb_test \
+  < database/migrations/20260809_remove_legacy_ai_tables.sql
+
+docker exec -i postgres psql -v ON_ERROR_STOP=1 -U hugo -d nasdb_test \
+  < database/assessment/scrum78_verify_legacy_ai_retirement.sql
+```
+
+De twee `remaining_relation`-waarden moeten leeg zijn,
+`has_legacy_reference` moet `false` zijn en alle actuele semantic- en
+classificationrelaties moeten blijven bestaan. De rollback herstelt de lege
+legacytabellen en de eerdere procedure wanneer een oude consument onverwacht
+toch nodig blijkt.
+
 ## Aanbevolen vervolg
 
 1. Sla deze meting periodiek op om werkelijke dag-/weekgroei vast te stellen.
