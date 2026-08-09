@@ -55,7 +55,7 @@ show_help() {
     printf '%s\n' "  core semantic similarity query TEXT [--limit N] [--threshold SCORE]"
     printf '%s\n' "  core semantic similarity document FILE_ID [--limit N] [--threshold SCORE]"
     printf '%s\n' "  core semantic retrieval-evaluate CONFIG_JSON"
-    printf '%s\n' "  core semantic rag QUERY [--model MODEL --endpoint LOCAL_URL] [--limit 1..5] [--threshold SCORE] [--dry-run]"
+    printf '%s\n' "  core semantic rag QUERY [--model MODEL --endpoint LOCAL_URL] [--limit 1..5] [--threshold SCORE] [--timeout-seconds 600] [--dry-run]"
     printf '%s\n' "  core runtime status"
     printf '%s\n' "  core runtime health"
     printf '%s\n' "  core runtime logs"

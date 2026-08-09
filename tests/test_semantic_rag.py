@@ -82,6 +82,11 @@ class SemanticRagTests(unittest.TestCase):
         payload = json.loads(request.data)
         self.assertEqual(payload["response_format"], {"type": "json_object"})
         self.assertEqual(payload["temperature"], 0.0)
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 600)
+
+    def test_provider_validates_timeout(self):
+        with self.assertRaisesRegex(ValueError, "timeout_seconds"):
+            OpenAICompatibleLocalProvider("http://127.0.0.1:11434/v1", timeout_seconds=0)
 
 
 if __name__ == "__main__":
