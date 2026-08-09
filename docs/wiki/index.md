@@ -5,6 +5,7 @@ Deze wiki wordt automatisch gegenereerd door de documentatiegenerator.
 ## Hoofdstukken
 
 - [Architectuur](architecture.md)
+- [CORE-ketendiagrammen](core-flows.md)
 - [Scanner](scanner.md)
 - [Metadata Worker](metadata-worker.md)
 - [Docker](docker.md)
