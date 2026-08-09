@@ -9,18 +9,29 @@ from typing import Any
 from core.semantic.pilot_selection import parse_timestamp, size_bucket
 
 
-SCHEMA_VERSION = "personal-golden-classification-v1"
+SCHEMA_VERSION = "personal-golden-classification-v2"
 SELECTION_VERSION = "personal-onedrive-golden-v1"
-PROMPT_VERSION = "scrum-85-personal-classification-v1"
+PROMPT_VERSION = "scrum-85-personal-classification-v2"
 SUPPORTED_EXTENSIONS = {"pdf", "docx"}
 CATEGORIES = {"personal", "administration", "finance", "home", "work", "study", "projects", "other"}
 LIFECYCLES = {"active_candidate", "archive_candidate", "needs_review", "quarantine"}
 SENSITIVITY = {"normal", "personal", "sensitive", "highly_sensitive"}
+SENSITIVITY_SIGNALS = {
+    "identity", "government_identifier", "financial", "health", "employment",
+    "education", "relationship", "address", "none",
+}
 TARGET_ROOTS = {
     "active_candidate": "Active", "archive_candidate": "Archive",
     "needs_review": "Review", "quarantine": "Quarantine",
 }
 SELECTION_ORDER = ("administration", "finance", "home", "work", "study", "projects", "personal")
+CATEGORY_PATHS = {
+    "personal": "Personal", "administration": "Administration", "finance": "Finance",
+    "home": "Home", "work": "Work", "study": "Study", "projects": "Projects",
+    "other": "Other",
+}
+CONFIDENCE_ORDER = {"low": 0, "medium": 1, "high": 2}
+SENSITIVITY_ORDER = {"normal": 0, "personal": 1, "sensitive": 2, "highly_sensitive": 3}
 
 
 def selection_stratum(path: str) -> str:
@@ -181,7 +192,91 @@ def build_classification_prompt(document: dict[str, Any], system_prompt: str) ->
     return system_prompt, user
 
 
-def validate_classification(content: str, file_id: int) -> dict[str, Any]:
+def _slug(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_")
+    return normalized[:80] or "unclassified"
+
+
+def _safe_filename(value: str, file_id: int) -> str:
+    sanitized = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", PurePosixPath(value).name).strip(" .")
+    return sanitized or f"file_{file_id}"
+
+
+def canonical_category(document_type: str, family: str, topics: list[str], proposed: str) -> str:
+    evidence = " ".join([document_type, family, *topics]).casefold()
+    if any(term in evidence for term in ("belasting", "income_tax", "factuur", "invoice", "financial")):
+        return "finance"
+    if any(term in evidence for term in ("curriculum", "cv", "vacature", "interview", "sollicit", "career")):
+        return "work"
+    if any(term in evidence for term in ("diploma", "certificate", "certificaat", "education")):
+        return "study"
+    if any(term in evidence for term in ("vve", "riolering", "woning", "building", "maintenance")):
+        return "home"
+    return proposed
+
+
+def canonical_family(document_type: str, family: str, topics: list[str]) -> str:
+    evidence = " ".join([document_type, family, *topics]).casefold()
+    mappings = (
+        (("riolering", "memo"), "vve_technical_memos"),
+        (("interview",), "interview_preparation"),
+        (("vacaturekrant",), "vacancy_publications"),
+        (("vacature_publicatie",), "vacancy_publications"),
+        (("newsletter", "vacature"), "vacancy_publications"),
+        (("vacaturetekst",), "vacancies"),
+        (("curriculum",), "curriculum_vitae"),
+        (("cv_",), "curriculum_vitae"),
+        (("motivatie",), "motivation_letters"),
+        (("belastingaangifte",), "income_tax"),
+        (("belastingaanslag",), "income_tax"),
+        (("invoice",), "invoices"),
+        (("factuur",), "invoices"),
+        (("diploma",), "diplomas"),
+        (("certificate",), "certificates"),
+        (("reglement",), "vve_regulations"),
+        (("werkbon",), "maintenance_work_orders"),
+        (("werkplan", "uwv"), "uwv_work_plans"),
+        (("government_form",), "government_forms"),
+        (("gemeentelijk",), "government_forms"),
+    )
+    for required, result in mappings:
+        if all(term in evidence for term in required):
+            return result
+    return _slug(family)
+
+
+def sensitivity_floor(category: str, evidence: str, signals: set[str]) -> str:
+    if signals.intersection({"identity", "government_identifier", "health"}) or any(
+        term in evidence for term in ("paspoort", "bsn", "diagnose", "medisch")
+    ):
+        return "highly_sensitive"
+    if "financial" in signals or category == "finance" or any(
+        term in evidence for term in ("belasting", "inkomen", "salaris", "uwv")
+    ):
+        return "sensitive"
+    if signals.difference({"none"}) or any(
+        term in evidence for term in ("curriculum", "cv", "diploma", "persoonlijke brief")
+    ):
+        return "personal"
+    return "normal"
+
+
+def _maximum_sensitivity(proposed: str, floor: str) -> str:
+    return max((proposed, floor), key=lambda item: SENSITIVITY_ORDER[item])
+
+
+def _cap_confidence(proposed: str, cap: str) -> str:
+    return min((proposed, cap), key=lambda item: CONFIDENCE_ORDER[item])
+
+
+def deterministic_path(lifecycle: str, category: str, family: str, filename: str, file_id: int) -> str:
+    return "/".join((
+        TARGET_ROOTS[lifecycle], CATEGORY_PATHS[category], family,
+        _safe_filename(filename, file_id),
+    ))
+
+
+def validate_classification(content: str, file_id: int, filename: str = "document") -> dict[str, Any]:
     try:
         value = json.loads(content)
     except (TypeError, json.JSONDecodeError):
@@ -204,19 +299,45 @@ def validate_classification(content: str, file_id: int) -> dict[str, Any]:
     family = value.get("document_family")
     reason = value.get("reason")
     topics = value.get("topics")
+    signals = value.get("sensitivity_signals")
     if not all(isinstance(item, str) and item.strip() for item in (document_type, family, reason)):
         return review_result(file_id, "missing_required_text")
     if not isinstance(topics, list) or len(topics) > 5 or not all(isinstance(item, str) for item in topics):
         return review_result(file_id, "invalid_topics")
-    path = str(value.get("suggested_path") or "").replace("\\", "/").strip("/")
-    parts = PurePosixPath(path).parts
-    if not path or ".." in parts or parts[0] != TARGET_ROOTS[lifecycle]:
-        return review_result(file_id, "invalid_suggested_path")
+    if not isinstance(signals, list) or not signals or not set(signals).issubset(SENSITIVITY_SIGNALS):
+        return review_result(file_id, "invalid_sensitivity_signals")
+    if "none" in signals and len(set(signals)) > 1:
+        return review_result(file_id, "conflicting_sensitivity_signals")
+    normalized_topics = [item.strip() for item in topics if item.strip()]
+    normalized_category = canonical_category(document_type, family, normalized_topics, category)
+    normalized_family = canonical_family(document_type, family, normalized_topics)
+    evidence = " ".join([filename, document_type, family, reason, *normalized_topics]).casefold()
+    normalized_sensitivity = _maximum_sensitivity(
+        sensitivity, sensitivity_floor(normalized_category, evidence, set(signals)),
+    )
+    warnings = []
+    if normalized_category != category:
+        warnings.append(f"category_normalized:{category}->{normalized_category}")
+    if normalized_family != _slug(family):
+        warnings.append(f"family_normalized:{_slug(family)}->{normalized_family}")
+    if normalized_sensitivity != sensitivity:
+        warnings.append(f"sensitivity_raised:{sensitivity}->{normalized_sensitivity}")
+    confidence_cap = "low" if normalized_category == "other" or normalized_family == "unknown" else "medium" if warnings or lifecycle == "needs_review" else "high"
+    normalized_confidence = _cap_confidence(confidence, confidence_cap)
+    if normalized_confidence != confidence:
+        warnings.append(f"confidence_capped:{confidence}->{normalized_confidence}")
+    path = deterministic_path(
+        lifecycle, normalized_category, normalized_family, filename, file_id,
+    )
     return {
         "file_id": file_id, "status": "classified", "document_type": document_type.strip(),
-        "category": category, "document_family": family.strip(),
-        "topics": [item.strip() for item in topics if item.strip()], "lifecycle": lifecycle,
-        "suggested_path": path, "sensitivity": sensitivity, "confidence": confidence,
+        "model_category": category, "category": normalized_category,
+        "model_document_family": family.strip(), "document_family": normalized_family,
+        "topics": normalized_topics, "lifecycle": lifecycle,
+        "suggested_path": path, "model_sensitivity": sensitivity,
+        "sensitivity": normalized_sensitivity, "sensitivity_signals": signals,
+        "model_confidence": confidence, "confidence": normalized_confidence,
+        "normalization_warnings": warnings,
         "reason": reason.strip(), "needs_review": True,
     }
 
@@ -227,5 +348,7 @@ def review_result(file_id: int, reason: str) -> dict[str, Any]:
         "category": "other", "document_family": "unknown", "topics": [],
         "lifecycle": "needs_review", "suggested_path": "Review/Unclassified",
         "sensitivity": "personal", "confidence": "low", "reason": reason,
-        "needs_review": True,
+        "model_category": "other", "model_document_family": "unknown",
+        "model_sensitivity": "personal", "sensitivity_signals": [],
+        "model_confidence": "low", "normalization_warnings": [], "needs_review": True,
     }

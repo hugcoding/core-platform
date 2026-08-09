@@ -75,7 +75,8 @@ CORE vervangt of actualiseert nooit stil een beoordeeld document.
 
 ## Classificatiecontract
 
-Prompt `scrum-85-personal-classification-v1` levert:
+Prompt `scrum-85-personal-classification-v2` levert uitsluitend inhoudelijke
+voorstellen:
 
 - `document_type`;
 - `category`: `personal`, `administration`, `finance`, `home`, `work`, `study`,
@@ -83,14 +84,33 @@ Prompt `scrum-85-personal-classification-v1` levert:
 - `document_family` en maximaal vijf onderwerpen;
 - `lifecycle`: `active_candidate`, `archive_candidate`, `needs_review` of
   `quarantine`;
-- een relatief `suggested_path` onder de bijpassende zone `Active`, `Archive`,
-  `Review` of `Quarantine`;
-- `sensitivity`, `confidence` en `reason`.
+- `sensitivity` en expliciete `sensitivity_signals`;
+- `confidence` en `reason`.
+
+De LLM levert geen doelpad. CORE normaliseert categorie en documentfamilie,
+verhoogt sensitivity wanneer beleidsregels dat vereisen, begrenst confidence bij
+correcties en bouwt deterministisch:
+
+```text
+{Active|Archive|Review|Quarantine}/{Category}/{canonical_family}/{original_filename}
+```
+
+Voorbeelden van canonieke families zijn `curriculum_vitae`, `invoices`,
+`income_tax`, `interview_preparation`, `vacancy_publications`, `diplomas`,
+`certificates`, `vve_regulations` en `vve_technical_memos`. Hierdoor krijgen
+inhoudelijk equivalente PDF- en DOCX-uitgaven dezelfde familie, onafhankelijk van
+hoofdletters, taalvariant of vrije formulering van het model.
 
 Mutatiedatum mag lifecycle ondersteunen maar bepaalt nooit documenttype of
-categorie. Een lifecycle en doelzone die elkaar tegenspreken, een onveilig pad,
-een onbekende enum of ongeldige JSON wordt teruggebracht naar
+categorie. Financiële, identiteits-, overheids-ID- en gezondheidsindicatoren
+leggen een minimale sensitivity op. Bij categorie-, familie- of
+sensitivitycorrecties wordt `high` confidence maximaal `medium`. Een onbekende
+enum, ontbrekend sensitivitysignaal of ongeldige JSON wordt teruggebracht naar
 `Review/Unclassified` met lage confidence.
+
+Rapportage bewaart zowel `model_*`-waarden als de canonieke waarden en vermeldt
+iedere correctie in `normalization_warnings`. Dit maakt het beleid controleerbaar
+zonder het vrije modelvoorstel als operationele waarheid te behandelen.
 
 ## Vervolg
 
