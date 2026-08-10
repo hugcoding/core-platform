@@ -29,6 +29,10 @@ doelpaden staan in [SCRUM-85 Persoonlijke LLM-classificatie](scrum-85-personal-l
 De read-only selectie van DOCX- en XLSX-golden records voor een dynamische
 werkset staat in [SCRUM-89 Actieve werkset pilot](scrum-89-active-workset-pilot.md).
 
+De minimale, immutable en OAP-gescheiden opslag van business policies staat in
+[SCRUM-92 Database-backed CORE policies](scrum-92-policy-registry.md). De eerste
+policy bevat het negenmaandenvenster voor actieve PDF-, Word- en Exceldocumenten.
+
 De read-only databasegroeimeting en contractgrenzen voor operationele, semantic-
 en classificatiedata staan in
 [SCRUM-78 Databasegroei en contractgrenzen](scrum-78-database-growth-review.md).
