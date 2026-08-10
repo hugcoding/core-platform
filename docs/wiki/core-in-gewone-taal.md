@@ -28,14 +28,23 @@ CORE kan momenteel:
 
 ## Hoe loopt een document door CORE?
 
-De scanner kijkt welke documenten nieuw of gewijzigd zijn. Iedere verandering
-wordt als een gebeurtenis doorgegeven. Een wachtrij zorgt dat gebeurtenissen
-rustig en in de juiste volgorde kunnen worden verwerkt.
+CORE kan veranderingen op twee manieren waarnemen. De scanner controleert
+documenten gepland of volledig. De watcher merkt veranderingen direct op. Ze
+horen bij dezelfde functionele procesfase en maken dezelfde soort gebeurtenissen.
+Een wachtrij zorgt dat die gebeurtenissen rustig kunnen worden verwerkt.
 
 ```mermaid
 flowchart LR
-    A["Documenten"] --> B["Scanner vindt veranderingen"]
-    B --> C["Gebeurtenissen"]
+    A["Documenten"] --> S
+    A --> W
+
+    subgraph B["Veranderingen waarnemen"]
+        S["Scanner: geplande controle"]
+        W["Watcher: directe signalen"]
+    end
+
+    S --> C["Gebeurtenissen"]
+    W --> C
     C --> D["Wachtrij"]
     D --> E["Verwerken en begrijpen"]
     E --> F["Actief of archief"]
