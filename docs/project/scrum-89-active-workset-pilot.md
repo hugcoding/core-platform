@@ -149,8 +149,10 @@ WHERE workset_status = 'active';
 ```
 
 De view bevat ook `inactive` en `needs_review`, zodat een beslissing verklaarbaar
-blijft. Conflicterende temporal evidence, ontbrekende activiteit en datums in de
-toekomst worden nooit automatisch actief. De view gebruikt alleen het actuele,
+blijft. Alleen materieel conflicterende temporal evidence, ontbrekende activiteit
+en datums in de toekomst worden nooit automatisch actief. Technisch equivalente
+PDF Info/XMP-representaties worden verklaard door `temporal-resolution-v1`; de
+bron-evidence blijft ongewijzigd en auditbaar. De view gebruikt alleen het actuele,
 niet-verwijderde golden record en schrijft niets naar bestanden of tabellen.
 
 Iedere rij bevat policy-ID, versie, contractschema, checksum en ingangsdatum. Zo

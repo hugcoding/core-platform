@@ -175,3 +175,33 @@ Worker-versie terug. Bronbestanden en `files`/`metadata` blijven intact.
 
 Media krijgt later providers voor EXIF en containerdatums zonder wijziging van het model.
 De active-worksetengine consumeert de temporal-profileview in een afzonderlijke refinement.
+
+## Temporal resolution v1
+
+`v_file_temporal_resolution` verklaart verschillen tussen PDF Info en XMP zonder
+records uit `file_date_evidence` te wijzigen. De evidence-ID's, bronwaarden en
+ruwe conflictindicatie blijven zichtbaar voor audit.
+
+De eerste regels zijn bewust smal:
+
+| Resolution | Reason | Regel |
+|---|---|---|
+| `consistent` | `consistent_single_value` | Geen verschillende representaties |
+| `equivalent` | `pdf_info_xmp_equivalent_instant` | PDF Info met bekende tijdzone en timezone-loze XMP verschillen na UTC-normalisatie maximaal twee seconden |
+| `equivalent` | `pdf_info_xmp_equivalent_date_precision` | XMP bevat middernacht en dezelfde UTC-kalenderdatum, dus uitsluitend lagere precisie |
+| `material_conflict` | `materially_different_temporal_evidence` | Waarden zijn niet veilig equivalent te verklaren |
+
+De regelversie is `temporal-resolution-v1`. `v_file_temporal_profile` zet
+`created_has_conflict` en `modified_has_conflict` voortaan alleen voor een
+`material_conflict`. De hoger gerankte bronwaarde verandert niet en XMP verhoogt
+de confidence niet. Nieuwe broncombinaties worden niet generiek gelijkgesteld,
+maar blijven fail-safe material conflict totdat een afzonderlijke regel bestaat.
+
+Controleer de resolutionlaag met:
+
+```sql
+SELECT date_type, resolution_status, resolution_reason, COUNT(*)
+FROM v_file_temporal_resolution
+GROUP BY date_type, resolution_status, resolution_reason
+ORDER BY date_type, resolution_status, resolution_reason;
+```
