@@ -114,3 +114,44 @@ als oorspronkelijke documentaanmaakdatum.
 - Alleen huidige golden records worden automatisch active/inactive beoordeeld.
 - Ontbrekende golden records en temporal conflicts worden niet automatisch beslist.
 - Policywaarde en policyversie worden bij ieder resultaat vastgelegd.
+
+## Database-backed actuele view
+
+Na de exportpilot biedt `v_active_document_workset` hetzelfde beslisdomein als
+read-only databaseprojectie voor het portaal en Pulse. De view leest uitsluitend
+de effectieve `active_document_workset`-policy uit `v_current_policies` en gebruikt
+daaruit het activiteitsvenster, de toegestane extensies en bronroots.
+
+De omgeving wordt voorlopig gelezen uit de PostgreSQL-setting `core.environment`.
+Wanneer die ontbreekt, gebruikt de huidige acceptatieomgeving expliciet
+`acceptance`. Deze tijdelijke discriminator wordt bij de fysieke O/A/P-scheiding
+opnieuw beoordeeld onder SCRUM-78.
+
+```sql
+SELECT
+    file_id,
+    filename,
+    workset_status,
+    last_qualifying_activity_at,
+    reason_code,
+    activity_confidence,
+    policy_version
+FROM v_active_document_workset
+ORDER BY last_qualifying_activity_at DESC NULLS LAST;
+```
+
+Voor alleen de voorgestelde actieve werkset:
+
+```sql
+SELECT *
+FROM v_active_document_workset
+WHERE workset_status = 'active';
+```
+
+De view bevat ook `inactive` en `needs_review`, zodat een beslissing verklaarbaar
+blijft. Conflicterende temporal evidence, ontbrekende activiteit en datums in de
+toekomst worden nooit automatisch actief. De view gebruikt alleen het actuele,
+niet-verwijderde golden record en schrijft niets naar bestanden of tabellen.
+
+Iedere rij bevat policy-ID, versie, contractschema, checksum en ingangsdatum. Zo
+kan achteraf worden gereconstrueerd onder welke policy de status is berekend.
