@@ -177,6 +177,42 @@ CORE mag een documentstatus automatisch bepalen wanneer een goedgekeurde regel
 voldoende zekerheid geeft. Een onomkeerbare actie, zoals hard delete, blijft een
 aparte stap met strengere controle en auditgeschiedenis.
 
+## Er blijft altijd context of een fallback
+
+Ook wanneer de volledige bestandsinhoud uiteindelijk wordt verwijderd, blijft
+binnen CORE minimaal context beschikbaar. Denk aan:
+
+- dat het document heeft bestaan;
+- de naam, het type en belangrijke datums;
+- de voormalige categorie en documentfamilie;
+- de reden waarom het is gearchiveerd of verwijderd;
+- wanneer en volgens welke regel dat gebeurde;
+- eventuele relaties met andere documenten;
+- de beoordeling en besluitgeschiedenis.
+
+Afhankelijk van het belang kan daarnaast tijdelijk of langdurig een snapshot of
+back-up van de inhoud worden bewaard.
+
+```mermaid
+flowchart TD
+    A["Document komt in aanmerking voor opruimen"] --> B["Belang en risico bepalen"]
+    B --> C{"Hoge belangscore?"}
+    C -->|Ja| D["Langere wachttijd"]
+    C -->|Nee| E["Normale wachttijd"]
+    D --> F["Snapshot of back-up bewaren"]
+    E --> G["Fallback volgens bewaarbeleid"]
+    F --> H["Opnieuw beoordelen"]
+    G --> H
+    H --> I["Eventueel definitief verwijderen"]
+    I --> J["Context en besluitgeschiedenis blijven"]
+```
+
+Een hogere belangscore betekent dus niet automatisch dat een document actief
+blijft. Het betekent wel dat CORE voorzichtiger opruimt: een langere wachttijd,
+sterkere reviewvoorwaarden en vaker een snapshot of back-up. Daardoor kan een
+belangrijk historisch document uit de actieve werkmap verdwijnen zonder dat het
+meteen onherstelbaar verloren gaat.
+
 CORE moet je uiteindelijk helpen om:
 
 1. actuele en belangrijke documenten actief te houden;
