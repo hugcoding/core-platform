@@ -7,7 +7,7 @@ from typing import Any
 
 
 POLICY_SCHEMA_VERSION = "active-workset-policy-v1"
-RESULT_SCHEMA_VERSION = "active-workset-result-v1"
+RESULT_SCHEMA_VERSION = "active-workset-result-v2"
 REQUIRED_EXTENSIONS = {"docx", "xlsx"}
 
 
@@ -51,14 +51,19 @@ def validate_policy(policy: dict[str, Any]) -> dict[str, Any]:
     for key in ("active_per_extension", "outside_near_cutoff", "duplicate_groups"):
         if int(review.get(key, -1)) < 0:
             raise ValueError(f"review_selection.{key} must be zero or greater")
+    if int(review.get("temporal_conflicts", 20)) < 0:
+        raise ValueError("review_selection.temporal_conflicts must be zero or greater")
     return {
         **policy,
         "source": source,
         "extensions": sorted(extensions),
         "activity_window_months": months,
-        "review_selection": {key: int(review[key]) for key in (
-            "active_per_extension", "outside_near_cutoff", "duplicate_groups"
-        )},
+        "review_selection": {
+            **{key: int(review[key]) for key in (
+                "active_per_extension", "outside_near_cutoff", "duplicate_groups"
+            )},
+            "temporal_conflicts": int(review.get("temporal_conflicts", 20)),
+        },
     }
 
 
@@ -67,6 +72,17 @@ def _integer(value: object) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _boolean(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "t", "true", "yes"}
+
+
+def _confidence(value: object, default: str = "low") -> str:
+    candidate = str(value or "").strip().lower()
+    return candidate if candidate in {"low", "medium", "high"} else default
 
 
 def evaluate_rows(
@@ -107,50 +123,85 @@ def _evaluate(
     as_of: datetime, policy: dict[str, Any],
 ) -> dict[str, Any]:
     modified = parse_timestamp(row.get("modified_at_fs"))
+    source_created = parse_timestamp(row.get("temporal_source_created_at"))
+    source_modified = parse_timestamp(row.get("temporal_source_modified_at"))
     size_bytes = _integer(row.get("size_bytes"))
     full_hash = str(row.get("content_sha256") or "")
     group_id = str(row.get("content_group_id") or "")
     golden_id = _integer(row.get("golden_file_id"))
+    created_conflict = _boolean(row.get("created_has_conflict"))
+    modified_conflict = _boolean(row.get("modified_has_conflict"))
     reason = ""
     confidence = "low"
     within: bool | None = None
+    signals = [
+        (source_modified, "source_metadata_modified", _confidence(row.get("modified_confidence"))),
+        (source_created, "source_metadata_created", _confidence(row.get("created_confidence"))),
+        (modified, "filesystem_mtime", "low"),
+    ]
+    valid_signals = [signal for signal in signals if signal[0] is not None]
+    activity_at, activity_source, activity_confidence = max(
+        valid_signals, key=lambda signal: signal[0]
+    ) if valid_signals else (None, "none", "low")
     if size_bytes <= 0:
         status, reason = "needs_review", "empty_file"
     elif not full_hash:
         status, reason = "needs_review", "missing_full_content_hash"
     elif not group_id or not golden_id:
         status, reason = "needs_review", "missing_persisted_golden_record"
-    elif modified is None or modified > as_of:
-        status, reason = "needs_review", "invalid_source_modified_at"
-    elif modified >= cutoff:
-        status, reason, within = "active_candidate", "source_mtime_within_configured_window", True
+    elif created_conflict or modified_conflict:
+        status, reason = "needs_review", "conflicting_temporal_evidence"
+    elif activity_at is None or activity_at > as_of:
+        status, reason = "needs_review", "invalid_or_missing_activity_timestamp"
+    elif activity_at >= cutoff:
+        status, reason, within = "active_candidate", f"{activity_source}_within_configured_window", True
+        confidence = activity_confidence
     else:
         status, reason, within = "inactive", "no_qualifying_activity_within_configured_window", False
+        confidence = activity_confidence
     return {
         "schema_version": RESULT_SCHEMA_VERSION,
         "policy_version": str(policy["policy_version"]),
+        "candidate_file_id": golden_id or "",
         "source_file_id": _integer(row.get("source_file_id")),
         "golden_file_id": golden_id or "",
         "content_group_id": group_id,
         "content_sha256": full_hash,
         "source_path": str(row.get("source_path") or ""),
         "golden_path": str(row.get("golden_path") or ""),
-        "filename": str(row.get("filename") or ""),
-        "extension": str(row.get("extension") or "").lower(),
-        "size_bytes": size_bytes,
+        "filename": str(row.get("golden_filename") or row.get("filename") or ""),
+        "extension": str(row.get("golden_extension") or row.get("extension") or "").lower(),
+        "size_bytes": _integer(row.get("golden_size_bytes") or size_bytes),
         "source_copy_count": len(members),
         "duplicate_represented_by_golden": len(members) > 1 or (
             bool(golden_id) and golden_id != _integer(row.get("source_file_id"))
         ),
         "core_first_observed_at": str(row.get("core_created_at") or ""),
         "source_modified_at": modified.isoformat() if modified else "",
-        "activity_basis_source": "filesystem_mtime",
+        "temporal_source_created_at": source_created.isoformat() if source_created else "",
+        "temporal_created_confidence": _confidence(row.get("created_confidence"), ""),
+        "temporal_created_source_type": str(row.get("created_source_type") or ""),
+        "temporal_source_modified_at": source_modified.isoformat() if source_modified else "",
+        "temporal_modified_confidence": _confidence(row.get("modified_confidence"), ""),
+        "temporal_modified_source_type": str(row.get("modified_source_type") or ""),
+        "temporal_evidence_count": _integer(row.get("evidence_count")),
+        "created_has_conflict": created_conflict,
+        "modified_has_conflict": modified_conflict,
+        "activity_at": activity_at.isoformat() if activity_at else "",
+        "activity_basis_source": activity_source,
         "within_activity_window": "" if within is None else within,
         "activity_window_months": policy["activity_window_months"],
         "workset_status": status,
         "reason": reason,
         "confidence": confidence,
-        "missing_evidence": "source_created_at,content_changed_at,last_human_activity_at",
+        "missing_evidence": ",".join(
+            name for name, present in (
+                ("source_created_at", source_created is not None),
+                ("source_modified_at", source_modified is not None),
+                ("content_changed_at", False),
+                ("last_human_activity_at", False),
+            ) if not present
+        ),
         "database_writes": False,
         "file_mutations": False,
     }
@@ -177,7 +228,7 @@ def select_review(rows: list[dict[str, Any]], policy: dict[str, Any]) -> list[di
 
     inactive = sorted(
         (row for row in rows if row["workset_status"] == "inactive"),
-        key=lambda row: row["source_modified_at"], reverse=True,
+        key=lambda row: row["activity_at"], reverse=True,
     )
     for row in inactive[:limits["outside_near_cutoff"]]:
         add(row, "outside_near_cutoff")
@@ -185,6 +236,10 @@ def select_review(rows: list[dict[str, Any]], policy: dict[str, Any]) -> list[di
     duplicates = [row for row in rows if row["duplicate_represented_by_golden"]]
     for row in duplicates[:limits["duplicate_groups"]]:
         add(row, "duplicate_group")
+
+    conflicts = [row for row in rows if row["reason"] == "conflicting_temporal_evidence"]
+    for row in conflicts[:limits["temporal_conflicts"]]:
+        add(row, "temporal_conflict")
     return list(chosen.values())
 
 

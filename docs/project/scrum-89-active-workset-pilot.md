@@ -12,10 +12,30 @@ niet naar PostgreSQL en gebruikt geen LLM.
 - Bestandstypen: `docx` en `xlsx`.
 - Activiteitsvenster: configuration-driven, initieel negen kalendermaanden.
 - Exacte duplicaten: maximaal één resultaat per persistente contentgroep.
-- Representatie: het bestaande golden record, ook als dit buiten de importroot staat.
-- Huidig activiteitssignaal: `modified_at_fs`, expliciet met lage confidence.
+- Kandidaat: uitsluitend het actuele, niet-verwijderde `content_groups.golden_file_id`.
+- Tijdsbewijs: filesystem-mtime plus `v_file_temporal_profile` van het golden record.
 
-De policy staat in `project/policies/active-workset-v1.json`.
+De policy staat in `project/policies/active-workset-v1.json`. De termijn staat
+daarmee niet hardcoded in selectiecode of reason-codes.
+
+## Selectieflow
+
+```mermaid
+flowchart LR
+    S["DOCX/XLSX in OneDrive-import"] --> C["Persistente contentgroep"]
+    C --> G["Actueel golden record"]
+    G --> T["v_file_temporal_profile"]
+    T --> X{"Conflicterende evidence?"}
+    X -->|Ja| R["needs_review"]
+    X -->|Nee| W{"Evidence binnen policyvenster?"}
+    W -->|Ja| A["active_candidate"]
+    W -->|Nee| I["inactive"]
+```
+
+Bron-created en bron-modified evidence zijn contentgebonden en kunnen daardoor
+op het actuele golden record worden geprojecteerd. Niet-golden duplicaten krijgen
+geen eigen werksetstatus. Een golden-recordwissel verandert de evidencehistorie
+niet; een volgende pilotrun beoordeelt het dan actuele golden record.
 
 ## Uitvoeren
 
@@ -35,33 +55,40 @@ Onder `project/exports/active-workset/` verschijnen een volledige CSV, compacte
 review-CSV, JSON, Markdown en de verwijzingen `active-workset-v1-latest.json` en
 `active-workset-v1-latest.md`.
 
-De review bevat volgens de policy maximaal twintig actieve kandidaten per
-extensie, tien kandidaten net buiten het venster en vijf duplicaatgroepen. Een
-bestand dat in meerdere steekproeven valt komt één keer voor met meerdere
-reviewredenen.
+De reviewselectie is configuration-driven. Zij bevat steekproeven van actieve
+kandidaten, kandidaten net buiten het venster, duplicaatgroepen en temporal
+conflicts. Eén golden record komt hoogstens eenmaal voor; meerdere reviewredenen
+worden gecombineerd.
 
-## Tijdcontract
+## Tijdcontract en beslisregels
 
-`files.created_at` wordt uitsluitend geëxporteerd als
-`core_first_observed_at`. Dit is geen documentaanmaakdatum en telt niet mee als
-activiteit.
+`files.created_at` wordt uitsluitend geëxporteerd als `core_first_observed_at`.
+Dit is geen documentaanmaakdatum en telt niet mee als activiteit.
+
+CORE kiest het nieuwste geldige signaal uit bron-modified, bron-created en
+filesystem-mtime. De confidence volgt het gekozen signaal; filesystem-mtime is
+`low`. Een temporal conflict heeft voorrang op een recente datum en vereist
+menselijke beoordeling.
 
 | Status | Reden | Betekenis |
 |---|---|---|
-| `active_candidate` | `source_mtime_within_configured_window` | Voorlopig binnen venster; lage confidence |
-| `inactive` | `no_qualifying_activity_within_configured_window` | Geen bruikbaar signaal binnen venster |
-| `needs_review` | `missing_persisted_golden_record` | Integriteitsbewijs ontbreekt |
-| `needs_review` | `invalid_source_modified_at` | Tijdsbewijs ontbreekt of ligt in de toekomst |
+| `active_candidate` | `source_metadata_modified_within_configured_window` | Embedded bron-modified valt binnen negen maanden |
+| `active_candidate` | `source_metadata_created_within_configured_window` | Embedded bron-created valt binnen negen maanden |
+| `active_candidate` | `filesystem_mtime_within_configured_window` | Filesystem-mtime valt binnen negen maanden |
+| `inactive` | `no_qualifying_activity_within_configured_window` | Geen bruikbaar signaal binnen het policyvenster |
+| `needs_review` | `conflicting_temporal_evidence` | Meerdere bronwaarden spreken elkaar tegen |
+| `needs_review` | `missing_persisted_golden_record` | Er is geen actueel persisted golden record |
+| `needs_review` | `invalid_or_missing_activity_timestamp` | Tijdsbewijs ontbreekt of ligt in de toekomst |
 
-De output noemt `source_created_at`, `content_changed_at` en
-`last_human_activity_at` bewust als ontbrekende evidence. Mtime wordt pas als
-primair bewijs vervangen wanneer bronaanmaak, oud/nieuw hashbewijs of
-Windows/SMB-activiteit beschikbaar is.
+`content_changed_at` en `last_human_activity_at` blijven expliciete ontbrekende
+evidence zolang hash-events en Windows/SMB-activiteit nog niet in dit contract
+zijn geïntegreerd.
 
 ## Veiligheidsgrenzen
 
 - Geen databasewrites of bestandsmutaties.
 - Geen lifecycle- of doelpadwijzigingen.
 - Geen classificatie of LLM-verwerking.
-- Geen hardcoded termijn in reason-codes.
+- Alleen huidige golden records worden automatisch active/inactive beoordeeld.
+- Ontbrekende golden records en temporal conflicts worden niet automatisch beslist.
 - Policywaarde en policyversie worden bij ieder resultaat vastgelegd.
