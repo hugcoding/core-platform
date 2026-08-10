@@ -65,6 +65,7 @@ nav:
       - SCRUM-78 Databasegroei: project/scrum-78-database-growth-review.md
       - SCRUM-59 OneDrive Semantic Pilot: project/scrum-59-onedrive-semantic-pilot.md
       - SCRUM-85 Persoonlijke LLM-classificatie: project/scrum-85-personal-llm-classification.md
+      - SCRUM-89 Actieve werkset pilot: project/scrum-89-active-workset-pilot.md
   - Runtime:
       - Scanner: wiki/scanner.md
       - Metadata Worker: wiki/metadata-worker.md
