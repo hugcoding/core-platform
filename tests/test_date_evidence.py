@@ -81,6 +81,18 @@ class DateEvidenceExtractionTests(unittest.TestCase):
         self.assertEqual("absent", row["timezone_status"])
         self.assertEqual("low", row["confidence"])
 
+    def test_real_world_pdf_utc_suffix_variants_are_normalized(self):
+        for raw in ("D:20250211174245Z00'00'", "D:20251125013310Z'"):
+            with self.subTest(raw=raw):
+                reader = SimpleNamespace(
+                    is_encrypted=False, metadata={"/CreationDate": raw}, xmp_metadata=None
+                )
+                row = extract_date_evidence(
+                    Path("example.pdf"), pdf_reader_factory=lambda _: reader
+                )[0]
+                self.assertEqual("utc", row["timezone_status"])
+                self.assertTrue(row["value_at"].endswith("+00:00"))
+
     def test_idempotency_tracks_content_version_and_extractor(self):
         evidence = extract_date_evidence(self.office_file(".docx"))[0]
         first = idempotency_key(12, "a" * 64, evidence)

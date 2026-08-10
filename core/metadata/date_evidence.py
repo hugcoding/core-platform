@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import zipfile
 from datetime import datetime, timedelta, timezone
@@ -16,7 +17,7 @@ _DCTERMS = "http://purl.org/dc/terms/"
 _PDF_DATE = re.compile(
     r"^(?:D:)?(?P<year>\d{4})(?P<month>\d{2})?(?P<day>\d{2})?"
     r"(?P<hour>\d{2})?(?P<minute>\d{2})?(?P<second>\d{2})?"
-    r"(?:(?P<z>Z)|(?P<sign>[+-])(?P<offhour>\d{2})'?"
+    r"(?:(?P<z>Z)(?:00'?00'?|')?|(?P<sign>[+-])(?P<offhour>\d{2})'?"
     r"(?P<offminute>\d{2})?'?)?$"
 )
 
@@ -94,6 +95,9 @@ def _office_evidence(path: Path, extension: str) -> list[dict[str, Any]]:
 
 
 def _pdf_evidence(path: Path, pdf_reader_factory: Callable[[Path], Any] | None) -> list[dict[str, Any]]:
+    # pypdf can recover useful metadata from damaged object streams, but emits
+    # hundreds of warnings for a single file. CORE reports file-level failures.
+    logging.getLogger("pypdf").setLevel(logging.ERROR)
     if pdf_reader_factory is None:
         from pypdf import PdfReader
         pdf_reader_factory = PdfReader

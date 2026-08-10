@@ -4,13 +4,18 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import warnings
 from pathlib import Path
 
 import psycopg2
 import psycopg2.extras
 
 from core.metadata.date_evidence import SUPPORTED_EXTENSIONS, extract_date_evidence
-from metadata_worker import persist_date_evidence
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore", message=r"Call to '__init__'.*retry_on_timeout", category=DeprecationWarning
+    )
+    from metadata_worker import persist_date_evidence
 
 
 def validated_source(value: str) -> Path:
