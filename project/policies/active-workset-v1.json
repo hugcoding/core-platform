@@ -1,0 +1,12 @@
+{
+  "schema_version": "active-workset-policy-v1",
+  "policy_version": "scrum-89-active-workset-v1",
+  "source": "/volume1/data/import/cloud/onedrive/current/Documenten",
+  "extensions": ["docx", "xlsx"],
+  "activity_window_months": 9,
+  "review_selection": {
+    "active_per_extension": 20,
+    "outside_near_cutoff": 10,
+    "duplicate_groups": 5
+  }
+}
