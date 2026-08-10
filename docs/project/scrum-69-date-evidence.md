@@ -81,6 +81,34 @@ Foreign keys verwijderen evidence niet via cascade. CORE gebruikt soft-delete; f
 verwijdering van een database-identiteit vereist daardoor eerst een expliciet retentiebesluit
 voor het bijbehorende bewijs.
 
+## Filesystemdatums en technische CORE-access
+
+Synology File Station toont naast wijzigingstijd ook **Gemaakt op** en
+**Laatst geopend**. Die labels zijn niet zonder provenance gelijk aan een
+oorspronkelijke documentdatum of menselijke activiteit:
+
+- een filesystem-aanmaak- of birthtime die na de inhoudelijke wijzigingstijd ligt,
+  beschrijft bij een Cloud Sync-import doorgaans het ontstaan van de NAS-kopie;
+- zo'n tijd hoort eventueel als file-scope `uploaded`/`synced` evidence te worden
+  opgeslagen, nooit als content-scope `source_created_at`;
+- filesystem `atime` beschrijft een read, maar identificeert niet wie of welk proces
+  heeft gelezen;
+- hashing, metadata-extractie, datum-backfill, semantic extraction en embedding kunnen
+  zelf zo'n read veroorzaken en daarmee `atime` veranderen;
+- een technische CORE-read wijzigt de documentinhoud, contenthash en `mtime` niet.
+
+CORE zet `atime` niet terug: dat zou een nieuwe filesystemmutatie zijn en historische
+informatie vervalsen. De beoogde oplossing is append-only activity evidence. Een CORE-run
+legt eigen reads vast als bijvoorbeeld `core_hash_read`, `core_metadata_extract` of
+`core_embedding_extract`, met `actor_scope=system`. Een atime-verandering die daarmee
+samenvalt is technische access en geen `last_human_activity_at`.
+
+Raw `atime` wordt pas opgenomen nadat een afgebakende pilot het Synology-mountbeleid en
+de effecten van scanner, SMB, hashing en extractie afzonderlijk heeft gemeten. Zonder
+betrouwbare correlatie blijft het hoogstens `actor_scope=unknown` met lage confidence.
+SMB-audit- of applicatie-events met bron en actor kunnen later sterker human-accessbewijs
+leveren.
+
 ## Runtime-integratie
 
 Na een file-upsert extraheert Metadata Worker datum-evidence binnen dezelfde transactie.
@@ -115,7 +143,9 @@ core metadata date-backfill \
   --apply
 ```
 
-Herhalen is veilig: dezelfde observatie maakt geen tweede record. Bronbestanden veranderen niet.
+Herhalen is database-idempotent: dezelfde observatie maakt geen tweede record en de
+documentinhoud verandert niet. Het uitlezen van een bronbestand kan filesystem `atime`
+wel bijwerken; dit is technische access en geen inhoudelijke bestandsmutatie.
 
 ## Verificatie
 

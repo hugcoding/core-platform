@@ -84,11 +84,33 @@ menselijke beoordeling.
 evidence zolang hash-events en Windows/SMB-activiteit nog niet in dit contract
 zijn geïntegreerd.
 
+## Geen menselijke activiteit afleiden uit raw atime
+
+Synology's **Laatst geopend** kan door een menselijke SMB-read veranderen, maar ook
+door CORE zelf. Hashing, datum- en metadata-extractie, semantic extraction en embeddings
+lezen het document. Een reeks vrijwel opeenvolgende access-tijden kan daarom een technische
+batch zijn en mag niet als menselijk gebruik in de negenmaandenpolicy terechtkomen.
+
+De active-worksetpilot gebruikt raw filesystem `atime` daarom niet. De toekomstige
+activity-keten scheidt minimaal:
+
+| Waarneming | Actor | Gebruik in actieve werkset |
+|---|---|---|
+| Bekende hash-, extractie- of embedding-read | `system` | Uitsluiten |
+| Cloud Sync/import | `system` | Uitsluiten als human activity |
+| Onverklaarde atime-verandering | `unknown` | Hoogstens lage confidence/review |
+| Bevestigd SMB- of applicatie-event | `owner`/`application` | Bruikbaar met provenance |
+
+Technische reads worden later append-only vastgelegd en gecorreleerd; `atime` wordt niet
+teruggezet. Een filesystem-birthtime die na `mtime` ligt geldt als NAS-/syncmoment en niet
+als oorspronkelijke documentaanmaakdatum.
+
 ## Veiligheidsgrenzen
 
 - Geen databasewrites of bestandsmutaties.
 - Geen lifecycle- of doelpadwijzigingen.
 - Geen classificatie of LLM-verwerking.
+- Geen raw filesystem-atime als menselijke activiteit.
 - Alleen huidige golden records worden automatisch active/inactive beoordeeld.
 - Ontbrekende golden records en temporal conflicts worden niet automatisch beslist.
 - Policywaarde en policyversie worden bij ieder resultaat vastgelegd.
