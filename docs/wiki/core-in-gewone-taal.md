@@ -52,6 +52,102 @@ flowchart LR
     E --> H["Aandachtsgebieden"]
 ```
 
+## Wat betekent verwerken en begrijpen?
+
+CORE leest niet zomaar een document en weet dan alles. Het bouwt stap voor stap
+een betrouwbare beschrijving op. Iedere stap voegt een stukje begrip toe.
+
+```mermaid
+flowchart LR
+    A["Gebeurtenis uit wachtrij"] --> B["Bestand herkennen"]
+    B --> C["Feiten verzamelen"]
+    C --> D["Met andere documenten vergelijken"]
+    D --> E["Betekenis en gebruik bepalen"]
+    E --> F["Zekerheid berekenen"]
+    F --> G{"Duidelijk genoeg?"}
+    G -->|Ja| H["Status bepalen"]
+    G -->|Nee| I["Beoordeling vragen"]
+```
+
+### 1. Bestand herkennen
+
+CORE stelt eerst eenvoudige vragen:
+
+- Welk bestand is dit?
+- Is het nieuw, gewijzigd, verplaatst of verwijderd?
+- Heeft CORE dit bestand of dezelfde inhoud eerder gezien?
+
+### 2. Feiten verzamelen
+
+CORE verzamelt controleerbare informatie, zoals:
+
+- naam en bestandstype;
+- grootte en inhoud;
+- datums uit het document;
+- waar het document staat;
+- of er andere exemplaren bestaan.
+
+### 3. Vergelijken
+
+Daarna vergelijkt CORE het document met wat al bekend is.
+
+```mermaid
+flowchart TD
+    A["Dit document"] --> B{"Dezelfde inhoud bekend?"}
+    B -->|Ja| C["Onderdeel van een groep kopieën"]
+    B -->|Nee| D["Nieuwe unieke inhoud"]
+    C --> E["Beste hoofddocument bepalen"]
+    D --> F["Nieuw documentprofiel"]
+```
+
+### 4. Betekenis en gebruik bepalen
+
+CORE probeert vervolgens praktisch bruikbare vragen te beantwoorden:
+
+- Wat voor document is dit waarschijnlijk?
+- Hoort het bij een bekende documentgroep?
+- Is het recent en actief, of eerder historisch?
+- Past het bij een huidig aandachtsgebied?
+- Is het mogelijk dubbel, verouderd of opruimbaar?
+- Welke doelmap zou logisch zijn?
+
+CORE gebruikt eerst bekende regels en eerder bevestigde voorbeelden. Extra
+slimme hulp is alleen nodig wanneer die basis onvoldoende zekerheid geeft.
+
+### 5. Een uitkomst met uitleg
+
+Het doel is niet alleen een label. CORE bewaart ook waarom een uitkomst is
+bepaald en hoe zeker die uitkomst is.
+
+```mermaid
+flowchart LR
+    A["Feiten"] --> D["Uitkomst"]
+    B["Toegepaste regels"] --> D
+    C["Zekerheid"] --> D
+    D --> E["Actief"]
+    D --> F["Archiefkandidaat"]
+    D --> G["Dubbel"]
+    D --> H["Beoordeling nodig"]
+```
+
+## Wat is het doel van begrijpen?
+
+Het doel is dat CORE voldoende betrouwbare context heeft om je documenten
+veilig door hun levenscyclus te begeleiden:
+
+```mermaid
+flowchart LR
+    A["Betrouwbare context"] --> B["Goede actieve werkset"]
+    A --> C["Bereikbaar archief"]
+    A --> D["Veilig duplicaten opruimen"]
+    A --> E["Minder handmatig uitzoekwerk"]
+    A --> F["Gerichte beoordeling bij twijfel"]
+```
+
+“Begrijpen” betekent binnen CORE dus: genoeg controleerbare informatie en
+samenhang hebben om een uitlegbare keuze te maken. Als die informatie niet
+sterk genoeg is, doet CORE niet alsof het zeker is maar vraagt het om beoordeling.
+
 Een aandachtsgebied is bijvoorbeeld **Sollicitaties** wanneer je de laatste tijd
 veel met cv's, vacatures en sollicitatiebrieven werkt. Dit maakt oude documenten
 niet automatisch actief. Het is alleen extra informatie waarmee CORE relevante
