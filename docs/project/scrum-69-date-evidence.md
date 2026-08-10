@@ -41,6 +41,9 @@ flowchart LR
 Een PDF-aanmaakdatum beschrijft vaak de PDF-export, niet noodzakelijk het oorspronkelijke
 document. Daarom blijft provenance zichtbaar.
 
+De parser accepteert naast ISO 8601 ook gangbare PDF-datumnotatie en bekende UTC-varianten
+zoals `D:20250211174245Z00'00'`. De ruwe waarde blijft altijd bewaard.
+
 ## Temporal profile
 
 `v_file_temporal_profile` geeft per actief bestand de beste huidige created/modified-
