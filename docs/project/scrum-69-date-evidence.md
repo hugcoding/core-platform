@@ -20,6 +20,28 @@ geen formaat-specifieke kolom in `metadata`. Providerfase v1 ondersteunt DOCX, X
 
 `metadata.created_at` blijft uitsluitend het aanmaakmoment van het CORE-metadatarecord.
 
+### Idempotency key
+
+De `idempotency_key` is een SHA-256-sleutel waarmee CORE vaststelt dat exact dezelfde
+bronwaarneming al is verwerkt. Voor datum-evidence bevat de invoer minimaal:
+
+- `evidence_scope`;
+- bij content-scope de `content_sha256`, bij file-scope de `file_id`;
+- `date_type`, `source_type` en `source_field`;
+- de ongewijzigde `raw_value`;
+- de `extractor_version`.
+
+De database dwingt uniciteit af. Bij herhaling gebruikt de writer:
+
+```sql
+ON CONFLICT (idempotency_key) DO NOTHING
+```
+
+Daardoor maakte de tweede ACC-backfill nul nieuwe records. Exacte duplicates delen voor
+embedded metadata dezelfde content-sleutel en veroorzaken dus geen dubbele evidence.
+Wanneer de contenthash, bronwaarde, bron, datumsoort of extractorversie verandert, ontstaat
+bewust een nieuwe key en blijft de eerdere observatie als historie bestaan.
+
 ```mermaid
 flowchart LR
     F["files + content hash"] --> P["datumprovider"]
