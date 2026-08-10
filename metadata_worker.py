@@ -16,6 +16,11 @@ import xxhash
 from core.integrity.golden_record import (
     ALGORITHM_VERSION, comparison_confidence, rank_candidates, selection_metadata,
 )
+from core.metadata.date_evidence import (
+    SUPPORTED_EXTENSIONS as DATE_EVIDENCE_EXTENSIONS,
+    extract_date_evidence,
+    idempotency_key as date_evidence_idempotency_key,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("metadata-worker")
@@ -459,6 +464,58 @@ def find_rename_candidate(cur, path, inode, size_bytes, modified_at_fs,
     return result["candidate"] if result["decision"] == "auto_linked" else None
 
 
+def persist_date_evidence(cur, *, file_id, path, extension, content_sha256, size_bytes,
+                          strict_extraction=False):
+    """Append embedded temporal observations without making them authoritative."""
+    if extension not in DATE_EVIDENCE_EXTENSIONS or not content_sha256 or size_bytes <= 0:
+        return 0
+    cur.execute("SELECT to_regclass('public.file_date_evidence') AS relation", ())
+    relation = cur.fetchone()
+    if not relation or not relation.get("relation"):
+        logger.warning("Date evidence schema unavailable; skipping: %s", path)
+        return 0
+    try:
+        observations = extract_date_evidence(path, extension=extension)
+    except Exception as exc:
+        if strict_extraction:
+            raise
+        logger.warning("Date evidence extraction skipped for %s: %s", path, exc)
+        return 0
+
+    cur.execute("""
+        SELECT id
+        FROM content_groups
+        WHERE content_sha256 = %s AND size_bytes = %s
+    """, (content_sha256, size_bytes))
+    group = cur.fetchone()
+    content_group_id = group["id"] if group else None
+    inserted = 0
+    for observation in observations:
+        key = date_evidence_idempotency_key(file_id, content_sha256, observation)
+        cur.execute("""
+            INSERT INTO file_date_evidence (
+                file_id, content_group_id, content_sha256, evidence_scope, date_type,
+                source_type, source_field, value_at, local_value,
+                timezone_offset_minutes, timezone_status, raw_value,
+                confidence, extractor_version, idempotency_key, details
+            )
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+            ON CONFLICT (idempotency_key) DO NOTHING
+        """, (
+            file_id, content_group_id, content_sha256, observation["evidence_scope"],
+            observation["date_type"],
+            observation["source_type"], observation["source_field"],
+            observation["value_at"], observation["local_value"],
+            observation["timezone_offset_minutes"], observation["timezone_status"],
+            observation["raw_value"], observation["confidence"],
+            observation["extractor_version"], key,
+            json.dumps(observation["details"], sort_keys=True),
+        ))
+        rowcount = getattr(cur, "rowcount", 0)
+        inserted += rowcount if rowcount and rowcount > 0 else 0
+    return inserted
+
+
 def process_event(cur, data):
     event = str(data.get("event", "")).lower()
     path = data.get("path")
@@ -701,6 +758,15 @@ def process_event(cur, data):
             height    = EXCLUDED.height,
             missing   = false
     """, (file_id, width, height))
+
+    persist_date_evidence(
+        cur,
+        file_id=file_id,
+        path=path,
+        extension=extension,
+        content_sha256=content_sha256,
+        size_bytes=size_bytes,
+    )
 
     r.set(LAST_EVENT_KEY, utc_now(), ex=HEARTBEAT_TTL * 4)
     logger.info("Processed: %s", path)

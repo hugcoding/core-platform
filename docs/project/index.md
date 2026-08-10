@@ -38,6 +38,10 @@ Bekijk [SCRUM-76 OneDrive-baseline en golden-recordreview](scrum-76-onedrive-bas
 voor bronautoriteit, exacte matching, ruimtebesparingsbovengrenzen en de veilige
 reviewflow.
 
+Statische documentdatums worden generiek en append-only opgeslagen, los van
+`metadata.created_at`. Bekijk [SCRUM-69 Datum-evidence en provenance](scrum-69-date-evidence.md)
+voor het uniforme Office/PDF-contract, de temporal-profileview en de backfillprocedure.
+
 ## Projectworkflow
 
 Ontwikkel en commit vanuit de lokale workspace:

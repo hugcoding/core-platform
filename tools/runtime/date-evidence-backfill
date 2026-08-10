@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+PROJECT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+cd "$PROJECT_ROOT"
+
+DOCKER_BIN="${DOCKER_BIN:-docker}"
+if ! command -v "$DOCKER_BIN" >/dev/null 2>&1 && [ -x /usr/local/bin/docker ]; then
+    DOCKER_BIN=/usr/local/bin/docker
+fi
+
+exec "$DOCKER_BIN" compose exec -T metadata_worker \
+    python3 /app/date_evidence_backfill.py "$@"

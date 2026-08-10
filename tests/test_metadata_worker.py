@@ -326,6 +326,7 @@ class MutationPersistenceTests(unittest.TestCase):
         self.assertIn("mime_type", files_query)
         self.assertNotIn("mime_type", metadata_query)
 
+
     def test_rename_is_written_to_existing_file_update(self):
         old_path = metadata_worker.os.path.normpath("/volume1/photos/old.jpg")
         new_path = metadata_worker.os.path.normpath("/volume1/photos/new.jpg")
@@ -468,6 +469,75 @@ class MutationPersistenceTests(unittest.TestCase):
             )
 
         recompute.assert_called_once_with(cursor, "new-sha", 10, "polling_scanner")
+
+
+class DateEvidencePersistenceTests(unittest.TestCase):
+    class Cursor:
+        def __init__(self, schema=True):
+            self.schema = schema
+            self.current_query = ""
+            self.calls = []
+            self.rowcount = 0
+
+        def execute(self, query, params):
+            self.current_query = query
+            self.calls.append((query, params))
+            self.rowcount = 1 if "INSERT INTO file_date_evidence" in query else 0
+
+        def fetchone(self):
+            if "to_regclass" in self.current_query:
+                return {"relation": "file_date_evidence" if self.schema else None}
+            if "FROM content_groups" in self.current_query:
+                return {"id": "group-id"}
+            return None
+
+    @staticmethod
+    def observation(date_type="created"):
+        return {
+            "evidence_scope": "content", "date_type": date_type,
+            "source_type": "office_core_properties",
+            "source_field": f"dcterms:{date_type}", "raw_value": "2025-01-02T03:04:05Z",
+            "value_at": "2025-01-02T03:04:05+00:00", "local_value": "2025-01-02T03:04:05",
+            "timezone_offset_minutes": 0, "timezone_status": "utc", "confidence": "medium",
+            "extractor_version": "date-evidence-v1", "details": {"container": "ooxml"},
+        }
+
+    def test_persistence_is_idempotent_and_links_content_group(self):
+        cursor = self.Cursor()
+        with mock.patch.object(
+            metadata_worker, "extract_date_evidence",
+            return_value=[self.observation(), self.observation("modified")],
+        ):
+            inserted = metadata_worker.persist_date_evidence(
+                cursor, file_id=42, path="/volume1/data/a.docx", extension="docx",
+                content_sha256="a" * 64, size_bytes=100,
+            )
+        inserts = [call for call in cursor.calls if "INSERT INTO file_date_evidence" in call[0]]
+        self.assertEqual(2, inserted)
+        self.assertEqual(2, len(inserts))
+        self.assertIn("ON CONFLICT (idempotency_key) DO NOTHING", inserts[0][0])
+        self.assertEqual("group-id", inserts[0][1][1])
+
+    def test_old_schema_is_skipped_without_extraction(self):
+        cursor = self.Cursor(schema=False)
+        with mock.patch.object(metadata_worker, "extract_date_evidence") as extract:
+            inserted = metadata_worker.persist_date_evidence(
+                cursor, file_id=42, path="/volume1/data/a.pdf", extension="pdf",
+                content_sha256="a" * 64, size_bytes=100,
+            )
+        self.assertEqual(0, inserted)
+        extract.assert_not_called()
+
+    def test_backfill_can_request_strict_extraction_errors(self):
+        cursor = self.Cursor()
+        with mock.patch.object(
+            metadata_worker, "extract_date_evidence", side_effect=ValueError("corrupt")
+        ):
+            with self.assertRaisesRegex(ValueError, "corrupt"):
+                metadata_worker.persist_date_evidence(
+                    cursor, file_id=42, path="/volume1/data/a.xlsx", extension="xlsx",
+                    content_sha256="a" * 64, size_bytes=100, strict_extraction=True,
+                )
 
 
 class EmptyGoldenGroupTests(unittest.TestCase):

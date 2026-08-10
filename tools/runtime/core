@@ -44,6 +44,7 @@ show_help() {
     printf '%s\n' "  core cleanup retention-plan --results latest --dry-run"
     printf '%s\n' "  core cleanup onedrive-baseline --source PATH --dry-run"
     printf '%s\n' "  core workset pilot [--policy POLICY_JSON] [--as-of TIMESTAMP] --dry-run"
+    printf '%s\n' "  core metadata date-backfill [--source PATH] [--limit N] --dry-run|--apply"
     printf '%s\n' "  core semantic onedrive-golden-pilot --cutoff TIMESTAMP --dry-run"
     printf '%s\n' "  core semantic pilot-extract MANIFEST_JSON"
     printf '%s\n' "  core semantic pilot-chunks MANIFEST_JSON"
@@ -222,6 +223,19 @@ case "$command_domain" in
             *)
                 echo "Unknown workset command."
                 echo "Use: core workset pilot [--policy POLICY_JSON] [--as-of TIMESTAMP] --dry-run"
+                exit 1
+                ;;
+        esac
+        ;;
+    metadata)
+        case "$command_action" in
+            date-backfill)
+                shift 2
+                sh ./tools/runtime/date-evidence-backfill "$@"
+                ;;
+            *)
+                echo "Unknown metadata command."
+                echo "Use: core metadata date-backfill [--source PATH] [--limit N] --dry-run|--apply"
                 exit 1
                 ;;
         esac
