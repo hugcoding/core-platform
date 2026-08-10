@@ -1,198 +1,153 @@
 # CORE in gewone taal
 
-Deze pagina legt zonder technische voorkennis uit wat CORE doet, wat al werkt
-en welke onderdelen nog gepland zijn.
+CORE helpt je om overzicht te krijgen in je persoonlijke documenten.
 
-## Wat is CORE?
-
-CORE kijkt naar je bestanden, onthoudt wat ze zijn en helpt bepalen wat
-belangrijk, dubbel, actief of oud is. Het originele bestand blijft in de huidige
-fase ongemoeid.
+Het kijkt welke documenten je hebt, welke dubbel zijn en welke waarschijnlijk
+nog belangrijk zijn. CORE doet voorstellen, maar verandert of verwijdert niets
+zonder jouw toestemming.
 
 ```mermaid
 flowchart LR
-    A["NAS en OneDrive-import"] --> B["Bestanden vinden"]
-    B --> C["Informatie verzamelen"]
-    C --> D["Golden records"]
-    D --> E["Actieve werkset"]
-    D --> F["Classificatie"]
-    D --> G["Slim zoeken en AI"]
+    A["Jouw documenten"] --> B["CORE bekijkt ze"]
+    B --> C["CORE doet voorstellen"]
+    C --> D["Jij beslist"]
 ```
 
-## Van OneDrive naar CORE
+## Wat doet CORE nu?
 
-OneDrive synchroniseert documenten naar de tijdelijke importmap op de NAS. De
-scanner vindt nieuwe en gewijzigde bestanden. De Metadata Worker verzamelt
-informatie en slaat deze op in de CORE-database.
+CORE kan momenteel:
+
+- documenten herkennen;
+- zien welke documenten precies hetzelfde zijn;
+- van gelijke documenten één hoofddocument aanwijzen;
+- datums uit documenten onderzoeken;
+- voorstellen welke documenten actief of verouderd zijn;
+- twijfelgevallen apart zetten voor beoordeling.
+
+## Dubbele documenten
+
+Soms staat hetzelfde document op verschillende plekken. CORE herkent dat en
+kiest één exemplaar als hoofddocument.
 
 ```mermaid
 flowchart LR
-    A["OneDrive"] --> B["NAS-importmap"]
-    B --> C["Scanner"]
-    C --> D["Digitaal postvak"]
-    D --> E["Metadata Worker"]
-    E --> F["CORE-database"]
+    A["Document"] --> D["Dezelfde inhoud"]
+    B["Kopie"] --> D
+    C["Nog een kopie"] --> D
+    D --> E["Eén hoofddocument"]
+    D --> F["Kopieën blijven voorlopig bestaan"]
 ```
 
-CORE bewaart onder andere de naam, het pad, bestandstype, grootte, volledige
-inhoudshash, documentmetadata, documentdatums en waargenomen mutaties.
+CORE verwijdert de kopieën nog niet. Eerst moet duidelijk zijn dat het
+hoofddocument klopt en dat opruimen veilig is.
 
-## Duplicaten en golden records
+## Actieve en oude documenten
 
-Bestanden met exact dezelfde inhoud krijgen dezelfde inhoudshash. CORE groepeert
-de kopieën en kiest één golden record: de beste vertegenwoordiger van die inhoud.
-
-```mermaid
-flowchart LR
-    A["Kopie 1"] --> D["Dezelfde inhoud"]
-    B["Kopie 2"] --> D
-    C["Kopie 3"] --> D
-    D --> E["Eén golden record"]
-    D --> F["Overige kopieën blijven bewaard"]
-```
-
-De andere bestanden worden niet automatisch verwijderd. Ze blijven beschikbaar
-voor controle en veilige review.
-
-## Documentdatums begrijpen
-
-CORE maakt onderscheid tussen een datum in het document, een filesystemdatum en
-de datum waarop CORE het bestand voor het eerst zag. Die laatste datum is geen
-documentaanmaakdatum.
+CORE kijkt momenteel negen maanden terug. Het gebruikt daarvoor betrouwbare
+datums uit het document en van het bestand.
 
 ```mermaid
 flowchart TD
-    A["Datums in document"] --> D["Datum-bewijs"]
-    B["Filesystemdatum"] --> D
-    C["Later: menselijk geopend"] -.-> D
-    D --> E["Beste verklaring"]
-    D --> F["Echt conflict bewaren voor review"]
+    A["Hoofddocument"] --> B{"Recent gebruikt of gewijzigd?"}
+    B -->|Ja| C["Actief"]
+    B -->|Nee| D["Waarschijnlijk niet actief"]
+    B -->|Twijfel| E["Eerst beoordelen"]
 ```
 
-PDF's kunnen dezelfde datum technisch verschillend opslaan. CORE herkent nu het
-verschil tussen dezelfde tijd in een andere notatie en werkelijk afwijkende
-datums. Van 137 onderzochte PDF-conflicten waren 134 technisch verklaarbaar;
-slechts 3 bestanden blijven voor menselijke review over.
+De uitkomst is een voorstel:
 
-## De actieve werkset
+- **Actief:** waarschijnlijk geschikt voor je actieve werkmap.
+- **Niet actief:** mogelijk geschikt voor een later archief.
+- **Beoordelen:** CORE heeft onvoldoende zekerheid.
 
-De huidige policy kijkt negen maanden terug en beoordeelt PDF-, Word- en
-Excelbestanden. Alleen actuele golden records worden gebruikt.
+Er wordt nog niets automatisch verplaatst.
+
+## Waarom zijn datums soms lastig?
+
+Een document kan meerdere datums bevatten. Soms lijken die verschillend terwijl
+ze eigenlijk hetzelfde moment anders opschrijven.
+
+```mermaid
+flowchart LR
+    A["Datum 1"] --> C{"Werkelijk verschillend?"}
+    B["Datum 2"] --> C
+    C -->|Nee| D["Technisch verschil: akkoord"]
+    C -->|Ja| E["Jij beoordeelt het"]
+```
+
+Bij 137 onderzochte PDF-documenten bleken 134 verschillen technisch
+verklaarbaar. Er blijven daardoor nog maar 3 echte twijfelgevallen over.
+
+## Documenten indelen
+
+CORE kan later voorstellen:
+
+- wat voor document het is;
+- bij welke groep het hoort;
+- of het actief of historisch is;
+- in welke Nederlandse doelmap het zou passen.
+
+```mermaid
+flowchart LR
+    A["Document"] --> B["Bekende regels"]
+    B --> C{"Duidelijk genoeg?"}
+    C -->|Ja| D["Voorstel"]
+    C -->|Nee| E["Extra slimme hulp"]
+    E --> F["Jij controleert"]
+    F --> D
+```
+
+CORE gebruikt eerst gewone regels. Alleen wanneer die onvoldoende zekerheid
+geven, kan extra slimme hulp worden voorgesteld. Ook dan beslis jij.
+
+## Het uiteindelijke doel
+
+Het doel is een overzichtelijke actieve werkmap met daarnaast een bereikbaar
+archief.
 
 ```mermaid
 flowchart TD
-    A["Golden record"] --> B{"Bruikbare activiteit?"}
-    B -->|Nee of echt conflict| C["Review nodig"]
-    B -->|Ja| D{"Binnen negen maanden?"}
-    D -->|Ja| E["Actief"]
-    D -->|Nee| F["Inactief"]
+    A["Jouw documenten"] --> B["Actuele documenten"]
+    A --> C["Historische documenten"]
+    A --> D["Dubbele documenten"]
+    B --> E["Actieve werkmap"]
+    C --> F["Archiefvoorstel"]
+    D --> G["Opruimvoorstel"]
+    F --> H["Jij beslist"]
+    G --> H
 ```
 
-De database toont per document:
+CORE moet je uiteindelijk helpen om:
 
-- `active`, `inactive` of `needs_review`;
-- de reden voor het voorstel;
-- de gebruikte datum en betrouwbaarheid;
-- de exacte policyversie waarmee het voorstel is berekend.
+1. actuele en belangrijke documenten actief te houden;
+2. oude documenten bereikbaar in een archief te bewaren;
+3. dubbele bestanden veilig te beoordelen;
+4. zo weinig mogelijk handmatig administratief werk te doen;
+5. altijd zelf controle te houden over verplaatsen en verwijderen.
 
-CORE verplaatst of verwijdert hierbij nog niets.
+## Wat werkt al?
 
-## Classificatie en AI
-
-CORE kan een categorie, documentfamilie, lifecycle en Nederlands doelpad
-voorstellen. Business rules gaan voor. Een lokale LLM wordt pas voorgesteld
-wanneer de regels en voorbeelden onvoldoende zekerheid geven.
-
-```mermaid
-flowchart LR
-    A["Business rules"] --> B{"Zeker genoeg?"}
-    B -->|Ja| C["Voorstel"]
-    B -->|Nee| D["Lokale LLM"]
-    D --> E["Menselijke goedkeuring"]
-    E --> C
-```
-
-AI-uitvoer verplaatst of verwijdert nooit zelfstandig bestanden.
-
-## Slim zoeken en RAG
-
-De lokale semantische pilot kan tekst in kleine stukken verdelen, embeddings
-maken en inhoudelijk vergelijkbare documenten vinden. RAG laat een lokale LLM
-antwoorden met verwijzingen naar de gebruikte documenten.
-
-```mermaid
-flowchart LR
-    A["Document"] --> B["Tekstextractie"]
-    B --> C["Tekststukken"]
-    C --> D["Embeddings"]
-    D --> E["Semantisch zoeken"]
-    E --> F["Antwoord met bronnen"]
-```
-
-Dit werkt als acceptatiepilot, maar is niet de eerste prioriteit van het
-persoonlijke-document-MVP.
-
-## Het uiteindelijke opruimproces
-
-De gewenste volgende fase combineert de actieve werkset, classificatie,
-doelpaden, archiefvoorstellen en veilige cleanup.
-
-```mermaid
-flowchart LR
-    A["Actieve documenten"] --> B["Actieve werkmap"]
-    C["Inactieve documenten"] --> D["Archiefvoorstel"]
-    E["Duplicaten"] --> F["Cleanup-review"]
-    D --> G["Menselijke goedkeuring"]
-    F --> G
-    G --> H["Archiveren of verwijderen"]
-    H --> I["Audit en eventuele fallback"]
-```
-
-De veiligheidsgrenzen blijven:
-
-- CORE verwijdert niet zelfstandig;
-- ieder voorstel bevat een uitleg;
-- verplaatsen en verwijderen vereisen goedkeuring;
-- belangrijke bestanden kunnen naar een offline Hyper Backup-archief;
-- basisinformatie en besluitgeschiedenis blijven beschikbaar.
-
-## Wat werkt al en wat volgt later?
-
-| Onderdeel | Status |
+| Onderdeel | Stand van zaken |
 |---|---|
-| Scanner, metadata en mutatiehistorie | Werkt |
-| Volledige hashes en golden records | Werkt |
-| Append-only documentdatums | Werkt |
-| Verklaarbare actieve-documentview | Werkt in acceptatie |
-| PDF-datumresolutie | Gebouwd en getest; migratie na merge toepassen |
-| Persoonlijke LLM-classificatie | Acceptatiepilot |
-| Embeddings, retrieval en lokale RAG | Acceptatiepilot |
-| Reviewportaal | Gepland |
-| Automatisch archief- en cleanupvoorstel | Gepland |
-| Werkelijke verplaatsing of verwijdering | Nog niet actief |
+| Documenten vinden en onderzoeken | Werkt |
+| Dubbele inhoud herkennen | Werkt |
+| Eén hoofddocument aanwijzen | Werkt |
+| Documentdatums beoordelen | Werkt |
+| Actieve documenten voorstellen | Werkt in de proefomgeving |
+| Documentcategorie en doelmap voorstellen | Wordt beproefd |
+| Eenvoudig scherm voor jouw beoordeling | Gepland |
+| Documenten naar een actieve werkmap of archief verplaatsen | Nog niet actief |
+| Bestanden automatisch verwijderen | Niet toegestaan |
 
-## CORE in één schema
+## De belangrijkste afspraak
 
 ```mermaid
-flowchart TD
-    A["NAS en OneDrive"] --> B["Scanner"]
-    B --> C["Metadata Worker"]
-    C --> D["Bestanden en metadata"]
-    D --> E["Golden records"]
-    D --> F["Datum-bewijs"]
-    E --> G["Classificatie"]
-    E --> H["Actieve werkset"]
-    F --> H
-    G --> I["Voorgesteld doelpad"]
-    E --> J["Embeddings en RAG"]
-    H --> K["Actief, inactief of review"]
-    K --> L["Later: archief en cleanup"]
-    I --> M["Menselijk oordeel"]
-    L --> M
+flowchart LR
+    A["CORE onderzoekt"] --> B["CORE legt uit"]
+    B --> C["CORE stelt voor"]
+    C --> D["Jij beslist"]
 ```
 
-Kort gezegd: CORE kan bestanden inmiddels inventariseren, technisch begrijpen,
-duplicaten groeperen, golden records kiezen, documentdatums beoordelen en een
-verklaarbare actieve werkset voorstellen. De volgende directe gebruikerswaarde
-ontstaat wanneer classificatie, doelpaden en de actieve werkset samenkomen in een
-eenvoudig reviewportaal.
+CORE is dus geen programma dat zelfstandig je bestanden opruimt. Het is een
+assistent die je documenten begrijpt, duidelijke voorstellen doet en jou de
+controle laat houden.
