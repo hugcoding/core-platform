@@ -26,11 +26,15 @@ from tools.runtime.migration_inventory import run_query, shutil_which
 
 DEFAULT_POLICY = PROJECT_ROOT / "project/policies/active-workset-v1.json"
 EXPORT_FIELDS = [
-    "schema_version", "policy_version", "source_file_id", "golden_file_id",
+    "schema_version", "policy_version", "candidate_file_id", "source_file_id", "golden_file_id",
     "content_group_id", "content_sha256", "source_path", "golden_path",
     "filename", "extension", "size_bytes", "source_copy_count",
     "duplicate_represented_by_golden", "core_first_observed_at",
-    "source_modified_at", "activity_basis_source", "within_activity_window",
+    "source_modified_at", "temporal_source_created_at", "temporal_created_confidence",
+    "temporal_created_source_type", "temporal_source_modified_at",
+    "temporal_modified_confidence", "temporal_modified_source_type",
+    "temporal_evidence_count", "created_has_conflict", "modified_has_conflict",
+    "activity_at", "activity_basis_source", "within_activity_window",
     "activity_window_months", "workset_status", "reason", "confidence",
     "missing_evidence", "database_writes", "file_mutations",
 ]
@@ -47,13 +51,26 @@ SELECT
     f.modified_at_fs,
     f.created_at AS core_created_at,
     cg.id AS content_group_id,
-    cg.golden_file_id,
-    gf.path AS golden_path
+    gf.id AS golden_file_id,
+    gf.path AS golden_path,
+    gf.filename AS golden_filename,
+    lower(coalesce(gf.extension, '')) AS golden_extension,
+    gf.size_bytes AS golden_size_bytes,
+    tp.source_created_at AS temporal_source_created_at,
+    tp.created_confidence,
+    tp.created_source_type,
+    tp.source_modified_at AS temporal_source_modified_at,
+    tp.modified_confidence,
+    tp.modified_source_type,
+    tp.evidence_count,
+    tp.created_has_conflict,
+    tp.modified_has_conflict
 FROM files f
 LEFT JOIN content_groups cg
   ON cg.content_sha256 = f.content_sha256
  AND cg.size_bytes IS NOT DISTINCT FROM f.size_bytes
-LEFT JOIN files gf ON gf.id = cg.golden_file_id
+LEFT JOIN files gf ON gf.id = cg.golden_file_id AND gf.deleted_at IS NULL
+LEFT JOIN v_file_temporal_profile tp ON tp.file_id = gf.id
 WHERE f.deleted_at IS NULL
   AND (f.path = :'source' OR f.path LIKE :'source_prefix')
   AND lower(coalesce(f.extension, '')) IN ('docx', 'xlsx')
@@ -165,10 +182,11 @@ def main(argv: list[str] | None = None) -> int:
         f"- Needs review: **{metrics['needs_review']}**",
         f"- Groepen met meerdere bronkopieen of een extern golden record: **{metrics['duplicate_groups']}**",
         f"- Compact review rows: **{len(review)}**", "",
-        "## Beperking van het bewijs", "",
-        "Deze eerste pilot gebruikt alleen filesystem-mutatietijd en kent daarom lage confidence toe.",
-        "CORE record creation geldt niet als aanmaakdatum van de bron. Source-created, bewezen",
-        "content-change en human-open evidence worden expliciet als ontbrekend gerapporteerd.", "",
+        "## Tijdsbewijs", "",
+        "De pilot combineert filesystem-mutatietijd met de beste bron-created en bron-modified",
+        "evidence uit `v_file_temporal_profile`. Alleen het actuele persisted golden record is",
+        "kandidaat. Conflicterende temporal evidence wordt niet automatisch beslist maar krijgt",
+        "`needs_review`. CORE record creation telt niet mee als bronaanmaakdatum.", "",
         "## Compact review", "",
         *_markdown_table(review), "",
     ]

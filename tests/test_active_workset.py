@@ -27,12 +27,13 @@ def policy(**review):
             "active_per_extension": review.get("active_per_extension", 20),
             "outside_near_cutoff": review.get("outside_near_cutoff", 10),
             "duplicate_groups": review.get("duplicate_groups", 5),
+            "temporal_conflicts": review.get("temporal_conflicts", 20),
         },
     }
 
 
 def row(file_id, filename, modified, *, extension="docx", group="group-1",
-        golden_id=1, golden_path=None, content_hash="sha", size="100"):
+        golden_id=1, golden_path=None, content_hash="sha", size="100", **temporal):
     return {
         "source_file_id": str(file_id),
         "source_path": f"{SOURCE}/{filename}",
@@ -45,6 +46,7 @@ def row(file_id, filename, modified, *, extension="docx", group="group-1",
         "content_group_id": group,
         "golden_file_id": str(golden_id) if golden_id else "",
         "golden_path": golden_path or f"{SOURCE}/{filename}",
+        **temporal,
     }
 
 
@@ -66,11 +68,35 @@ class ActiveWorksetPolicyTests(unittest.TestCase):
         result = evaluate_rows([row(1, "recent.docx", "2026-07-01T00:00:00Z")],
                                policy=policy(), as_of=self.as_of)[0]
         self.assertEqual("active_candidate", result["workset_status"])
-        self.assertEqual("source_mtime_within_configured_window", result["reason"])
+        self.assertEqual("filesystem_mtime_within_configured_window", result["reason"])
         self.assertEqual("low", result["confidence"])
         self.assertTrue(result["within_activity_window"])
         self.assertEqual("2026-08-01T10:00:00+00:00", result["core_first_observed_at"])
         self.assertIn("source_created_at", result["missing_evidence"])
+
+    def test_temporal_profile_can_supply_activity_with_its_confidence(self):
+        result = evaluate_rows([row(
+            1, "temporal.docx", "2025-01-01T00:00:00Z",
+            temporal_source_modified_at="2026-06-01T00:00:00Z",
+            modified_confidence="medium", modified_source_type="office_core_properties",
+            evidence_count="2", created_has_conflict="f", modified_has_conflict="f",
+        )], policy=policy(), as_of=self.as_of)[0]
+        self.assertEqual("active_candidate", result["workset_status"])
+        self.assertEqual("source_metadata_modified_within_configured_window", result["reason"])
+        self.assertEqual("medium", result["confidence"])
+        self.assertEqual("source_metadata_modified", result["activity_basis_source"])
+        self.assertEqual(2, result["temporal_evidence_count"])
+
+    def test_temporal_conflict_forces_review_even_with_recent_signal(self):
+        result = evaluate_rows([row(
+            1, "conflict.docx", "2026-07-01T00:00:00Z",
+            temporal_source_created_at="2026-05-01T00:00:00Z",
+            created_confidence="medium", created_has_conflict="true",
+        )], policy=policy(), as_of=self.as_of)[0]
+        self.assertEqual("needs_review", result["workset_status"])
+        self.assertEqual("conflicting_temporal_evidence", result["reason"])
+        review = select_review([result], policy(temporal_conflicts=1))
+        self.assertEqual("temporal_conflict", review[0]["review_reason"])
 
     def test_old_mtime_uses_configured_window_reason(self):
         result = evaluate_rows([row(1, "old.xlsx", "2025-10-01T00:00:00Z", extension="xlsx")],
@@ -89,6 +115,7 @@ class ActiveWorksetPolicyTests(unittest.TestCase):
         self.assertEqual(1, len(result))
         self.assertEqual(11, result[0]["source_file_id"])
         self.assertEqual(99, result[0]["golden_file_id"])
+        self.assertEqual(99, result[0]["candidate_file_id"])
         self.assertEqual("/volume1/archive/golden.docx", result[0]["golden_path"])
         self.assertEqual(2, result[0]["source_copy_count"])
         self.assertTrue(result[0]["duplicate_represented_by_golden"])
@@ -98,7 +125,7 @@ class ActiveWorksetPolicyTests(unittest.TestCase):
             row(1, "ungrouped.docx", "2026-01-01T00:00:00Z", group="", golden_id=0),
             row(2, "unknown.xlsx", "", extension="xlsx", group="group-2", golden_id=2),
         ], policy=policy(), as_of=self.as_of)
-        self.assertEqual({"missing_persisted_golden_record", "invalid_source_modified_at"},
+        self.assertEqual({"missing_persisted_golden_record", "invalid_or_missing_activity_timestamp"},
                          {item["reason"] for item in results})
 
     def test_compact_review_is_limited_and_deduplicated(self):
@@ -113,6 +140,16 @@ class ActiveWorksetPolicyTests(unittest.TestCase):
         self.assertEqual(3, len(review))
         self.assertIn("duplicate_group", next(item for item in review if item["source_file_id"] == 1)["review_reason"])
         self.assertEqual(1, summary(rows)["inactive"])
+
+    def test_runtime_query_projects_temporal_profile_only_onto_active_golden(self):
+        self.assertIn("LEFT JOIN v_file_temporal_profile tp ON tp.file_id = gf.id", active_workset.QUERY)
+        self.assertIn("gf.id AS golden_file_id", active_workset.QUERY)
+        self.assertIn("gf.deleted_at IS NULL", active_workset.QUERY)
+
+    def test_older_v1_policy_defaults_temporal_review_limit(self):
+        legacy = policy()
+        del legacy["review_selection"]["temporal_conflicts"]
+        self.assertEqual(20, validate_policy(legacy)["review_selection"]["temporal_conflicts"])
 
 
 class ActiveWorksetRuntimeTests(unittest.TestCase):

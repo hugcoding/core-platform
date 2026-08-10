@@ -7,6 +7,7 @@
   "review_selection": {
     "active_per_extension": 20,
     "outside_near_cutoff": 10,
-    "duplicate_groups": 5
+    "duplicate_groups": 5,
+    "temporal_conflicts": 20
   }
 }
