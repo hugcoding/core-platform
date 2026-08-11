@@ -63,11 +63,13 @@ FIELDS = [
     "filename", "extension", "path", "filesystem_modified_at", "v1_created_at",
     "v1_created_evidence_id", "v2_canonical_created_at",
     "created_changed", "created_evidence_id", "created_source_type", "created_confidence",
-    "created_timezone_status", "created_selection_reason", "v1_modified_at",
+    "created_timezone_status", "created_precision", "created_same_day_precision_preferred",
+    "created_selection_reason", "v1_modified_at",
     "v1_modified_evidence_id",
     "earliest_observed_created_at", "latest_observed_created_at",
     "v2_canonical_modified_at", "modified_changed", "modified_evidence_id",
     "modified_source_type", "modified_confidence", "modified_timezone_status",
+    "modified_precision", "modified_same_day_precision_preferred",
     "modified_selection_reason", "earliest_observed_modified_at",
     "latest_observed_modified_at", "credible_evidence_count", "credible_evidence_ids",
     "excluded_evidence_count", "excluded_evidence", "material_temporal_conflict",
@@ -135,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
     write_dict_rows(csv_path, rows, FIELDS)
     write_dict_rows(review_path, review, FIELDS)
     payload = {
-        "schema_version": "temporal-canonical-impact-report-v2",
+        "schema_version": "temporal-canonical-impact-report-v3",
         "generated_at": generated_at.isoformat(),
         "as_of": as_of.isoformat(),
         "mode": "read_only_dry_run",
@@ -156,6 +158,8 @@ def main(argv: list[str] | None = None) -> int:
         f"- Documents assessed: **{metrics['documents']}**",
         f"- Canonical created changed: **{metrics['created_changed']}**",
         f"- Canonical modified changed: **{metrics['modified_changed']}**",
+        f"- Created same-day precision preferred: **{metrics['created_same_day_precision_preferred']}**",
+        f"- Modified same-day precision preferred: **{metrics['modified_same_day_precision_preferred']}**",
         f"- Lifecycle status changed: **{metrics['lifecycle_changed']}**",
         f"- Material temporal conflicts: **{metrics['material_conflicts']}**",
         f"- Decision-invariant conflicts: **{metrics['decision_invariant_conflicts']}**",
