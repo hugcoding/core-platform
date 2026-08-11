@@ -157,3 +157,40 @@ niet-verwijderde golden record en schrijft niets naar bestanden of tabellen.
 
 Iedere rij bevat policy-ID, versie, contractschema, checksum en ingangsdatum. Zo
 kan achteraf worden gereconstrueerd onder welke policy de status is berekend.
+
+## Temporal canonical selection v2 impact
+
+De read-only impacttool simuleert de volgende refinement zonder views, evidence
+of bestanden te wijzigen:
+
+- created: vroegste geloofwaardige created-evidence;
+- modified: nieuwste geloofwaardige modified-evidence;
+- toekomstige, ongeldige en bekende placeholderwaarden uitsluiten met reason-code;
+- datumconflict apart houden van de lifecyclebeslissing;
+- alleen een conflict aan weerszijden van het actieve venster als
+  `decision_sensitive_temporal_conflict` blokkeren.
+
+Een datum zonder tijdzone wordt in deze impactanalyse alleen voor de vergelijking
+als UTC geïnterpreteerd. De oorspronkelijke waarde en tijdzonestatus blijven in
+het rapport staan; v2 schrijft deze interpretatie niet terug naar de database.
+
+```bash
+core metadata temporal-impact --dry-run
+```
+
+Reproduceerbaar of beperkt uitvoeren:
+
+```bash
+core metadata temporal-impact \
+  --as-of 2026-08-11T12:00:00+02:00 \
+  --limit 100 \
+  --dry-run
+```
+
+De CSV en JSON bevatten per document de v1- en v2-datums, gekozen evidence-ID's,
+bron, confidence, uitgesloten evidence met redenen en het verwachte lifecycle-
+effect. De compacte review-CSV bevat uitsluitend gewijzigde selecties, conflicten
+en uitsluitingen. Uitvoer staat onder `project/exports/active-workset/`.
+
+Dit rapport activeert v2 niet. Eerst worden impact, uitzonderingen en bronweging
+beoordeeld; een afzonderlijke migratie is nodig om consumers te wijzigen.
