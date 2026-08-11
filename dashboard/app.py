@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import csv
 import os
+import re
 import shutil
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import psycopg2
 import redis
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+
+from core.organization.target_path import CONTRACT_VERSION, propose_target
 
 
 APP_DIR = Path(__file__).parent
@@ -196,11 +200,55 @@ def smb_path(path: str) -> str:
     return ""
 
 
+def review_writes_enabled() -> bool:
+    return os.getenv("CORE_REVIEW_WRITES_ENABLED", "false").casefold() == "true"
+
+
+WORKSET_SELECT = """
+    SELECT
+        w.file_id, w.content_group_id, w.content_sha256, w.filename, w.extension, w.path,
+        w.size_bytes, w.workset_status, w.reason_code,
+        w.last_qualifying_activity_at, w.activity_basis_source,
+        w.activity_confidence, w.filesystem_modified_at,
+        w.policy_version, w.policy_checksum,
+        c.category, c.document_family, c.lifecycle,
+        c.suggested_path, c.sensitivity, c.confidence AS classification_confidence
+    FROM public.v_active_document_workset w
+    LEFT JOIN public.v_current_file_classification c ON c.file_id = w.file_id
+"""
+
+
+def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
+    item = {key: iso(value) for key, value in row.items()}
+    item["smb_path"] = smb_path(str(row["path"]))
+    item["classification_status"] = "accepted" if row.get("category") else "not_reviewed"
+    item["migration_status"] = "virtual_only"
+    if row.get("workset_status") == "active":
+        proposal = propose_target({
+            **row,
+            "accepted_category": row.get("category"),
+            "accepted_document_family": row.get("document_family"),
+            "accepted_lifecycle": row.get("lifecycle"),
+        })
+        item["target_proposal"] = {
+            key: proposal[key] for key in (
+                "contract_version", "contract_checksum", "zone_code", "zone_label",
+                "category_code", "category_label", "trajectory_code", "trajectory_label",
+                "document_family_code", "folder_label", "suggested_target_path",
+                "proposal_reason_code", "proposal_confidence",
+            )
+        }
+    else:
+        item["target_proposal"] = None
+    return item
+
+
 @app.get("/api/v1/workset")
 def workset(
     status: str = Query("active", pattern="^(active|inactive|needs_review|all)$"),
     extension: str = Query("all", pattern="^(pdf|docx|xlsx|all)$"),
     search: str = Query("", max_length=100),
+    family: str = Query("all", max_length=80, pattern="^[a-z0-9_'-]{1,80}$|^all$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -227,41 +275,122 @@ def workset(
                     COUNT(*) FILTER (WHERE workset_status = 'needs_review') AS needs_review
                 FROM public.v_active_document_workset
             """)
-            count = query_one(
-                conn,
-                "SELECT COUNT(*) AS total FROM public.v_active_document_workset w" + where,
+            review_storage = bool(query_one(
+                conn, "SELECT to_regclass('public.v_latest_document_review') IS NOT NULL AS available"
+            )["available"])
+            review_select = """
+                , r.id AS latest_review_id, r.decision AS latest_review_decision,
+                  r.corrected_document_family_code AS latest_review_family,
+                  r.review_notes AS latest_review_notes, r.created_at AS latest_review_at
+            """ if review_storage else ""
+            review_join = """
+                LEFT JOIN public.v_latest_document_review r
+                  ON r.file_id = w.file_id AND r.review_type = 'target_path'
+            """ if review_storage else ""
+            rows = query_all(conn, WORKSET_SELECT.replace(
+                "FROM public.v_active_document_workset w", review_select + " FROM public.v_active_document_workset w"
+            ) + review_join + where +
+                " ORDER BY w.last_qualifying_activity_at DESC NULLS LAST, w.filename, w.file_id",
                 tuple(params),
-            )
-            rows = query_all(conn, """
-                SELECT
-                    w.file_id, w.content_group_id, w.filename, w.extension, w.path,
-                    w.size_bytes, w.workset_status, w.reason_code,
-                    w.last_qualifying_activity_at, w.activity_basis_source,
-                    w.activity_confidence, w.filesystem_modified_at,
-                    w.policy_version, w.policy_checksum,
-                    c.category, c.document_family, c.lifecycle,
-                    c.suggested_path, c.sensitivity, c.confidence AS classification_confidence
-                FROM public.v_active_document_workset w
-                LEFT JOIN public.v_current_file_classification c ON c.file_id = w.file_id
-            """ + where + " ORDER BY w.last_qualifying_activity_at DESC NULLS LAST, w.filename, w.file_id LIMIT %s OFFSET %s",
-                tuple(params + [limit, offset]),
             )
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"workset unavailable: {type(exc).__name__}") from exc
-    documents = []
-    for row in rows:
-        item = {key: iso(value) for key, value in row.items()}
-        item["smb_path"] = smb_path(str(row["path"]))
-        item["classification_status"] = "accepted" if row.get("category") else "not_reviewed"
-        item["migration_status"] = "virtual_only"
-        documents.append(item)
+    enriched = [enrich_workset_row(row) for row in rows]
+    families: dict[str, dict[str, Any]] = {}
+    for item in enriched:
+        proposal = item.get("target_proposal") or {}
+        code = str(proposal.get("document_family_code") or item.get("document_family") or "unknown")
+        label = str(proposal.get("folder_label") or item.get("document_family") or "Nog te bepalen")
+        families.setdefault(code, {"code": code, "label": label, "count": 0})["count"] += 1
+    if family != "all":
+        enriched = [item for item in enriched if str(
+            (item.get("target_proposal") or {}).get("document_family_code")
+            or item.get("document_family") or "unknown"
+        ) == family]
+    count = len(enriched)
+    documents = enriched[offset:offset + limit]
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "mode": "read_only",
+        "mode": "interactive_review" if review_writes_enabled() else "read_only",
         "summary": summary,
-        "filtered_total": count["total"],
+        "filtered_total": count,
+        "families": sorted(families.values(), key=lambda value: (value["label"].casefold(), value["code"])),
+        "review_writes_enabled": review_writes_enabled(),
         "limit": limit,
         "offset": offset,
         "documents": documents,
-        "safety": {"database_writes": False, "file_mutations": False},
+        "safety": {"database_writes": review_writes_enabled(), "file_mutations": False,
+                   "model_updates": False},
     }
+
+
+@app.post("/api/v1/workset/reviews")
+def create_workset_review(payload: dict[str, Any] = Body(...)):
+    if not review_writes_enabled():
+        raise HTTPException(status_code=403, detail="interactive reviews are disabled")
+    try:
+        file_id = int(payload["file_id"])
+        idempotency_key = str(payload["idempotency_key"])
+        uuid.UUID(idempotency_key)
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=422, detail="valid file_id and UUID idempotency_key required") from exc
+    decision = str(payload.get("decision") or "")
+    if decision not in {"accepted", "rejected", "needs_review", "passed"}:
+        raise HTTPException(status_code=422, detail="invalid review decision")
+    family = str(payload.get("corrected_document_family_code") or "") or None
+    notes = str(payload.get("review_notes") or "") or None
+    if family and not re.fullmatch(r"[a-z0-9_'-]{1,80}", family):
+        raise HTTPException(status_code=422, detail="invalid document family code")
+    if notes and len(notes) > 2000:
+        raise HTTPException(status_code=422, detail="review note exceeds 2000 characters")
+    try:
+        with db_connect() as conn:
+            if not query_one(conn, "SELECT to_regclass('public.document_review_events') IS NOT NULL AS available")["available"]:
+                raise HTTPException(status_code=503, detail="review storage migration is not applied")
+            matches = query_all(
+                conn, WORKSET_SELECT + " WHERE w.file_id = %s AND w.workset_status = 'active'", (file_id,),
+            )
+            if not matches:
+                raise HTTPException(status_code=409, detail="file is no longer an active workset candidate")
+            row = matches[0]
+            proposal = enrich_workset_row(row).get("target_proposal")
+            if not proposal:
+                raise HTTPException(status_code=409, detail="file is no longer an active workset candidate")
+            latest = query_all(
+                conn,
+                "SELECT id FROM public.v_latest_document_review WHERE file_id = %s AND review_type = 'target_path'",
+                (file_id,),
+            )
+            supersedes_event_id = latest[0]["id"] if latest else None
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO public.document_review_events (
+                        idempotency_key, review_contract_version, channel, review_type,
+                        file_id, content_group_id, content_sha256,
+                        proposal_category_code, proposal_document_family_code,
+                        proposal_lifecycle, proposal_target_path, proposal_confidence,
+                        proposal_reason_code, decision, corrected_document_family_code,
+                        review_notes, reviewer, supersedes_event_id
+                    ) VALUES (%s,%s,'workset_portal','target_path',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (idempotency_key) DO NOTHING
+                    RETURNING id, created_at, file_id, decision
+                """, (
+                    idempotency_key, CONTRACT_VERSION, row["file_id"], row["content_group_id"],
+                    row["content_sha256"], proposal["category_code"], proposal["document_family_code"],
+                    proposal["zone_code"], proposal["suggested_target_path"],
+                    proposal["proposal_confidence"], proposal["proposal_reason_code"], decision,
+                    family, notes, os.getenv("CORE_REVIEWER", "hugo"), supersedes_event_id,
+                ))
+                created = cur.fetchone()
+                if not created:
+                    cur.execute("SELECT id, created_at, file_id, decision FROM public.document_review_events WHERE idempotency_key = %s",
+                                (idempotency_key,))
+                    created = cur.fetchone()
+                if int(created[2]) != file_id or str(created[3]) != decision:
+                    raise HTTPException(status_code=409, detail="idempotency key belongs to another review")
+        return {"status": "stored", "review_id": str(created[0]), "created_at": iso(created[1]),
+                "database_writes": True, "file_mutations": False, "model_updates": False}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"review unavailable: {type(exc).__name__}") from exc
