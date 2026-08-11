@@ -17,6 +17,16 @@ of verwijdert geen bestanden en schrijft niets naar de database.
 - onvoldoende bewijs gaat naar `Te beoordelen` met `low` confidence;
 - een botsend doelpad wordt gerapporteerd en niet automatisch opgelost.
 
+Contract v2 verfijnt deze veilige basis met drie regels die uit de eerste
+50-documententoets voortkwamen:
+
+- geheimkandidaten zoals een wachtwoordenbestand gaan vóór categorisatie naar
+  een afgeschermde quarantainereview;
+- sollicitaties krijgen trajectcontext en een documentfamilie, zodat
+  gelijknamige CV's en vacatureteksten niet in hetzelfde doelpad botsen;
+- cursusdatasets onder notebook-datamappen blijven buiten de automatische
+  actieve werkmap en gaan naar `Te beoordelen`.
+
 ## Structuur v1
 
 ```text
@@ -35,14 +45,17 @@ Persoonlijk/
 └── Quarantaine/
 ```
 
-De pilot gebruikt alleen `Actief` en `Te beoordelen`. Archief- en
-quarantainebesluiten horen bij latere, afzonderlijk goedgekeurde processen.
+De pilot gebruikt `Actief`, `Te beoordelen` en voor expliciete
+geheimkandidaten een afgeschermde `Quarantaine`-review. Archiefbesluiten horen
+bij een later, afzonderlijk goedgekeurd proces.
 
 ## Beslisflow
 
 ```mermaid
 flowchart LR
-    A["Actief golden record"] --> B{"Geaccepteerde classificatie?"}
+    A["Actief golden record"] --> S{"Geheimkandidaat?"}
+    S -->|"Ja"| Q["Afgeschermd beoordelen"]
+    S -->|"Nee"| B
     B -->|"Ja"| C["Nederlands padvoorstel — high"]
     B -->|"Nee"| D{"Eenduidige CORE-regel?"}
     D -->|"Ja"| E["Nederlands padvoorstel — medium"]
@@ -51,7 +64,19 @@ flowchart LR
     E --> G
     F --> G
     G --> H["Geen mutaties"]
+    Q --> H
 ```
+
+Voor sollicitaties is het pad in v2 opgebouwd als:
+
+```text
+Actief/Werk & Loopbaan/Sollicitaties/<organisatie of traject>/<documentfamilie>/<bestand>
+```
+
+De ondersteunde families zijn vooralsnog `Vacatures`, `CV's`,
+`Motivatiebrieven`, `Gespreksvoorbereiding` en `Ondersteunende analyses`.
+Onvoldoende specifieke documenten blijven in `Algemeen`; dat is zichtbaar
+restwerk en geen stilzwijgende classificatie.
 
 ## Uitvoeren in acceptatie
 

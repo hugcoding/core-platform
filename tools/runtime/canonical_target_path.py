@@ -37,7 +37,8 @@ FIELDS = ["file_id", "content_group_id", "path", "filename", "extension", "size_
           "content_sha256", "last_qualifying_activity_at", "activity_basis_source",
           "activity_confidence", "workset_status", "accepted_category",
           "accepted_document_family", "accepted_lifecycle", "zone_code", "zone_label", "category_code",
-          "category_label", "folder_label", "suggested_target_path", "proposal_reason_code",
+          "category_label", "trajectory_code", "trajectory_label", "document_family_code",
+          "folder_label", "suggested_target_path", "proposal_reason_code",
           "proposal_confidence", "collision_status", "contract_version", "contract_checksum",
           "database_writes", "file_mutations"]
 
@@ -73,7 +74,8 @@ def main(argv=None) -> int:
         "selected": len(rows),
         "accepted_classification": sum(r["proposal_reason_code"] == "accepted_human_classification" for r in rows),
         "rule_based": sum(r["proposal_reason_code"] == "deterministic_keyword_rule" for r in rows),
-        "needs_review": sum(r["category_code"] == "needs_review" for r in rows),
+        "needs_review": sum(r["zone_code"] == "needs_review" for r in rows),
+        "restricted_review": sum(r["zone_code"] == "quarantine" for r in rows),
         "collisions": sum(r["collision_status"] != "none" for r in rows),
     }
     payload = {"schema_version": "canonical-target-path-evaluation-v1", "generated_at": generated.isoformat(),
@@ -84,7 +86,9 @@ def main(argv=None) -> int:
              f"- Geselecteerde actieve golden records: **{len(rows)}**",
              f"- Menselijk geaccepteerde classificatie: **{summary['accepted_classification']}**",
              f"- Deterministische regels: **{summary['rule_based']}**",
-             f"- Te beoordelen: **{summary['needs_review']}**", f"- Botsingen: **{summary['collisions']}**", "",
+             f"- Te beoordelen: **{summary['needs_review']}**",
+             f"- Afgeschermd beoordelen: **{summary['restricted_review']}**",
+             f"- Botsingen: **{summary['collisions']}**", "",
              "| Bestand | Voorstel | Reden | Confidence |", "|---|---|---|---|"]
     for row in rows:
         lines.append(f"| {str(row['filename']).replace('|', '&#124;')} | `{row['suggested_target_path']}` | "

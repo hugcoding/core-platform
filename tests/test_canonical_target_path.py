@@ -13,7 +13,7 @@ class CanonicalTargetPathTests(unittest.TestCase):
                                  "accepted_document_family": "Sollicitaties"})
         self.assertEqual("work_career", result["category_code"])
         self.assertEqual("Werk & Loopbaan", result["category_label"])
-        self.assertEqual("/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Sollicitaties/brief.docx",
+        self.assertEqual("/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Sollicitaties/Algemeen werk/Algemeen/brief.docx",
                          result["suggested_target_path"])
         self.assertFalse(result["file_mutations"])
 
@@ -49,6 +49,37 @@ class CanonicalTargetPathTests(unittest.TestCase):
         rows = [propose_target({"file_id": i, "filename": "zelfde.pdf"}) for i in (1, 2)]
         marked = mark_collisions(rows)
         self.assertTrue(all(r["collision_status"] == "batch_target_collision" for r in marked))
+
+    def test_application_context_and_family_prevent_filename_collision(self):
+        first = propose_target({
+            "file_id": 10, "filename": "vacaturetekst.docx", "extension": "docx",
+            "path": "/volume1/data/import/Documenten/CV & Sollicitaties/UWV/ETL Engineer/vacaturetekst.docx",
+        })
+        second = propose_target({
+            "file_id": 11, "filename": "vacaturetekst.docx", "extension": "docx",
+            "path": "/volume1/data/import/Documenten/CV & Sollicitaties/rijksoverheid/DUO/vacaturetekst.docx",
+        })
+        marked = mark_collisions([first, second])
+        self.assertIn("/Sollicitaties/UWV – ETL Engineer/Vacatures/", first["suggested_target_path"])
+        self.assertIn("/Sollicitaties/rijksoverheid – DUO/Vacatures/", second["suggested_target_path"])
+        self.assertTrue(all(row["collision_status"] == "none" for row in marked))
+
+    def test_secret_candidate_precedes_normal_category_rules(self):
+        result = propose_target({"file_id": 12, "filename": "wachtwoorden.xlsx", "extension": "xlsx"})
+        self.assertEqual("quarantine", result["zone_code"])
+        self.assertEqual("secret_candidate_requires_restricted_review", result["proposal_reason_code"])
+        self.assertEqual("/volume1/data/Persoonlijk/Quarantaine/Geheimen/wachtwoorden.xlsx",
+                         result["suggested_target_path"])
+
+    def test_course_dataset_is_not_promoted_to_active_workset_path(self):
+        result = propose_target({
+            "file_id": 13, "filename": "knmi_stn.xlsx", "extension": "xlsx",
+            "path": "/volume1/data/Documenten/cursus/notebooks/data/knmi/knmi_stn.xlsx",
+        })
+        self.assertEqual("needs_review", result["zone_code"])
+        self.assertEqual("learning_development", result["category_code"])
+        self.assertEqual("supporting_dataset_requires_review", result["proposal_reason_code"])
+        self.assertIn("/Te beoordelen/Leren & Ontwikkelen/Cursusdata/", result["suggested_target_path"])
 
 
 if __name__ == "__main__":
