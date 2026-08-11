@@ -34,8 +34,9 @@ ORDER BY w.last_qualifying_activity_at DESC NULLS LAST, w.path, w.file_id;
 """
 
 FIELDS = ["file_id", "content_group_id", "path", "filename", "extension", "size_bytes",
-          "last_qualifying_activity_at", "activity_basis_source", "accepted_category",
-          "accepted_document_family", "zone_code", "zone_label", "category_code",
+          "content_sha256", "last_qualifying_activity_at", "activity_basis_source",
+          "activity_confidence", "workset_status", "accepted_category",
+          "accepted_document_family", "accepted_lifecycle", "zone_code", "zone_label", "category_code",
           "category_label", "folder_label", "suggested_target_path", "proposal_reason_code",
           "proposal_confidence", "collision_status", "contract_version", "contract_checksum",
           "database_writes", "file_mutations"]
