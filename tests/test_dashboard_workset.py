@@ -35,6 +35,7 @@ class DashboardWorksetTests(unittest.TestCase):
         responses = types.ModuleType("fastapi.responses")
         responses.FileResponse = lambda path: path
         responses.RedirectResponse = lambda path, status_code=307: (path, status_code)
+        responses.Response = lambda **kwargs: kwargs
         staticfiles = types.ModuleType("fastapi.staticfiles")
         staticfiles.StaticFiles = lambda **kwargs: kwargs
         modules = {
@@ -102,6 +103,9 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn('"model_updates": False', source)
         self.assertIn("ILIKE %s", source)
         self.assertIn("enriched[offset:offset + limit]", source)
+        self.assertIn('@app.get("/api/v1/workset/{file_id}/reviews")', source)
+        self.assertIn('@app.get("/api/v1/workset/reviews/export")', source)
+        self.assertIn("review_decision", source)
 
     def test_review_is_append_only_and_does_not_update_model_or_file(self):
         connection = mock.MagicMock()

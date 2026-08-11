@@ -76,6 +76,14 @@ blijft beschikbaar via `Beoordeeld` en `Alle oordelen`. Hiermee blijft een
 reeks beoordelingen rustig uitvoerbaar zonder telkens de volledige werkset te
 laden of beoordeelde kaarten opnieuw tegen te komen.
 
+De beoordeelde weergave heeft aanvullende filters voor `Akkoord`, `Later`,
+`Niet akkoord` en `Overgeslagen`, met compacte tellers. `Historie` opent per
+document alle append-only reviewevents inclusief reviewer, datum, familie en
+notitie. CSV- en JSON-export leveren dezelfde handmatige beslissingen voor
+controle of latere batchanalyse. Labels onderscheiden expliciet het
+`CORE-voorstel` van het `Menselijk oordeel`; een toekomstig AI-advies krijgt
+een eigen provenance-label en wordt niet met één van beide vermengd.
+
 ```mermaid
 flowchart LR
     P["Portaal toont CORE-voorstel"] --> H["Hugo beoordeelt of corrigeert familie"]
