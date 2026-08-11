@@ -69,6 +69,7 @@ nav:
       - SCRUM-85 Persoonlijke LLM-classificatie: project/scrum-85-personal-llm-classification.md
       - SCRUM-89 Actieve werkset pilot: project/scrum-89-active-workset-pilot.md
       - SCRUM-95 Actieve werkset portaal: project/scrum-95-active-workset-portal.md
+      - SCRUM-96 Nederlands doelpadcontract: project/scrum-96-dutch-target-path-contract.md
       - SCRUM-92 Database-backed policies: project/scrum-92-policy-registry.md
   - Runtime:
       - Scanner: wiki/scanner.md
