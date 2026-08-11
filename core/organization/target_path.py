@@ -9,7 +9,7 @@ from pathlib import PurePosixPath
 from typing import Any
 
 
-CONTRACT_VERSION = "canonical-dutch-target-path-v1"
+CONTRACT_VERSION = "canonical-dutch-target-path-v2"
 TARGET_ROOT = "/volume1/data/Persoonlijk"
 ZONE_LABELS = {
     "active": "Actief", "archive": "Archief",
@@ -41,11 +41,21 @@ KEYWORD_RULES = (
     ("identity_personal", ("paspoort", "identiteit", "geboorteakte", "rijbewijs")),
 )
 RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+FAMILY_RULES = (
+    ("vacancies", "Vacatures", ("vacature", "functieprofiel")),
+    ("resumes", "CV's", ("curriculum vitae", "_cv_", " cv ")),
+    ("motivation_letters", "Motivatiebrieven", ("motivatie", "sollicitatiebrief")),
+    ("interview_preparation", "Gespreksvoorbereiding", ("gesprek", "voorbereiding", "pitch")),
+    ("supporting_analysis", "Ondersteunende analyses", ("analyse", "advies", "feedback", "stress", "afwijzing")),
+    ("certificates", "Certificaten", ("certificate", "certificaat", "diploma")),
+)
+SECRET_TERMS = ("wachtwoord", "password", "passwords", "credentials", "api key", "secret")
 
 
 def contract_checksum() -> str:
     payload = {"version": CONTRACT_VERSION, "root": TARGET_ROOT, "zones": ZONE_LABELS,
-               "categories": CATEGORY_LABELS, "rules": KEYWORD_RULES}
+               "categories": CATEGORY_LABELS, "rules": KEYWORD_RULES, "families": FAMILY_RULES,
+               "secret_terms": SECRET_TERMS}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
@@ -77,20 +87,89 @@ def canonical_category(row: dict[str, Any]) -> tuple[str, str, str]:
     return "needs_review", "insufficient_classification_evidence", "low"
 
 
+def _evidence(row: dict[str, Any]) -> str:
+    return " ".join(str(row.get(key) or "") for key in
+                    ("filename", "path", "accepted_document_family")).casefold()
+
+
+def is_secret_candidate(row: dict[str, Any]) -> bool:
+    evidence = _evidence(row)
+    return any(term in evidence for term in SECRET_TERMS)
+
+
+def is_supporting_dataset(row: dict[str, Any]) -> bool:
+    path = str(row.get("path") or "").replace("\\", "/").casefold()
+    extension = str(row.get("extension") or "").casefold().lstrip(".")
+    return extension == "xlsx" and "/notebook" in path and "/data/" in path
+
+
+def document_family(row: dict[str, Any]) -> tuple[str, str]:
+    evidence = " " + _evidence(row).replace("-", " ") + " "
+    for code, label, terms in FAMILY_RULES:
+        if any(term in evidence for term in terms):
+            return code, label
+    if is_supporting_dataset(row):
+        return "course_data", "Cursusdata"
+    return "general", "Algemeen"
+
+
+def application_trajectory(row: dict[str, Any]) -> tuple[str, str]:
+    path = PurePosixPath(str(row.get("path") or "").replace("\\", "/"))
+    directories = list(path.parts[:-1])
+    marker = next((i for i, value in enumerate(directories)
+                   if value.casefold() in {"cv & sollicitaties", "cv en sollicitaties"}), None)
+    if marker is None:
+        return "general_work", "Algemeen werk"
+    context = directories[marker + 1:]
+    if context and context[0].casefold() in {"ai-chat_history", "ai chat history"}:
+        return "general_preparation", "Algemene voorbereiding"
+    labels = [safe_component(value, fallback="") for value in context[:2] if value.strip()]
+    if not labels:
+        return "general_applications", "Algemene sollicitaties"
+    label = " – ".join(labels)
+    code = re.sub(r"[^a-z0-9]+", "_", label.casefold()).strip("_") or "general_applications"
+    return code[:80], label
+
+
 def propose_target(row: dict[str, Any]) -> dict[str, Any]:
     category, reason, confidence = canonical_category(row)
-    zone = "active" if category != "needs_review" else "needs_review"
-    family = safe_component(str(row.get("accepted_document_family") or ""), fallback="Algemeen")
+    family_code, family = document_family(row)
+    trajectory_code, trajectory_label = "", ""
+    if is_secret_candidate(row):
+        zone, category, reason, confidence = (
+            "quarantine", "needs_review", "secret_candidate_requires_restricted_review", "high"
+        )
+        family_code, family = "secrets", "Geheimen"
+    elif is_supporting_dataset(row):
+        zone, category, reason, confidence = (
+            "needs_review", "learning_development", "supporting_dataset_requires_review", "medium"
+        )
+    else:
+        zone = "active" if category != "needs_review" else "needs_review"
+    accepted_lifecycle = str(row.get("accepted_lifecycle") or "")
+    if accepted_lifecycle in {"archive_candidate", "needs_review"}:
+        zone, reason, confidence = "needs_review", "accepted_lifecycle_conflicts_with_active_workset", "high"
+    elif accepted_lifecycle == "quarantine":
+        zone, reason, confidence = "quarantine", "accepted_quarantine_classification", "high"
     filename = safe_component(str(row.get("filename") or ""), fallback=f"Bestand {row.get('file_id', '')}")
     parts = [TARGET_ROOT, ZONE_LABELS[zone]]
-    if zone == "active":
-        parts.extend((CATEGORY_LABELS[category], family))
+    if zone == "quarantine":
+        parts.append(family)
+    elif category != "needs_review":
+        parts.append(CATEGORY_LABELS[category])
+        if category == "work_career" and "sollicit" in _evidence(row):
+            trajectory_code, trajectory_label = application_trajectory(row)
+            parts.extend(("Sollicitaties", trajectory_label, family))
+        else:
+            parts.append(family)
     parts.append(filename)
     return {
         **row, "contract_version": CONTRACT_VERSION, "contract_checksum": contract_checksum(),
         "zone_code": zone, "zone_label": ZONE_LABELS[zone],
         "category_code": category, "category_label": CATEGORY_LABELS[category],
-        "folder_label": family, "suggested_target_path": str(PurePosixPath(*parts)),
+        "trajectory_code": trajectory_code, "trajectory_label": trajectory_label,
+        "document_family_code": family_code, "folder_label": family,
+        "suggested_target_path": str(PurePosixPath(*parts)),
         "proposal_reason_code": reason, "proposal_confidence": confidence,
         "database_writes": False, "file_mutations": False,
     }
