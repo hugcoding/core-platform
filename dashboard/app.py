@@ -10,7 +10,7 @@ from typing import Any
 
 import psycopg2
 import redis
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -38,11 +38,18 @@ def redis_connect():
                        socket_connect_timeout=2, socket_timeout=2)
 
 
-def query_one(conn, sql: str) -> dict[str, Any]:
+def query_one(conn, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any]:
     with conn.cursor() as cur:
-        cur.execute(sql)
+        cur.execute(sql, params)
         columns = [item.name for item in cur.description]
         return dict(zip(columns, cur.fetchone()))
+
+
+def query_all(conn, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        columns = [item.name for item in cur.description]
+        return [dict(zip(columns, row)) for row in cur.fetchall()]
 
 
 def iso(value: Any) -> Any:
@@ -111,6 +118,11 @@ def dashboard():
     return FileResponse(APP_DIR / "static" / "index.html")
 
 
+@app.get("/coreworkset")
+def workset_page():
+    return FileResponse(APP_DIR / "static" / "workset.html")
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "service": "core-pulse", "uptime_seconds": round(time.monotonic() - STARTED)}
@@ -172,4 +184,84 @@ def overview():
         "services": services, "metrics": {key: iso(value) for key, value in metrics.items()},
         "latest_scan": latest_scan, "recent_scans": recent_scans,
         "classifier": latest_classifier_progress(), "host": host_metrics(), "errors": errors,
+    }
+
+
+def smb_path(path: str) -> str:
+    prefix = "/volume1/data"
+    if path == prefix:
+        return r"\\192.168.68.105\data"
+    if path.startswith(prefix + "/"):
+        return r"\\192.168.68.105\data" + "\\" + path[len(prefix) + 1:].replace("/", "\\")
+    return ""
+
+
+@app.get("/api/v1/workset")
+def workset(
+    status: str = Query("active", pattern="^(active|inactive|needs_review|all)$"),
+    extension: str = Query("all", pattern="^(pdf|docx|xlsx|all)$"),
+    search: str = Query("", max_length=100),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    conditions: list[str] = []
+    params: list[Any] = []
+    if status != "all":
+        conditions.append("w.workset_status = %s")
+        params.append(status)
+    if extension != "all":
+        conditions.append("w.extension = %s")
+        params.append(extension)
+    if search.strip():
+        conditions.append("(w.filename ILIKE %s OR w.path ILIKE %s)")
+        pattern = f"%{search.strip()}%"
+        params.extend([pattern, pattern])
+    where = " WHERE " + " AND ".join(conditions) if conditions else ""
+    try:
+        with db_connect() as conn:
+            summary = query_one(conn, """
+                SELECT
+                    COUNT(*) AS total,
+                    COUNT(*) FILTER (WHERE workset_status = 'active') AS active,
+                    COUNT(*) FILTER (WHERE workset_status = 'inactive') AS inactive,
+                    COUNT(*) FILTER (WHERE workset_status = 'needs_review') AS needs_review
+                FROM public.v_active_document_workset
+            """)
+            count = query_one(
+                conn,
+                "SELECT COUNT(*) AS total FROM public.v_active_document_workset w" + where,
+                tuple(params),
+            )
+            rows = query_all(conn, """
+                SELECT
+                    w.file_id, w.content_group_id, w.filename, w.extension, w.path,
+                    w.size_bytes, w.workset_status, w.reason_code,
+                    w.last_qualifying_activity_at, w.activity_basis_source,
+                    w.activity_confidence, w.filesystem_modified_at,
+                    w.policy_version, w.policy_checksum,
+                    c.category, c.document_family, c.lifecycle,
+                    c.suggested_path, c.sensitivity, c.confidence AS classification_confidence
+                FROM public.v_active_document_workset w
+                LEFT JOIN public.v_current_file_classification c ON c.file_id = w.file_id
+            """ + where + " ORDER BY w.last_qualifying_activity_at DESC NULLS LAST, w.filename, w.file_id LIMIT %s OFFSET %s",
+                tuple(params + [limit, offset]),
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"workset unavailable: {type(exc).__name__}") from exc
+    documents = []
+    for row in rows:
+        item = {key: iso(value) for key, value in row.items()}
+        item["smb_path"] = smb_path(str(row["path"]))
+        item["classification_status"] = "accepted" if row.get("category") else "not_reviewed"
+        item["migration_status"] = "virtual_only"
+        documents.append(item)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "mode": "read_only",
+        "summary": summary,
+        "filtered_total": count["total"],
+        "limit": limit,
+        "offset": offset,
+        "documents": documents,
+        "safety": {"database_writes": False, "file_mutations": False},
     }
