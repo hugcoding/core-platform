@@ -26,6 +26,8 @@ def test_dashboard_frontend_uses_relative_api_and_refreshes():
     source = (ROOT / "dashboard" / "static" / "app.js").read_text()
     assert "fetch('/api/v1/overview'" in source
     assert "setInterval(refresh,10000)" in source
+    page = (ROOT / "dashboard" / "static" / "index.html").read_text()
+    assert 'href="http://192.168.68.105:8080/coreworkset"' in page
 
 
 def test_core_cli_exposes_dashboard_lifecycle():
