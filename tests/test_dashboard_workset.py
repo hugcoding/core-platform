@@ -61,7 +61,9 @@ class DashboardWorksetTests(unittest.TestCase):
             "size_bytes": 42, "workset_status": "active",
             "reason_code": "filesystem_mtime_within_configured_window",
             "last_qualifying_activity_at": datetime(2026, 8, 1, tzinfo=timezone.utc),
-            "category": None,
+            "category": None, "document_family": None,
+            "latest_review_decision": "accepted",
+            "latest_review_family": "interview_preparation",
         }
         with mock.patch.object(self.dashboard, "db_connect", return_value=connection), mock.patch.object(
             self.dashboard, "query_one", side_effect=[
@@ -78,6 +80,12 @@ class DashboardWorksetTests(unittest.TestCase):
             result["safety"],
         )
         self.assertEqual("not_reviewed", result["documents"][0]["classification_status"])
+        self.assertEqual("interview_preparation", result["documents"][0]["effective_document_family"])
+        self.assertEqual("accepted_portal_review", result["documents"][0]["effective_family_source"])
+        self.assertEqual(
+            "interview_preparation",
+            result["documents"][0]["target_proposal"]["document_family_code"],
+        )
         self.assertIn("filesystem_mtime", result["documents"][0]["reason_code"])
         self.assertEqual(r"\\192.168.68.105\data\import\document.docx", result["documents"][0]["smb_path"])
         params = query_all.call_args.args[2]

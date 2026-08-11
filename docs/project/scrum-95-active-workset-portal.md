@@ -62,6 +62,12 @@ bevat documentidentiteit, golden-recordgroep, contenthash, het getoonde
 voorstel, confidence, reason-code, contractversie, reviewer en timestamp.
 Retries zijn veilig door een unieke idempotency key.
 
+Een geaccepteerde familiecorrectie krijgt in de portaalprojectie voorrang op
+het oorspronkelijke CORE-familievoorstel. Daardoor wijzigen het zichtbare
+familielabel, het familiefilter en het opnieuw berekende virtuele doelpad direct
+naar de menselijke keuze. Het oorspronkelijke voorstel blijft ongewijzigd in
+de revieweventhistorie aanwezig. Deze projectie verplaatst nog steeds niets.
+
 ```mermaid
 flowchart LR
     P["Portaal toont CORE-voorstel"] --> H["Hugo beoordeelt of corrigeert familie"]

@@ -49,12 +49,17 @@ FAMILY_RULES = (
     ("supporting_analysis", "Ondersteunende analyses", ("analyse", "advies", "feedback", "stress", "afwijzing")),
     ("certificates", "Certificaten", ("certificate", "certificaat", "diploma")),
 )
+FAMILY_LABELS = {code: label for code, label, _ in FAMILY_RULES}
+FAMILY_LABELS.update({
+    "course_data": "Cursusdata", "secrets": "Geheimen", "general": "Algemeen",
+})
 SECRET_TERMS = ("wachtwoord", "password", "passwords", "credentials", "api key", "secret")
 
 
 def contract_checksum() -> str:
     payload = {"version": CONTRACT_VERSION, "root": TARGET_ROOT, "zones": ZONE_LABELS,
                "categories": CATEGORY_LABELS, "rules": KEYWORD_RULES, "families": FAMILY_RULES,
+               "family_labels": FAMILY_LABELS,
                "secret_terms": SECRET_TERMS}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
@@ -104,6 +109,9 @@ def is_supporting_dataset(row: dict[str, Any]) -> bool:
 
 
 def document_family(row: dict[str, Any]) -> tuple[str, str]:
+    accepted = str(row.get("accepted_document_family") or "").strip().casefold()
+    if accepted in FAMILY_LABELS:
+        return accepted, FAMILY_LABELS[accepted]
     evidence = " " + _evidence(row).replace("-", " ") + " "
     for code, label, terms in FAMILY_RULES:
         if any(term in evidence for term in terms):

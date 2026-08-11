@@ -223,11 +223,20 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
     item["smb_path"] = smb_path(str(row["path"]))
     item["classification_status"] = "accepted" if row.get("category") else "not_reviewed"
     item["migration_status"] = "virtual_only"
+    reviewed_family = (
+        row.get("latest_review_family")
+        if row.get("latest_review_decision") == "accepted" else None
+    )
+    item["effective_document_family"] = reviewed_family or row.get("document_family")
+    item["effective_family_source"] = (
+        "accepted_portal_review" if reviewed_family else
+        "accepted_classification" if row.get("document_family") else "core_proposal"
+    )
     if row.get("workset_status") == "active":
         proposal = propose_target({
             **row,
             "accepted_category": row.get("category"),
-            "accepted_document_family": row.get("document_family"),
+            "accepted_document_family": item["effective_document_family"],
             "accepted_lifecycle": row.get("lifecycle"),
         })
         item["target_proposal"] = {

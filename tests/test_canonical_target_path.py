@@ -81,6 +81,16 @@ class CanonicalTargetPathTests(unittest.TestCase):
         self.assertEqual("supporting_dataset_requires_review", result["proposal_reason_code"])
         self.assertIn("/Te beoordelen/Leren & Ontwikkelen/Cursusdata/", result["suggested_target_path"])
 
+    def test_accepted_review_family_code_gets_canonical_dutch_label(self):
+        result = propose_target({
+            "file_id": 14, "filename": "Een integere Belastingdienst.pdf", "extension": "pdf",
+            "path": "/volume1/data/Documenten/CV & Sollicitaties/rijksoverheid/toeslagen/Een integere Belastingdienst.pdf",
+            "accepted_document_family": "interview_preparation",
+        })
+        self.assertEqual("interview_preparation", result["document_family_code"])
+        self.assertEqual("Gespreksvoorbereiding", result["folder_label"])
+        self.assertIn("/Gespreksvoorbereiding/", result["suggested_target_path"])
+
 
 if __name__ == "__main__":
     unittest.main()
