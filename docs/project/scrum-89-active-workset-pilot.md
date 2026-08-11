@@ -192,5 +192,13 @@ bron, confidence, uitgesloten evidence met redenen en het verwachte lifecycle-
 effect. De compacte review-CSV bevat uitsluitend gewijzigde selecties, conflicten
 en uitsluitingen. Uitvoer staat onder `project/exports/active-workset/`.
 
+De impactmeting vergelijkt canonical selecties op evidence-ID en niet op alleen
+de tekstuele datumweergave. Daardoor geldt eenzelfde moment in bijvoorbeeld
+`+00`, `+00:00` of UTC-notatie niet als wijziging. PostgreSQL-offsets en Unix-
+epochs worden Python 3.8-compatible gelezen. Het rapport toont daarnaast de
+filesystem-mutatiedatum en de v1 reason-code. Een gemengde vergelijking van een
+tijdzoneloze en een tijdzonebekende datum wordt apart gemarkeerd als
+`chronology_timezone_ambiguous` en blokkeert de lifecycle niet automatisch.
+
 Dit rapport activeert v2 niet. Eerst worden impact, uitzonderingen en bronweging
 beoordeeld; een afzonderlijke migratie is nodig om consumers te wijzigen.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+import re
 from typing import Any
 
 
@@ -19,12 +20,25 @@ SOURCE_RANK = {
 }
 
 
+def _normalize_iso_timestamp(text: str) -> str:
+    normalized = text.replace("Z", "+00:00")
+    return re.sub(r"([+-]\d{2})$", r"\1:00", normalized)
+
+
 def parse_timestamp(value: object) -> datetime | None:
     text = str(value or "").strip()
     if not text:
         return None
+    if re.fullmatch(r"\d+(?:\.\d+)?", text):
+        try:
+            epoch = float(text)
+            if epoch > 32_503_680_000:
+                epoch /= 1000
+            return datetime.fromtimestamp(epoch, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
     try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(_normalize_iso_timestamp(text))
     except ValueError:
         return None
     if parsed.tzinfo is None:
@@ -32,10 +46,20 @@ def parse_timestamp(value: object) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def parse_local_timestamp(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(_normalize_iso_timestamp(text)).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
 def _candidate(row: dict[str, Any], *, as_of: datetime) -> dict[str, Any]:
     value_at = parse_timestamp(row.get("evidence_value_at"))
-    local_value = parse_timestamp(row.get("evidence_local_value"))
-    comparison_at = value_at or local_value
+    local_value = parse_local_timestamp(row.get("evidence_local_value"))
+    comparison_at = value_at or (local_value.replace(tzinfo=timezone.utc) if local_value else None)
     excluded_reason = ""
     if str(row.get("evidence_source_type") or "") not in CREDIBLE_SOURCES:
         excluded_reason = "unsupported_or_technical_source"
@@ -57,6 +81,7 @@ def _candidate(row: dict[str, Any], *, as_of: datetime) -> dict[str, Any]:
         "value_at": value_at.isoformat() if value_at else "",
         "local_value": str(row.get("evidence_local_value") or ""),
         "comparison_at": comparison_at,
+        "timezone_known": value_at is not None,
         "excluded_reason": excluded_reason,
     }
 
@@ -106,9 +131,13 @@ def assess_file(
     modified_values = [
         row["comparison_at"] for row in credible if row["date_type"] == "modified"
     ]
-    chronology_issue = bool(
-        created and modified and created["comparison_at"] > modified["comparison_at"]
-    )
+    chronology_issue = ""
+    if created and modified:
+        if created["timezone_known"] == modified["timezone_known"]:
+            if created["comparison_at"] > modified["comparison_at"]:
+                chronology_issue = "created_after_modified"
+        elif created["comparison_at"] > modified["comparison_at"]:
+            chronology_issue = "chronology_timezone_ambiguous"
 
     from core.workset.active_workset import subtract_months
 
@@ -138,7 +167,7 @@ def assess_file(
         ) if value is not None and value <= as_of
     ]
     canonical_activity = max(activity_candidates) if activity_candidates else None
-    if chronology_issue:
+    if chronology_issue == "created_after_modified":
         v2_status = "needs_review"
         v2_reason = "created_after_modified"
     elif decision_sensitive:
@@ -159,18 +188,16 @@ def assess_file(
 
     v1_created = str(base.get("v1_created_at") or "")
     v1_modified = str(base.get("v1_modified_at") or "")
+    v1_created_evidence_id = str(base.get("v1_created_evidence_id") or "")
+    v1_modified_evidence_id = str(base.get("v1_modified_evidence_id") or "")
     v2_created = _display_timestamp(created)
     v2_modified = _display_timestamp(modified)
-    v1_created_comparison = parse_timestamp(v1_created)
-    v1_modified_comparison = parse_timestamp(v1_modified)
-    created_changed = (
-        (created["comparison_at"] if created else None) != v1_created_comparison
-    )
-    modified_changed = (
-        (modified["comparison_at"] if modified else None) != v1_modified_comparison
-    )
+    created_evidence_id = created["evidence_id"] if created else ""
+    modified_evidence_id = modified["evidence_id"] if modified else ""
+    created_changed = created_evidence_id != v1_created_evidence_id
+    modified_changed = modified_evidence_id != v1_modified_evidence_id
     return {
-        "schema_version": "temporal-canonical-impact-v1",
+        "schema_version": "temporal-canonical-impact-v2",
         "selection_rule_version": RULE_VERSION,
         "file_id": int(base["file_id"]),
         "content_group_id": str(base.get("content_group_id") or ""),
@@ -178,9 +205,10 @@ def assess_file(
         "extension": str(base.get("extension") or ""),
         "path": str(base.get("path") or ""),
         "v1_created_at": v1_created,
+        "v1_created_evidence_id": v1_created_evidence_id,
         "v2_canonical_created_at": v2_created,
         "created_changed": created_changed,
-        "created_evidence_id": created["evidence_id"] if created else "",
+        "created_evidence_id": created_evidence_id,
         "created_source_type": created["source_type"] if created else "",
         "created_confidence": created["confidence"] if created else "",
         "created_timezone_status": created["timezone_status"] if created else "",
@@ -190,9 +218,10 @@ def assess_file(
         "earliest_observed_created_at": min(created_values).isoformat() if created_values else "",
         "latest_observed_created_at": max(created_values).isoformat() if created_values else "",
         "v1_modified_at": v1_modified,
+        "v1_modified_evidence_id": v1_modified_evidence_id,
         "v2_canonical_modified_at": v2_modified,
         "modified_changed": modified_changed,
-        "modified_evidence_id": modified["evidence_id"] if modified else "",
+        "modified_evidence_id": modified_evidence_id,
         "modified_source_type": modified["source_type"] if modified else "",
         "modified_confidence": modified["confidence"] if modified else "",
         "modified_timezone_status": modified["timezone_status"] if modified else "",
@@ -209,12 +238,14 @@ def assess_file(
         )),
         "material_temporal_conflict": material_conflict,
         "lifecycle_conflict_effect": conflict_effect,
-        "chronology_issue": "created_after_modified" if chronology_issue else "",
+        "chronology_issue": chronology_issue,
         "v1_workset_status": str(base.get("v1_workset_status") or ""),
+        "v1_reason_code": str(base.get("v1_reason_code") or ""),
         "v2_workset_status": v2_status,
         "lifecycle_changed": str(base.get("v1_workset_status") or "") != v2_status,
         "v2_lifecycle_reason": v2_reason,
         "canonical_activity_at": canonical_activity.isoformat() if canonical_activity else "",
+        "filesystem_modified_at": filesystem_modified.isoformat() if filesystem_modified else "",
         "activity_cutoff_at": cutoff.isoformat(),
         "activity_window_months": activity_window_months,
         "policy_version": str(base.get("policy_version") or ""),
@@ -262,6 +293,12 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             for row in rows
         ),
         "chronology_issues": sum(bool(row["chronology_issue"]) for row in rows),
+        "created_after_modified_issues": sum(
+            row["chronology_issue"] == "created_after_modified" for row in rows
+        ),
+        "chronology_timezone_ambiguous": sum(
+            row["chronology_issue"] == "chronology_timezone_ambiguous" for row in rows
+        ),
         "excluded_evidence": sum(int(row["excluded_evidence_count"]) for row in rows),
         "v1_statuses": dict(sorted(v1.items())),
         "v2_statuses": dict(sorted(v2.items())),

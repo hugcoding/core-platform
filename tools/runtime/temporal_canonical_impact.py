@@ -38,7 +38,9 @@ SELECT
     w.policy_version,
     w.policy_checksum,
     tp.source_created_at AS v1_created_at,
+    tp.created_evidence_id AS v1_created_evidence_id,
     tp.source_modified_at AS v1_modified_at,
+    tp.modified_evidence_id AS v1_modified_evidence_id,
     e.id AS evidence_id,
     e.date_type AS evidence_date_type,
     e.source_type AS evidence_source_type,
@@ -58,16 +60,19 @@ ORDER BY w.file_id, e.date_type, e.source_type, e.id;
 
 FIELDS = [
     "schema_version", "selection_rule_version", "file_id", "content_group_id",
-    "filename", "extension", "path", "v1_created_at", "v2_canonical_created_at",
+    "filename", "extension", "path", "filesystem_modified_at", "v1_created_at",
+    "v1_created_evidence_id", "v2_canonical_created_at",
     "created_changed", "created_evidence_id", "created_source_type", "created_confidence",
     "created_timezone_status", "created_selection_reason", "v1_modified_at",
+    "v1_modified_evidence_id",
     "earliest_observed_created_at", "latest_observed_created_at",
     "v2_canonical_modified_at", "modified_changed", "modified_evidence_id",
     "modified_source_type", "modified_confidence", "modified_timezone_status",
     "modified_selection_reason", "earliest_observed_modified_at",
     "latest_observed_modified_at", "credible_evidence_count", "credible_evidence_ids",
     "excluded_evidence_count", "excluded_evidence", "material_temporal_conflict",
-    "lifecycle_conflict_effect", "chronology_issue", "v1_workset_status", "v2_workset_status",
+    "lifecycle_conflict_effect", "chronology_issue", "v1_workset_status", "v1_reason_code",
+    "v2_workset_status",
     "lifecycle_changed", "v2_lifecycle_reason", "canonical_activity_at",
     "activity_cutoff_at", "activity_window_months", "policy_version", "policy_checksum",
     "database_writes", "file_mutations",
@@ -117,7 +122,7 @@ def main(argv: list[str] | None = None) -> int:
         row for row in rows
         if row["created_changed"] or row["modified_changed"]
         or row["lifecycle_changed"] or row["material_temporal_conflict"]
-        or row["excluded_evidence_count"]
+        or row["excluded_evidence_count"] or row["chronology_issue"]
     ]
     generated_at = datetime.now().astimezone()
     timestamp = generated_at.strftime("%Y%m%d-%H%M%S")
@@ -130,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
     write_dict_rows(csv_path, rows, FIELDS)
     write_dict_rows(review_path, review, FIELDS)
     payload = {
-        "schema_version": "temporal-canonical-impact-report-v1",
+        "schema_version": "temporal-canonical-impact-report-v2",
         "generated_at": generated_at.isoformat(),
         "as_of": as_of.isoformat(),
         "mode": "read_only_dry_run",
@@ -155,7 +160,8 @@ def main(argv: list[str] | None = None) -> int:
         f"- Material temporal conflicts: **{metrics['material_conflicts']}**",
         f"- Decision-invariant conflicts: **{metrics['decision_invariant_conflicts']}**",
         f"- Decision-sensitive conflicts: **{metrics['decision_sensitive_conflicts']}**",
-        f"- Created-after-modified issues: **{metrics['chronology_issues']}**",
+        f"- Created-after-modified issues: **{metrics['created_after_modified_issues']}**",
+        f"- Timezone-ambiguous chronology: **{metrics['chronology_timezone_ambiguous']}**",
         f"- Excluded evidence observations: **{metrics['excluded_evidence']}**", "",
         "## Status comparison", "",
         "| Status | v1 | v2 impact |", "|---|---:|---:|",

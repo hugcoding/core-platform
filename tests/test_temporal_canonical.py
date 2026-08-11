@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
-from core.metadata.temporal_canonical import assess_rows, summarize
+from core.metadata.temporal_canonical import assess_rows, parse_timestamp, summarize
 from tools.runtime import temporal_canonical_impact
 
 
@@ -25,7 +25,9 @@ def evidence(file_id, date_type, timestamp, *, evidence_id, source="pdf_info_dic
         "created_has_conflict": conflict, "modified_has_conflict": conflict,
         "activity_window_months": "9", "policy_version": "policy-v1",
         "policy_checksum": "hash", "v1_created_at": "2025-02-17T10:00:00+00:00",
+        "v1_created_evidence_id": "info-created",
         "v1_modified_at": "2025-02-17T10:00:00+00:00",
+        "v1_modified_evidence_id": "info-modified",
         "evidence_id": evidence_id, "evidence_date_type": date_type,
         "evidence_source_type": source, "evidence_confidence": confidence,
         "evidence_value_at": timestamp if source != "pdf_xmp" else "",
@@ -36,6 +38,47 @@ def evidence(file_id, date_type, timestamp, *, evidence_id, source="pdf_info_dic
 
 
 class TemporalCanonicalSelectionTests(unittest.TestCase):
+    def test_postgresql_short_utc_offset_and_epoch_are_python38_compatible(self):
+        self.assertEqual(
+            datetime(2026, 3, 2, 11, 7, 50, tzinfo=timezone.utc),
+            parse_timestamp("2026-03-02 11:07:50+00"),
+        )
+        self.assertEqual(
+            datetime(2025, 4, 1, 20, 37, 38, tzinfo=timezone.utc),
+            parse_timestamp("1743539858"),
+        )
+
+    def test_same_evidence_is_not_changed_by_timezone_rendering(self):
+        row = evidence(
+            7, "created", "2025-02-17T10:00:00+00:00", evidence_id="same-created",
+            conflict="false", status="inactive",
+        )
+        row["v1_created_evidence_id"] = "same-created"
+        row["v1_created_at"] = "2025-02-17 10:00:00+00"
+        result = assess_rows([row], as_of=AS_OF)[0]
+        self.assertFalse(result["created_changed"])
+
+    def test_postgresql_filesystem_timestamp_keeps_recent_document_active(self):
+        row = evidence(
+            8, "created", "2022-01-01T00:00:00+00:00", evidence_id="old-created",
+            conflict="false", status="active",
+        )
+        row["filesystem_modified_at"] = "2026-03-02 11:07:50+00"
+        result = assess_rows([row], as_of=AS_OF)[0]
+        self.assertEqual("active", result["v2_workset_status"])
+        self.assertEqual("2026-03-02T11:07:50+00:00", result["filesystem_modified_at"])
+
+    def test_timezone_ambiguous_chronology_does_not_block_lifecycle(self):
+        rows = [
+            evidence(9, "created", "2022-12-03T13:49:12+00:00", evidence_id="created", conflict="false", status="inactive"),
+            evidence(9, "modified", "2022-12-03T12:50:27+00:00", evidence_id="modified", conflict="false", status="inactive"),
+        ]
+        rows[0]["evidence_value_at"] = ""
+        rows[0]["evidence_timezone_status"] = "absent"
+        result = assess_rows(rows, as_of=AS_OF)[0]
+        self.assertEqual("chronology_timezone_ambiguous", result["chronology_issue"])
+        self.assertEqual("inactive", result["v2_workset_status"])
+
     def test_earliest_created_latest_modified_and_invariant_conflict(self):
         rows = [
             evidence(1, "created", "2025-02-17T10:00:00+00:00", evidence_id="info-created"),
@@ -124,7 +167,10 @@ class TemporalCanonicalRuntimeTests(unittest.TestCase):
             report = (export_dir / "temporal-canonical-impact-latest.md").read_text("utf-8")
         self.assertEqual(0, status)
         self.assertEqual("read_only_dry_run", payload["mode"])
+        self.assertEqual("temporal-canonical-impact-report-v2", payload["schema_version"])
         self.assertFalse(payload["safety"]["database_writes"])
+        self.assertIn("filesystem_modified_at", payload["documents"][0])
+        self.assertEqual("conflicting_temporal_evidence", payload["documents"][0]["v1_reason_code"])
         self.assertIn("Database writes: **false**", report)
 
 
