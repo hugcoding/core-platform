@@ -51,9 +51,21 @@ def test_workset_portal_is_parameterized_read_only_and_mobile():
     assert "DELETE FROM" not in backend
     assert "fetch(`/api/v1/workset?" in frontend
     assert 'id="worksetFamily"' in page
+    assert 'id="worksetReview"' in page
+    assert 'id="worksetDecision"' in page
+    assert 'value="pending"' in page
     assert "data-decision=\"accepted\"" in frontend
     assert "corrected_document_family_code" in frontend
     assert "model gewijzigd" in frontend
+    assert "pagina en filters blijven staan" in frontend
+    assert "setTimeout(()=>loadWorkset(true)" not in frontend
+    assert "review-complete" in frontend
+    assert "Alles in deze selectie is beoordeeld" in frontend
+    assert "toggleHistory" in frontend
+    assert "Menselijk oordeel" in frontend
+    assert "CORE-voorstel" in frontend
+    assert "/reviews/export?format=csv" in page
+    assert "/reviews/export?format=json" in page
     assert "wsEsc" in frontend
     assert "Kopieer SMB-pad" in frontend
     assert 'name="viewport"' in page

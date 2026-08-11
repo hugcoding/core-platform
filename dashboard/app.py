@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import io
+import json
 import os
 import re
 import shutil
@@ -13,7 +15,7 @@ from typing import Any
 import psycopg2
 import redis
 from fastapi import Body, FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from core.organization.target_path import CONTRACT_VERSION, propose_target
@@ -223,11 +225,20 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
     item["smb_path"] = smb_path(str(row["path"]))
     item["classification_status"] = "accepted" if row.get("category") else "not_reviewed"
     item["migration_status"] = "virtual_only"
+    reviewed_family = (
+        row.get("latest_review_family")
+        if row.get("latest_review_decision") == "accepted" else None
+    )
+    item["effective_document_family"] = reviewed_family or row.get("document_family")
+    item["effective_family_source"] = (
+        "accepted_portal_review" if reviewed_family else
+        "accepted_classification" if row.get("document_family") else "core_proposal"
+    )
     if row.get("workset_status") == "active":
         proposal = propose_target({
             **row,
             "accepted_category": row.get("category"),
-            "accepted_document_family": row.get("document_family"),
+            "accepted_document_family": item["effective_document_family"],
             "accepted_lifecycle": row.get("lifecycle"),
         })
         item["target_proposal"] = {
@@ -249,6 +260,8 @@ def workset(
     extension: str = Query("all", pattern="^(pdf|docx|xlsx|all)$"),
     search: str = Query("", max_length=100),
     family: str = Query("all", max_length=80, pattern="^[a-z0-9_'-]{1,80}$|^all$"),
+    review_state: str = Query("pending", pattern="^(pending|reviewed|all)$"),
+    review_decision: str = Query("all", pattern="^(accepted|rejected|needs_review|passed|all)$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -296,6 +309,20 @@ def workset(
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"workset unavailable: {type(exc).__name__}") from exc
     enriched = [enrich_workset_row(row) for row in rows]
+    review_summary = {
+        "pending": sum(not item.get("latest_review_id") for item in enriched),
+        "reviewed": sum(bool(item.get("latest_review_id")) for item in enriched),
+        "accepted": sum(item.get("latest_review_decision") == "accepted" for item in enriched),
+        "needs_review": sum(item.get("latest_review_decision") == "needs_review" for item in enriched),
+        "rejected": sum(item.get("latest_review_decision") == "rejected" for item in enriched),
+        "passed": sum(item.get("latest_review_decision") == "passed" for item in enriched),
+    }
+    if review_state == "pending":
+        enriched = [item for item in enriched if not item.get("latest_review_id")]
+    elif review_state == "reviewed":
+        enriched = [item for item in enriched if item.get("latest_review_id")]
+    if review_decision != "all":
+        enriched = [item for item in enriched if item.get("latest_review_decision") == review_decision]
     families: dict[str, dict[str, Any]] = {}
     for item in enriched:
         proposal = item.get("target_proposal") or {}
@@ -313,6 +340,7 @@ def workset(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "mode": "interactive_review" if review_writes_enabled() else "read_only",
         "summary": summary,
+        "review_summary": review_summary,
         "filtered_total": count,
         "families": sorted(families.values(), key=lambda value: (value["label"].casefold(), value["code"])),
         "review_writes_enabled": review_writes_enabled(),
@@ -322,6 +350,74 @@ def workset(
         "safety": {"database_writes": review_writes_enabled(), "file_mutations": False,
                    "model_updates": False},
     }
+
+
+@app.get("/api/v1/workset/{file_id}/reviews")
+def workset_review_history(file_id: int):
+    try:
+        with db_connect() as conn:
+            if not query_one(conn, "SELECT to_regclass('public.document_review_events') IS NOT NULL AS available")["available"]:
+                raise HTTPException(status_code=503, detail="review storage migration is not applied")
+            rows = query_all(conn, """
+                SELECT id, review_contract_version, channel, review_type, file_id,
+                       content_group_id, content_sha256, proposal_category_code,
+                       proposal_document_family_code, proposal_lifecycle,
+                       proposal_target_path, proposal_confidence, proposal_reason_code,
+                       decision, corrected_document_family_code, review_notes,
+                       reviewer, supersedes_event_id, created_at
+                FROM public.document_review_events
+                WHERE file_id = %s
+                ORDER BY created_at DESC, id DESC
+            """, (file_id,))
+        return {"file_id": file_id, "events": [
+            {key: iso(value) for key, value in row.items()} for row in rows
+        ], "history_is_append_only": True}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"review history unavailable: {type(exc).__name__}") from exc
+
+
+@app.get("/api/v1/workset/reviews/export")
+def export_workset_reviews(format: str = Query("csv", pattern="^(csv|json)$")):
+    try:
+        with db_connect() as conn:
+            if not query_one(conn, "SELECT to_regclass('public.document_review_events') IS NOT NULL AS available")["available"]:
+                raise HTTPException(status_code=503, detail="review storage migration is not applied")
+            rows = query_all(conn, """
+                SELECT e.id, e.created_at, e.reviewer, e.channel, e.review_type,
+                       e.file_id, f.filename, e.content_group_id, e.content_sha256,
+                       e.decision, e.corrected_document_family_code, e.review_notes,
+                       e.proposal_category_code, e.proposal_document_family_code,
+                       e.proposal_lifecycle, e.proposal_target_path,
+                       e.proposal_confidence, e.proposal_reason_code,
+                       e.review_contract_version, e.supersedes_event_id
+                FROM public.document_review_events e
+                JOIN public.files f ON f.id = e.file_id
+                ORDER BY e.created_at DESC, e.id DESC
+            """)
+        serializable = [{key: iso(value) for key, value in row.items()} for row in rows]
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        if format == "json":
+            return Response(
+                content=json.dumps({"schema_version": "document-review-export-v1", "events": serializable},
+                                   ensure_ascii=False, indent=2, default=str) + "\n",
+                media_type="application/json",
+                headers={"Content-Disposition": f'attachment; filename="document-reviews-{stamp}.json"'},
+            )
+        fields = list(serializable[0]) if serializable else ["id", "created_at", "file_id", "decision"]
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=fields, delimiter=";", lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(serializable)
+        return Response(
+            content="\ufeff" + output.getvalue(), media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="document-reviews-{stamp}.csv"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"review export unavailable: {type(exc).__name__}") from exc
 
 
 @app.post("/api/v1/workset/reviews")
@@ -388,8 +484,25 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                     created = cur.fetchone()
                 if int(created[2]) != file_id or str(created[3]) != decision:
                     raise HTTPException(status_code=409, detail="idempotency key belongs to another review")
-        return {"status": "stored", "review_id": str(created[0]), "created_at": iso(created[1]),
-                "database_writes": True, "file_mutations": False, "model_updates": False}
+        effective_proposal = proposal
+        if decision == "accepted" and family:
+            effective_proposal = propose_target({
+                **row,
+                "accepted_category": row.get("category"),
+                "accepted_document_family": family,
+                "accepted_lifecycle": row.get("lifecycle"),
+            })
+        return {
+            "status": "stored", "review_id": str(created[0]), "created_at": iso(created[1]),
+            "decision": decision, "corrected_document_family_code": family,
+            "effective_target_proposal": {
+                key: effective_proposal[key] for key in (
+                    "document_family_code", "folder_label", "suggested_target_path",
+                    "proposal_confidence", "proposal_reason_code",
+                )
+            },
+            "database_writes": True, "file_mutations": False, "model_updates": False,
+        }
     except HTTPException:
         raise
     except Exception as exc:

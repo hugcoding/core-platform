@@ -62,6 +62,28 @@ bevat documentidentiteit, golden-recordgroep, contenthash, het getoonde
 voorstel, confidence, reason-code, contractversie, reviewer en timestamp.
 Retries zijn veilig door een unieke idempotency key.
 
+Een geaccepteerde familiecorrectie krijgt in de portaalprojectie voorrang op
+het oorspronkelijke CORE-familievoorstel. Daardoor wijzigen het zichtbare
+familielabel, het familiefilter en het opnieuw berekende virtuele doelpad direct
+naar de menselijke keuze. Het oorspronkelijke voorstel blijft ongewijzigd in
+de revieweventhistorie aanwezig. Deze projectie verplaatst nog steeds niets.
+
+Na het opslaan blijft de pagina op dezelfde scrollpositie met dezelfde filters
+staan. Alleen de beoordeelde kaart wordt gericht bijgewerkt met het nieuwe
+oordeel en eventueel herberekende virtuele doelpad. In het standaardfilter
+`Nog te beoordelen` verdwijnt deze kaart daarna uit de wachtrij. Het document
+blijft beschikbaar via `Beoordeeld` en `Alle oordelen`. Hiermee blijft een
+reeks beoordelingen rustig uitvoerbaar zonder telkens de volledige werkset te
+laden of beoordeelde kaarten opnieuw tegen te komen.
+
+De beoordeelde weergave heeft aanvullende filters voor `Akkoord`, `Later`,
+`Niet akkoord` en `Overgeslagen`, met compacte tellers. `Historie` opent per
+document alle append-only reviewevents inclusief reviewer, datum, familie en
+notitie. CSV- en JSON-export leveren dezelfde handmatige beslissingen voor
+controle of latere batchanalyse. Labels onderscheiden expliciet het
+`CORE-voorstel` van het `Menselijk oordeel`; een toekomstig AI-advies krijgt
+een eigen provenance-label en wordt niet met één van beide vermengd.
+
 ```mermaid
 flowchart LR
     P["Portaal toont CORE-voorstel"] --> H["Hugo beoordeelt of corrigeert familie"]

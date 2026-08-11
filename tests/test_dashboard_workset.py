@@ -35,6 +35,7 @@ class DashboardWorksetTests(unittest.TestCase):
         responses = types.ModuleType("fastapi.responses")
         responses.FileResponse = lambda path: path
         responses.RedirectResponse = lambda path, status_code=307: (path, status_code)
+        responses.Response = lambda **kwargs: kwargs
         staticfiles = types.ModuleType("fastapi.staticfiles")
         staticfiles.StaticFiles = lambda **kwargs: kwargs
         modules = {
@@ -61,7 +62,9 @@ class DashboardWorksetTests(unittest.TestCase):
             "size_bytes": 42, "workset_status": "active",
             "reason_code": "filesystem_mtime_within_configured_window",
             "last_qualifying_activity_at": datetime(2026, 8, 1, tzinfo=timezone.utc),
-            "category": None,
+            "category": None, "document_family": None,
+            "latest_review_decision": "accepted",
+            "latest_review_family": "interview_preparation",
         }
         with mock.patch.object(self.dashboard, "db_connect", return_value=connection), mock.patch.object(
             self.dashboard, "query_one", side_effect=[
@@ -70,7 +73,8 @@ class DashboardWorksetTests(unittest.TestCase):
             ],
         ), mock.patch.object(self.dashboard, "query_all", return_value=[row]) as query_all:
             result = self.dashboard.workset(
-                status="active", extension="docx", search="document", limit=50, offset=0,
+                status="active", extension="docx", search="document", review_state="all",
+                limit=50, offset=0,
             )
         self.assertEqual("read_only", result["mode"])
         self.assertEqual(
@@ -78,6 +82,12 @@ class DashboardWorksetTests(unittest.TestCase):
             result["safety"],
         )
         self.assertEqual("not_reviewed", result["documents"][0]["classification_status"])
+        self.assertEqual("interview_preparation", result["documents"][0]["effective_document_family"])
+        self.assertEqual("accepted_portal_review", result["documents"][0]["effective_family_source"])
+        self.assertEqual(
+            "interview_preparation",
+            result["documents"][0]["target_proposal"]["document_family_code"],
+        )
         self.assertIn("filesystem_mtime", result["documents"][0]["reason_code"])
         self.assertEqual(r"\\192.168.68.105\data\import\document.docx", result["documents"][0]["smb_path"])
         params = query_all.call_args.args[2]
@@ -93,6 +103,9 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn('"model_updates": False', source)
         self.assertIn("ILIKE %s", source)
         self.assertIn("enriched[offset:offset + limit]", source)
+        self.assertIn('@app.get("/api/v1/workset/{file_id}/reviews")', source)
+        self.assertIn('@app.get("/api/v1/workset/reviews/export")', source)
+        self.assertIn("review_decision", source)
 
     def test_review_is_append_only_and_does_not_update_model_or_file(self):
         connection = mock.MagicMock()
@@ -126,6 +139,8 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertEqual(str(review_id), result["review_id"])
         self.assertFalse(result["file_mutations"])
         self.assertFalse(result["model_updates"])
+        self.assertEqual("accepted", result["decision"])
+        self.assertEqual("vacancies", result["effective_target_proposal"]["document_family_code"])
 
 
 if __name__ == "__main__":
