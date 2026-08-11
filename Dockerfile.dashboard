@@ -4,6 +4,7 @@ WORKDIR /app
 RUN pip install --no-cache-dir fastapi==0.116.1 uvicorn==0.35.0 psycopg2-binary==2.9.10 redis==6.2.0
 
 COPY dashboard ./dashboard
+COPY core ./core
 
 USER 65534:65534
 EXPOSE 8080

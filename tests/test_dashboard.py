@@ -50,6 +50,10 @@ def test_workset_portal_is_parameterized_read_only_and_mobile():
     assert "UPDATE public." not in backend
     assert "DELETE FROM" not in backend
     assert "fetch(`/api/v1/workset?" in frontend
+    assert 'id="worksetFamily"' in page
+    assert "data-decision=\"accepted\"" in frontend
+    assert "corrected_document_family_code" in frontend
+    assert "model gewijzigd" in frontend
     assert "wsEsc" in frontend
     assert "Kopieer SMB-pad" in frontend
     assert 'name="viewport"' in page
