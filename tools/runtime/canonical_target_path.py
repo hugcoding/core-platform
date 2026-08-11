@@ -52,7 +52,10 @@ def main(argv=None) -> int:
     command = [docker, "exec", os.getenv("POSTGRES_CONTAINER", "postgres"), "psql",
                "-U", os.getenv("DB_USER", "hugo"), "-d", os.getenv("DB_NAME", "nasdb_test")]
     try:
-        source = list(csv.DictReader(io.StringIO(run_query(command, QUERY))))
+        # The shared helper requires a source argument for optional SQL token
+        # rendering. This query is already scoped by the workset view and has
+        # no source tokens, so an empty value is intentional.
+        source = list(csv.DictReader(io.StringIO(run_query(command, QUERY, ""))))
         rows = mark_collisions([propose_target(row) for row in select_representative(source, args.limit)])
     except (subprocess.CalledProcessError, FileNotFoundError, ValueError) as exc:
         print(f"Target-path pilot failed: {exc}", file=sys.stderr)
