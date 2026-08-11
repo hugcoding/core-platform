@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "database/migrations/20260811_add_document_review_events.sql"
 ROLLBACK = ROOT / "database/migrations/rollback/20260811_add_document_review_events.sql"
 REFINEMENT = ROOT / "database/migrations/20260811_add_review_refinement_proposals.sql"
+CATEGORY = ROOT / "database/migrations/20260812_add_review_category_choice.sql"
 
 
 class DocumentReviewEventsMigrationTests(unittest.TestCase):
@@ -30,6 +31,12 @@ class DocumentReviewEventsMigrationTests(unittest.TestCase):
         sql = ROLLBACK.read_text(encoding="utf-8")
         self.assertIn("DROP VIEW IF EXISTS public.v_latest_document_review", sql)
         self.assertIn("DROP TABLE IF EXISTS public.document_review_events", sql)
+
+    def test_category_choice_is_append_only_and_viewed(self):
+        sql = CATEGORY.read_text(encoding="utf-8")
+        self.assertIn("corrected_category_code", sql)
+        self.assertIn("CREATE OR REPLACE VIEW public.v_latest_document_review", sql)
+        self.assertNotIn("UPDATE public.document_review_events", sql)
 
 
 if __name__ == "__main__":

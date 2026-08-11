@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from core.organization.target_path import CONTRACT_VERSION, propose_target
+from core.organization.review_taxonomy import contextual_options, taxonomy
 
 
 APP_DIR = Path(__file__).parent
@@ -229,6 +230,11 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
         row.get("latest_review_family")
         if row.get("latest_review_decision") == "accepted" else None
     )
+    reviewed_category = (
+        row.get("latest_review_category")
+        if row.get("latest_review_decision") == "accepted" else None
+    )
+    item["effective_category"] = reviewed_category or row.get("category")
     item["effective_document_family"] = reviewed_family or row.get("document_family")
     item["effective_family_source"] = (
         "accepted_portal_review" if reviewed_family else
@@ -237,7 +243,7 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
     if row.get("workset_status") == "active":
         proposal = propose_target({
             **row,
-            "accepted_category": row.get("category"),
+            "accepted_category": item["effective_category"],
             "accepted_document_family": item["effective_document_family"],
             "accepted_lifecycle": row.get("lifecycle"),
         })
@@ -249,8 +255,10 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
                 "proposal_reason_code", "proposal_confidence",
             )
         }
+        item["review_options"] = contextual_options(row, proposal)
     else:
         item["target_proposal"] = None
+        item["review_options"] = None
     return item
 
 
@@ -294,6 +302,7 @@ def workset(
             review_select = """
                 , r.id AS latest_review_id, r.decision AS latest_review_decision,
                   r.corrected_document_family_code AS latest_review_family,
+                  r.corrected_category_code AS latest_review_category,
                   r.review_notes AS latest_review_notes, r.created_at AS latest_review_at
             """ if review_storage else ""
             review_join = """
@@ -343,6 +352,7 @@ def workset(
         "review_summary": review_summary,
         "filtered_total": count,
         "families": sorted(families.values(), key=lambda value: (value["label"].casefold(), value["code"])),
+        "review_taxonomy": taxonomy(),
         "review_writes_enabled": review_writes_enabled(),
         "limit": limit,
         "offset": offset,
@@ -363,7 +373,7 @@ def workset_review_history(file_id: int):
                        content_group_id, content_sha256, proposal_category_code,
                        proposal_document_family_code, proposal_lifecycle,
                        proposal_target_path, proposal_confidence, proposal_reason_code,
-                       decision, corrected_document_family_code, review_notes,
+                       decision, corrected_document_family_code, corrected_category_code, review_notes,
                        reviewer, supersedes_event_id, created_at,
                        proposed_category_label, proposed_family_label, proposed_target_path
                 FROM public.document_review_events
@@ -388,7 +398,7 @@ def export_workset_reviews(format: str = Query("csv", pattern="^(csv|json)$")):
             rows = query_all(conn, """
                 SELECT e.id, e.created_at, e.reviewer, e.channel, e.review_type,
                        e.file_id, f.filename, e.content_group_id, e.content_sha256,
-                       e.decision, e.corrected_document_family_code, e.review_notes,
+                       e.decision, e.corrected_category_code, e.corrected_document_family_code, e.review_notes,
                        e.proposal_category_code, e.proposal_document_family_code,
                        e.proposal_lifecycle, e.proposal_target_path,
                        e.proposal_confidence, e.proposal_reason_code,
@@ -436,11 +446,18 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
     if decision not in {"accepted", "rejected", "needs_review", "passed"}:
         raise HTTPException(status_code=422, detail="invalid review decision")
     family = str(payload.get("corrected_document_family_code") or "") or None
+    category = str(payload.get("corrected_category_code") or "") or None
     notes = str(payload.get("review_notes") or "") or None
     proposed_category = str(payload.get("proposed_category_label") or "").strip() or None
     proposed_family = str(payload.get("proposed_family_label") or "").strip() or None
     proposed_path = str(payload.get("proposed_target_path") or "").strip() or None
     if family and not re.fullmatch(r"[a-z0-9_'-]{1,80}", family):
+        raise HTTPException(status_code=422, detail="invalid document family code")
+    valid_categories = {item["code"] for item in taxonomy()["categories"]}
+    valid_families = {item["code"] for item in taxonomy()["families"]}
+    if category not in valid_categories:
+        raise HTTPException(status_code=422, detail="invalid category code")
+    if family not in valid_families:
         raise HTTPException(status_code=422, detail="invalid document family code")
     if notes and len(notes) > 2000:
         raise HTTPException(status_code=422, detail="review note exceeds 2000 characters")
@@ -476,10 +493,10 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                         file_id, content_group_id, content_sha256,
                         proposal_category_code, proposal_document_family_code,
                         proposal_lifecycle, proposal_target_path, proposal_confidence,
-                        proposal_reason_code, decision, corrected_document_family_code,
+                        proposal_reason_code, decision, corrected_document_family_code, corrected_category_code,
                         review_notes, reviewer, supersedes_event_id,
                         proposed_category_label, proposed_family_label, proposed_target_path
-                    ) VALUES (%s,%s,'workset_portal','target_path',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ) VALUES (%s,%s,'workset_portal','target_path',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (idempotency_key) DO NOTHING
                     RETURNING id, created_at, file_id, decision
                 """, (
@@ -487,7 +504,7 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                     row["content_sha256"], proposal["category_code"], proposal["document_family_code"],
                     proposal["zone_code"], proposal["suggested_target_path"],
                     proposal["proposal_confidence"], proposal["proposal_reason_code"], decision,
-                    family, notes, os.getenv("CORE_REVIEWER", "hugo"), supersedes_event_id,
+                    family, category, notes, os.getenv("CORE_REVIEWER", "hugo"), supersedes_event_id,
                     proposed_category, proposed_family, proposed_path,
                 ))
                 created = cur.fetchone()
@@ -498,16 +515,17 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                 if int(created[2]) != file_id or str(created[3]) != decision:
                     raise HTTPException(status_code=409, detail="idempotency key belongs to another review")
         effective_proposal = proposal
-        if decision == "accepted" and family:
+        if decision == "accepted" and family and category:
             effective_proposal = propose_target({
                 **row,
-                "accepted_category": row.get("category"),
+                "accepted_category": category,
                 "accepted_document_family": family,
                 "accepted_lifecycle": row.get("lifecycle"),
             })
         return {
             "status": "stored", "review_id": str(created[0]), "created_at": iso(created[1]),
             "decision": decision, "corrected_document_family_code": family,
+            "corrected_category_code": category,
             "proposed_category_label": proposed_category,
             "proposed_family_label": proposed_family,
             "proposed_target_path": proposed_path,

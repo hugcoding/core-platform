@@ -88,6 +88,8 @@ class DashboardWorksetTests(unittest.TestCase):
             "interview_preparation",
             result["documents"][0]["target_proposal"]["document_family_code"],
         )
+        self.assertLessEqual(len(result["documents"][0]["review_options"]["compact_families"]), 5)
+        self.assertEqual("document-taxonomy-v1", result["review_taxonomy"]["version"])
         self.assertIn("filesystem_mtime", result["documents"][0]["reason_code"])
         self.assertEqual(r"\\192.168.68.105\data\import\document.docx", result["documents"][0]["smb_path"])
         params = query_all.call_args.args[2]
@@ -134,7 +136,8 @@ class DashboardWorksetTests(unittest.TestCase):
         ):
             result = self.dashboard.create_workset_review({
                 "file_id": 1, "idempotency_key": str(uuid.uuid4()),
-                "decision": "accepted", "corrected_document_family_code": "vacancies",
+                "decision": "accepted", "corrected_category_code": "work_career",
+                "corrected_document_family_code": "vacancies",
             })
         sql = cursor.execute.call_args_list[0].args[0]
         self.assertIn("INSERT INTO public.document_review_events", sql)
@@ -143,6 +146,7 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertFalse(result["file_mutations"])
         self.assertFalse(result["model_updates"])
         self.assertEqual("accepted", result["decision"])
+        self.assertEqual("work_career", result["corrected_category_code"])
         self.assertEqual("vacancies", result["effective_target_proposal"]["document_family_code"])
 
 

@@ -1,0 +1,36 @@
+{
+  "version": "document-taxonomy-v1",
+  "categories": [
+    {"code": "work_career", "label": "Werk & Loopbaan"},
+    {"code": "home_living", "label": "Wonen"},
+    {"code": "finance", "label": "Geldzaken"},
+    {"code": "health", "label": "Gezondheid"},
+    {"code": "family_relationships", "label": "Gezin & Relaties"},
+    {"code": "learning_development", "label": "Leren & Ontwikkelen"},
+    {"code": "identity_personal", "label": "Persoonlijk & Identiteit"},
+    {"code": "legal", "label": "Juridisch"},
+    {"code": "needs_review", "label": "Te beoordelen"}
+  ],
+  "families": [
+    {"code": "general", "label": "Algemeen", "categories": ["needs_review"], "keywords": []},
+    {"code": "vacancies", "label": "Vacatures", "categories": ["work_career"], "keywords": ["vacature", "functieprofiel"]},
+    {"code": "resumes", "label": "CV's", "categories": ["work_career"], "keywords": ["curriculum vitae", " cv ", "_cv_"]},
+    {"code": "motivation_letters", "label": "Motivatiebrieven", "categories": ["work_career"], "keywords": ["motivatie", "sollicitatiebrief"]},
+    {"code": "interview_preparation", "label": "Gespreksvoorbereiding", "categories": ["work_career"], "keywords": ["gesprek", "voorbereiding", "pitch"]},
+    {"code": "employment_documents", "label": "Arbeidsdocumenten", "categories": ["work_career"], "keywords": ["arbeidscontract", "werkgever", "salaris"]},
+    {"code": "vve_documents", "label": "VvE-documenten", "categories": ["home_living"], "keywords": ["vve", "vereniging van eigenaars", "riolering"]},
+    {"code": "home_maintenance", "label": "Woningonderhoud", "categories": ["home_living"], "keywords": ["onderhoud", "reparatie", "verbouwing"]},
+    {"code": "housing_contracts", "label": "Huur- en koopdocumenten", "categories": ["home_living", "legal"], "keywords": ["huur", "koopakte", "woning"]},
+    {"code": "tax_documents", "label": "Belastingen", "categories": ["finance"], "keywords": ["belasting", "aangifte", "toeslag"]},
+    {"code": "invoices", "label": "Facturen", "categories": ["finance"], "keywords": ["factuur", "nota"]},
+    {"code": "bank_documents", "label": "Bankdocumenten", "categories": ["finance"], "keywords": ["bank", "rekening", "afschrift"]},
+    {"code": "health_documents", "label": "Zorgdocumenten", "categories": ["health"], "keywords": ["huisarts", "ziekenhuis", "medisch", "zorg"]},
+    {"code": "certificates", "label": "Certificaten en diploma's", "categories": ["learning_development", "work_career"], "keywords": ["certificaat", "certificate", "diploma"]},
+    {"code": "course_material", "label": "Cursusmateriaal", "categories": ["learning_development"], "keywords": ["cursus", "opleiding", "studie"]},
+    {"code": "identity_documents", "label": "Identiteitsdocumenten", "categories": ["identity_personal"], "keywords": ["paspoort", "rijbewijs", "geboorteakte"]},
+    {"code": "agreements", "label": "Overeenkomsten", "categories": ["legal", "home_living", "work_career"], "keywords": ["overeenkomst", "contract", "akte"]},
+    {"code": "official_correspondence", "label": "Officiële correspondentie", "categories": ["legal", "finance", "home_living"], "keywords": ["brief", "beschikking", "besluit"]},
+    {"code": "reports_advice", "label": "Rapporten en adviezen", "categories": ["work_career", "home_living", "health", "legal"], "keywords": ["rapport", "advies", "analyse"]},
+    {"code": "forms_evidence", "label": "Formulieren en bewijsstukken", "categories": ["finance", "health", "identity_personal", "legal"], "keywords": ["formulier", "bewijs", "verklaring"]}
+  ]
+}

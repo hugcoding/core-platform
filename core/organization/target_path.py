@@ -8,8 +8,10 @@ import re
 from pathlib import PurePosixPath
 from typing import Any
 
+from core.organization.review_taxonomy import taxonomy
 
-CONTRACT_VERSION = "canonical-dutch-target-path-v2"
+
+CONTRACT_VERSION = "canonical-dutch-target-path-v3"
 TARGET_ROOT = "/volume1/data/Persoonlijk"
 ZONE_LABELS = {
     "active": "Actief", "archive": "Archief",
@@ -53,6 +55,7 @@ FAMILY_LABELS = {code: label for code, label, _ in FAMILY_RULES}
 FAMILY_LABELS.update({
     "course_data": "Cursusdata", "secrets": "Geheimen", "general": "Algemeen",
 })
+FAMILY_LABELS.update({item["code"]: item["label"] for item in taxonomy()["families"]})
 SECRET_TERMS = ("wachtwoord", "password", "passwords", "credentials", "api key", "secret")
 
 
