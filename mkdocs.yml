@@ -54,6 +54,7 @@ nav:
   - Home: wiki/index.md
   - Architecture: wiki/architecture.md
   - CORE-ketendiagrammen: wiki/core-flows.md
+  - CORE in gewone taal: wiki/core-in-gewone-taal.md
   - CORE: wiki/core.md
   - Configuration: wiki/configuration.md
   - Operations: wiki/operations.md
