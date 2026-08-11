@@ -397,8 +397,25 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                     created = cur.fetchone()
                 if int(created[2]) != file_id or str(created[3]) != decision:
                     raise HTTPException(status_code=409, detail="idempotency key belongs to another review")
-        return {"status": "stored", "review_id": str(created[0]), "created_at": iso(created[1]),
-                "database_writes": True, "file_mutations": False, "model_updates": False}
+        effective_proposal = proposal
+        if decision == "accepted" and family:
+            effective_proposal = propose_target({
+                **row,
+                "accepted_category": row.get("category"),
+                "accepted_document_family": family,
+                "accepted_lifecycle": row.get("lifecycle"),
+            })
+        return {
+            "status": "stored", "review_id": str(created[0]), "created_at": iso(created[1]),
+            "decision": decision, "corrected_document_family_code": family,
+            "effective_target_proposal": {
+                key: effective_proposal[key] for key in (
+                    "document_family_code", "folder_label", "suggested_target_path",
+                    "proposal_confidence", "proposal_reason_code",
+                )
+            },
+            "database_writes": True, "file_mutations": False, "model_updates": False,
+        }
     except HTTPException:
         raise
     except Exception as exc:

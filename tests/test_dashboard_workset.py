@@ -134,6 +134,8 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertEqual(str(review_id), result["review_id"])
         self.assertFalse(result["file_mutations"])
         self.assertFalse(result["model_updates"])
+        self.assertEqual("accepted", result["decision"])
+        self.assertEqual("vacancies", result["effective_target_proposal"]["document_family_code"])
 
 
 if __name__ == "__main__":

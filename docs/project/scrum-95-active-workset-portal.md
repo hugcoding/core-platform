@@ -68,6 +68,11 @@ familielabel, het familiefilter en het opnieuw berekende virtuele doelpad direct
 naar de menselijke keuze. Het oorspronkelijke voorstel blijft ongewijzigd in
 de revieweventhistorie aanwezig. Deze projectie verplaatst nog steeds niets.
 
+Na het opslaan blijft de pagina op dezelfde scrollpositie met dezelfde filters
+staan. Alleen de beoordeelde kaart wordt gericht bijgewerkt met het nieuwe
+oordeel en eventueel herberekende virtuele doelpad. Hiermee blijft een reeks
+beoordelingen rustig uitvoerbaar zonder telkens de volledige werkset te laden.
+
 ```mermaid
 flowchart LR
     P["Portaal toont CORE-voorstel"] --> H["Hugo beoordeelt of corrigeert familie"]

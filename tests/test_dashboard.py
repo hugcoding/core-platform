@@ -54,6 +54,8 @@ def test_workset_portal_is_parameterized_read_only_and_mobile():
     assert "data-decision=\"accepted\"" in frontend
     assert "corrected_document_family_code" in frontend
     assert "model gewijzigd" in frontend
+    assert "pagina en filters blijven staan" in frontend
+    assert "setTimeout(()=>loadWorkset(true)" not in frontend
     assert "wsEsc" in frontend
     assert "Kopieer SMB-pad" in frontend
     assert 'name="viewport"' in page
