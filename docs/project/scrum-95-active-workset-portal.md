@@ -84,6 +84,11 @@ controle of latere batchanalyse. Labels onderscheiden expliciet het
 `CORE-voorstel` van het `Menselijk oordeel`; een toekomstig AI-advies krijgt
 een eigen provenance-label en wordt niet met één van beide vermengd.
 
+Een beoordelaar kan ook gestructureerd een nieuwe Nederlandse categorie,
+documentfamilie of doelpad voorstellen en de reden in de notitie vastleggen.
+Deze velden komen append-only in `v_document_taxonomy_refinement_queue`. Ze
+wijzigen het canonieke contract, bestanden en modellen nooit automatisch.
+
 ```mermaid
 flowchart LR
     P["Portaal toont CORE-voorstel"] --> H["Hugo beoordeelt of corrigeert familie"]
