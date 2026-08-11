@@ -38,6 +38,74 @@ def evidence(file_id, date_type, timestamp, *, evidence_id, source="pdf_info_dic
 
 
 class TemporalCanonicalSelectionTests(unittest.TestCase):
+    def test_precise_created_wins_over_date_only_on_same_calendar_day(self):
+        rows = [
+            evidence(
+                10, "created", "2008-06-27T00:00:00+00:00",
+                evidence_id="date-only", source="pdf_xmp", confidence="low",
+                conflict="false", status="inactive",
+            ),
+            evidence(
+                10, "created", "2008-06-27T19:21:12+00:00",
+                evidence_id="precise", confidence="medium",
+                conflict="false", status="inactive",
+            ),
+        ]
+        rows[0]["evidence_value_at"] = ""
+        rows[0]["evidence_local_value"] = "2008-06-27 00:00:00"
+        rows[0]["evidence_timezone_status"] = "absent"
+        rows[0]["v1_created_evidence_id"] = "precise"
+        rows[1]["v1_created_evidence_id"] = "precise"
+        result = assess_rows(rows, as_of=AS_OF)[0]
+        self.assertEqual("precise", result["created_evidence_id"])
+        self.assertEqual("timestamp_timezone_known", result["created_precision"])
+        self.assertTrue(result["created_same_day_precision_preferred"])
+        self.assertEqual(
+            "earliest_credible_created_same_day_precision_preferred",
+            result["created_selection_reason"],
+        )
+        self.assertFalse(result["created_changed"])
+
+    def test_earlier_calendar_day_still_wins_for_created(self):
+        rows = [
+            evidence(
+                11, "created", "2008-06-26T00:00:00+00:00",
+                evidence_id="earlier-date-only", source="pdf_xmp", confidence="low",
+                conflict="false", status="inactive",
+            ),
+            evidence(
+                11, "created", "2008-06-27T19:21:12+00:00",
+                evidence_id="later-precise", confidence="high",
+                conflict="false", status="inactive",
+            ),
+        ]
+        rows[0]["evidence_value_at"] = ""
+        rows[0]["evidence_local_value"] = "2008-06-26 00:00:00"
+        rows[0]["evidence_timezone_status"] = "absent"
+        result = assess_rows(rows, as_of=AS_OF)[0]
+        self.assertEqual("earlier-date-only", result["created_evidence_id"])
+        self.assertFalse(result["created_same_day_precision_preferred"])
+
+    def test_precise_modified_wins_over_date_only_on_same_calendar_day(self):
+        rows = [
+            evidence(
+                12, "modified", "2020-08-13T00:00:00+00:00",
+                evidence_id="date-only", source="pdf_xmp", confidence="low",
+                conflict="false", status="inactive",
+            ),
+            evidence(
+                12, "modified", "2020-08-13T10:08:56+00:00",
+                evidence_id="precise", confidence="medium",
+                conflict="false", status="inactive",
+            ),
+        ]
+        rows[0]["evidence_value_at"] = ""
+        rows[0]["evidence_local_value"] = "2020-08-13 00:00:00"
+        rows[0]["evidence_timezone_status"] = "absent"
+        result = assess_rows(rows, as_of=AS_OF)[0]
+        self.assertEqual("precise", result["modified_evidence_id"])
+        self.assertTrue(result["modified_same_day_precision_preferred"])
+
     def test_postgresql_short_utc_offset_and_epoch_are_python38_compatible(self):
         self.assertEqual(
             datetime(2026, 3, 2, 11, 7, 50, tzinfo=timezone.utc),
@@ -167,7 +235,7 @@ class TemporalCanonicalRuntimeTests(unittest.TestCase):
             report = (export_dir / "temporal-canonical-impact-latest.md").read_text("utf-8")
         self.assertEqual(0, status)
         self.assertEqual("read_only_dry_run", payload["mode"])
-        self.assertEqual("temporal-canonical-impact-report-v2", payload["schema_version"])
+        self.assertEqual("temporal-canonical-impact-report-v3", payload["schema_version"])
         self.assertFalse(payload["safety"]["database_writes"])
         self.assertIn("filesystem_modified_at", payload["documents"][0])
         self.assertEqual("conflicting_temporal_evidence", payload["documents"][0]["v1_reason_code"])

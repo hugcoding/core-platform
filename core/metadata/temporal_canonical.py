@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-RULE_VERSION = "temporal-canonical-selection-v2-impact"
+RULE_VERSION = "temporal-canonical-selection-v2-precision-impact"
 CREDIBLE_SOURCES = {
     "office_core_properties",
     "pdf_info_dictionary",
@@ -71,6 +71,17 @@ def _candidate(row: dict[str, Any], *, as_of: datetime) -> dict[str, Any]:
         excluded_reason = "future_timestamp"
     elif (comparison_at.month, comparison_at.day) == (1, 1) and comparison_at.year in {1900, 1970}:
         excluded_reason = "known_placeholder_timestamp"
+    timezone_known = value_at is not None
+    date_only = bool(
+        not timezone_known
+        and local_value is not None
+        and local_value.time() == datetime.min.time()
+    )
+    precision = (
+        "date_only" if date_only
+        else "timestamp_timezone_known" if timezone_known
+        else "timestamp_timezone_unknown"
+    )
     return {
         "evidence_id": str(row.get("evidence_id") or ""),
         "date_type": str(row.get("evidence_date_type") or ""),
@@ -81,7 +92,9 @@ def _candidate(row: dict[str, Any], *, as_of: datetime) -> dict[str, Any]:
         "value_at": value_at.isoformat() if value_at else "",
         "local_value": str(row.get("evidence_local_value") or ""),
         "comparison_at": comparison_at,
-        "timezone_known": value_at is not None,
+        "timezone_known": timezone_known,
+        "date_only": date_only,
+        "precision": precision,
         "excluded_reason": excluded_reason,
     }
 
@@ -98,9 +111,18 @@ def _select(candidates: list[dict[str, Any]], date_type: str) -> dict[str, Any] 
         confidence = CONFIDENCE_RANK.get(row["confidence"], 0)
         source = SOURCE_RANK.get(row["source_type"], 0)
         timestamp = row["comparison_at"].timestamp()
+        calendar_day = row["comparison_at"].date().toordinal()
+        precision = 1 if row["date_only"] else 0
+        timezone_certainty = 0 if row["timezone_known"] else 1
         if date_type == "created":
-            return (timestamp, -confidence, -source, row["evidence_id"])
-        return (-timestamp, -confidence, -source, row["evidence_id"])
+            return (
+                calendar_day, precision, timezone_certainty,
+                -confidence, -source, timestamp, row["evidence_id"],
+            )
+        return (
+            -calendar_day, precision, timezone_certainty,
+            -confidence, -source, -timestamp, row["evidence_id"],
+        )
 
     return sorted(eligible, key=rank)[0]
 
@@ -109,6 +131,21 @@ def _display_timestamp(candidate: dict[str, Any] | None) -> str:
     if candidate is None:
         return ""
     return candidate["value_at"] or candidate["local_value"]
+
+
+def _same_day_precision_preferred(
+    selected: dict[str, Any] | None, candidates: list[dict[str, Any]], date_type: str,
+) -> bool:
+    if selected is None or selected["date_only"]:
+        return False
+    selected_day = selected["comparison_at"].date()
+    return any(
+        row["date_type"] == date_type
+        and not row["excluded_reason"]
+        and row["date_only"]
+        and row["comparison_at"].date() == selected_day
+        for row in candidates
+    )
 
 
 def assess_file(
@@ -125,6 +162,8 @@ def assess_file(
     excluded = [row for row in candidates if row["excluded_reason"]]
     created = _select(candidates, "created")
     modified = _select(candidates, "modified")
+    created_precision_preferred = _same_day_precision_preferred(created, candidates, "created")
+    modified_precision_preferred = _same_day_precision_preferred(modified, candidates, "modified")
     created_values = [
         row["comparison_at"] for row in credible if row["date_type"] == "created"
     ]
@@ -197,7 +236,7 @@ def assess_file(
     created_changed = created_evidence_id != v1_created_evidence_id
     modified_changed = modified_evidence_id != v1_modified_evidence_id
     return {
-        "schema_version": "temporal-canonical-impact-v2",
+        "schema_version": "temporal-canonical-impact-v3",
         "selection_rule_version": RULE_VERSION,
         "file_id": int(base["file_id"]),
         "content_group_id": str(base.get("content_group_id") or ""),
@@ -212,7 +251,11 @@ def assess_file(
         "created_source_type": created["source_type"] if created else "",
         "created_confidence": created["confidence"] if created else "",
         "created_timezone_status": created["timezone_status"] if created else "",
+        "created_precision": created["precision"] if created else "",
+        "created_same_day_precision_preferred": created_precision_preferred,
         "created_selection_reason": (
+            "earliest_credible_created_same_day_precision_preferred"
+            if created_precision_preferred else
             "earliest_credible_document_created" if created else "insufficient_credible_evidence"
         ),
         "earliest_observed_created_at": min(created_values).isoformat() if created_values else "",
@@ -225,7 +268,11 @@ def assess_file(
         "modified_source_type": modified["source_type"] if modified else "",
         "modified_confidence": modified["confidence"] if modified else "",
         "modified_timezone_status": modified["timezone_status"] if modified else "",
+        "modified_precision": modified["precision"] if modified else "",
+        "modified_same_day_precision_preferred": modified_precision_preferred,
         "modified_selection_reason": (
+            "latest_credible_modified_same_day_precision_preferred"
+            if modified_precision_preferred else
             "latest_credible_document_modified" if modified else "insufficient_credible_evidence"
         ),
         "earliest_observed_modified_at": min(modified_values).isoformat() if modified_values else "",
@@ -282,6 +329,12 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "documents": len(rows),
         "created_changed": sum(bool(row["created_changed"]) for row in rows),
         "modified_changed": sum(bool(row["modified_changed"]) for row in rows),
+        "created_same_day_precision_preferred": sum(
+            bool(row["created_same_day_precision_preferred"]) for row in rows
+        ),
+        "modified_same_day_precision_preferred": sum(
+            bool(row["modified_same_day_precision_preferred"]) for row in rows
+        ),
         "lifecycle_changed": sum(bool(row["lifecycle_changed"]) for row in rows),
         "material_conflicts": sum(bool(row["material_temporal_conflict"]) for row in rows),
         "decision_invariant_conflicts": sum(

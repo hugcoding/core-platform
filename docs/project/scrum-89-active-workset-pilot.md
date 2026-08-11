@@ -200,5 +200,15 @@ filesystem-mutatiedatum en de v1 reason-code. Een gemengde vergelijking van een
 tijdzoneloze en een tijdzonebekende datum wordt apart gemarkeerd als
 `chronology_timezone_ambiguous` en blokkeert de lifecycle niet automatisch.
 
+Binnen dezelfde kalenderdag kiest temporal canonical selection v2 eerst een
+precieze timestamp met bekende tijdzone, daarna confidence en bronkwaliteit.
+Een tijdzoneloze waarde op `00:00:00` geldt daarbij als date-only evidence. Deze
+precisievoorkeur verandert nooit de hoofdregel tussen verschillende dagen:
+created blijft de vroegste geloofwaardige kalenderdag en modified de nieuwste.
+Het impactrapport maakt dit zichtbaar met precisionvelden, booleans en de
+reason-codes `earliest_credible_created_same_day_precision_preferred` en
+`latest_credible_modified_same_day_precision_preferred`. Alle alternatieve
+evidence blijft ongewijzigd beschikbaar voor audit en review.
+
 Dit rapport activeert v2 niet. Eerst worden impact, uitzonderingen en bronweging
 beoordeeld; een afzonderlijke migratie is nodig om consumers te wijzigen.
