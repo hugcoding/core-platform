@@ -89,6 +89,14 @@ documentfamilie of doelpad voorstellen en de reden in de notitie vastleggen.
 Deze velden komen append-only in `v_document_taxonomy_refinement_queue`. Ze
 wijzigen het canonieke contract, bestanden en modellen nooit automatisch.
 
+Categorie en documentfamilie zijn afzonderlijke menselijke oordelen. De portal
+toont per document maximaal vijf deterministisch gekozen familieopties op basis
+van huidig voorstel, categorie, bestandsnaam en pad. `Meer…` opent een zoekbare
+lijst met alle configuration-driven families die bij de gekozen categorie
+passen. De gebruikte taxonomyversie en selectiemethode worden via de API
+geleverd; er wordt hiervoor geen LLM gebruikt. Ook categoriecorrecties blijven
+append-only onderdeel van de volledige reviewhistorie.
+
 ```mermaid
 flowchart LR
     P["Portaal toont CORE-voorstel"] --> H["Hugo beoordeelt of corrigeert familie"]
