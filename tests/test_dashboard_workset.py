@@ -72,7 +72,8 @@ class DashboardWorksetTests(unittest.TestCase):
             ],
         ), mock.patch.object(self.dashboard, "query_all", return_value=[row]) as query_all:
             result = self.dashboard.workset(
-                status="active", extension="docx", search="document", limit=50, offset=0,
+                status="active", extension="docx", search="document", review_state="all",
+                limit=50, offset=0,
             )
         self.assertEqual("read_only", result["mode"])
         self.assertEqual(

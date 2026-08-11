@@ -70,8 +70,11 @@ de revieweventhistorie aanwezig. Deze projectie verplaatst nog steeds niets.
 
 Na het opslaan blijft de pagina op dezelfde scrollpositie met dezelfde filters
 staan. Alleen de beoordeelde kaart wordt gericht bijgewerkt met het nieuwe
-oordeel en eventueel herberekende virtuele doelpad. Hiermee blijft een reeks
-beoordelingen rustig uitvoerbaar zonder telkens de volledige werkset te laden.
+oordeel en eventueel herberekende virtuele doelpad. In het standaardfilter
+`Nog te beoordelen` verdwijnt deze kaart daarna uit de wachtrij. Het document
+blijft beschikbaar via `Beoordeeld` en `Alle oordelen`. Hiermee blijft een
+reeks beoordelingen rustig uitvoerbaar zonder telkens de volledige werkset te
+laden of beoordeelde kaarten opnieuw tegen te komen.
 
 ```mermaid
 flowchart LR

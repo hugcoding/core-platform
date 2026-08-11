@@ -258,6 +258,7 @@ def workset(
     extension: str = Query("all", pattern="^(pdf|docx|xlsx|all)$"),
     search: str = Query("", max_length=100),
     family: str = Query("all", max_length=80, pattern="^[a-z0-9_'-]{1,80}$|^all$"),
+    review_state: str = Query("pending", pattern="^(pending|reviewed|all)$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -305,6 +306,10 @@ def workset(
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"workset unavailable: {type(exc).__name__}") from exc
     enriched = [enrich_workset_row(row) for row in rows]
+    if review_state == "pending":
+        enriched = [item for item in enriched if not item.get("latest_review_id")]
+    elif review_state == "reviewed":
+        enriched = [item for item in enriched if item.get("latest_review_id")]
     families: dict[str, dict[str, Any]] = {}
     for item in enriched:
         proposal = item.get("target_proposal") or {}
