@@ -364,7 +364,8 @@ def workset_review_history(file_id: int):
                        proposal_document_family_code, proposal_lifecycle,
                        proposal_target_path, proposal_confidence, proposal_reason_code,
                        decision, corrected_document_family_code, review_notes,
-                       reviewer, supersedes_event_id, created_at
+                       reviewer, supersedes_event_id, created_at,
+                       proposed_category_label, proposed_family_label, proposed_target_path
                 FROM public.document_review_events
                 WHERE file_id = %s
                 ORDER BY created_at DESC, id DESC
@@ -391,7 +392,8 @@ def export_workset_reviews(format: str = Query("csv", pattern="^(csv|json)$")):
                        e.proposal_category_code, e.proposal_document_family_code,
                        e.proposal_lifecycle, e.proposal_target_path,
                        e.proposal_confidence, e.proposal_reason_code,
-                       e.review_contract_version, e.supersedes_event_id
+                       e.review_contract_version, e.supersedes_event_id,
+                       e.proposed_category_label, e.proposed_family_label, e.proposed_target_path
                 FROM public.document_review_events e
                 JOIN public.files f ON f.id = e.file_id
                 ORDER BY e.created_at DESC, e.id DESC
@@ -435,10 +437,19 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
         raise HTTPException(status_code=422, detail="invalid review decision")
     family = str(payload.get("corrected_document_family_code") or "") or None
     notes = str(payload.get("review_notes") or "") or None
+    proposed_category = str(payload.get("proposed_category_label") or "").strip() or None
+    proposed_family = str(payload.get("proposed_family_label") or "").strip() or None
+    proposed_path = str(payload.get("proposed_target_path") or "").strip() or None
     if family and not re.fullmatch(r"[a-z0-9_'-]{1,80}", family):
         raise HTTPException(status_code=422, detail="invalid document family code")
     if notes and len(notes) > 2000:
         raise HTTPException(status_code=422, detail="review note exceeds 2000 characters")
+    if proposed_category and len(proposed_category) > 120:
+        raise HTTPException(status_code=422, detail="proposed category exceeds 120 characters")
+    if proposed_family and len(proposed_family) > 120:
+        raise HTTPException(status_code=422, detail="proposed family exceeds 120 characters")
+    if proposed_path and len(proposed_path) > 500:
+        raise HTTPException(status_code=422, detail="proposed target path exceeds 500 characters")
     try:
         with db_connect() as conn:
             if not query_one(conn, "SELECT to_regclass('public.document_review_events') IS NOT NULL AS available")["available"]:
@@ -466,8 +477,9 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                         proposal_category_code, proposal_document_family_code,
                         proposal_lifecycle, proposal_target_path, proposal_confidence,
                         proposal_reason_code, decision, corrected_document_family_code,
-                        review_notes, reviewer, supersedes_event_id
-                    ) VALUES (%s,%s,'workset_portal','target_path',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        review_notes, reviewer, supersedes_event_id,
+                        proposed_category_label, proposed_family_label, proposed_target_path
+                    ) VALUES (%s,%s,'workset_portal','target_path',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (idempotency_key) DO NOTHING
                     RETURNING id, created_at, file_id, decision
                 """, (
@@ -476,6 +488,7 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                     proposal["zone_code"], proposal["suggested_target_path"],
                     proposal["proposal_confidence"], proposal["proposal_reason_code"], decision,
                     family, notes, os.getenv("CORE_REVIEWER", "hugo"), supersedes_event_id,
+                    proposed_category, proposed_family, proposed_path,
                 ))
                 created = cur.fetchone()
                 if not created:
@@ -495,6 +508,9 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
         return {
             "status": "stored", "review_id": str(created[0]), "created_at": iso(created[1]),
             "decision": decision, "corrected_document_family_code": family,
+            "proposed_category_label": proposed_category,
+            "proposed_family_label": proposed_family,
+            "proposed_target_path": proposed_path,
             "effective_target_proposal": {
                 key: effective_proposal[key] for key in (
                     "document_family_code", "folder_label", "suggested_target_path",

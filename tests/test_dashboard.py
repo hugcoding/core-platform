@@ -63,6 +63,8 @@ def test_workset_portal_is_parameterized_read_only_and_mobile():
     assert "Alles in deze selectie is beoordeeld" in frontend
     assert "toggleHistory" in frontend
     assert "Menselijk oordeel" in frontend
+    assert "Nieuwe categorie, familie of doelpad voorstellen" in frontend
+    assert "proposed_category_label" in frontend
     assert "CORE-voorstel" in frontend
     assert "/reviews/export?format=csv" in page
     assert "/reviews/export?format=json" in page

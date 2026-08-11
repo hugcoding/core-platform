@@ -106,6 +106,9 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn('@app.get("/api/v1/workset/{file_id}/reviews")', source)
         self.assertIn('@app.get("/api/v1/workset/reviews/export")', source)
         self.assertIn("review_decision", source)
+        self.assertIn("proposed_category_label", source)
+        self.assertIn("proposed_family_label", source)
+        self.assertIn("proposed_target_path", source)
 
     def test_review_is_append_only_and_does_not_update_model_or_file(self):
         connection = mock.MagicMock()
