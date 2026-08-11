@@ -11,6 +11,7 @@ class CanonicalTargetPathRuntimeTests(unittest.TestCase):
         self.assertIn("v_active_document_workset", source)
         self.assertIn("v_current_file_classification", source)
         self.assertIn("w.workset_status = 'active'", source)
+        self.assertIn('run_query(command, QUERY, "")', source)
         for mutation in ("INSERT INTO", "UPDATE public", "DELETE FROM", "shutil.move", "os.rename"):
             self.assertNotIn(mutation, source)
 
