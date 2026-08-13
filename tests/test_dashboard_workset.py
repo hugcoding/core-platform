@@ -111,6 +111,8 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn("proposed_category_label", source)
         self.assertIn("proposed_family_label", source)
         self.assertIn("proposed_target_path", source)
+        self.assertIn("privacy_classification", source)
+        self.assertIn("propose_privacy", source)
 
     def test_review_is_append_only_and_does_not_update_model_or_file(self):
         connection = mock.MagicMock()
@@ -151,6 +153,42 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertEqual("vacancies", result["effective_target_proposal"]["document_family_code"])
         self.assertEqual("/volume1/data/Persoonlijk/Actief/Werk/file.pdf", result["proposed_target_path"])
         self.assertTrue(result["target_path_normalized"])
+
+    def test_privacy_review_is_append_only_learning_evidence(self):
+        connection = mock.MagicMock()
+        connection.__enter__.return_value = connection
+        cursor = connection.cursor.return_value.__enter__.return_value
+        review_id = uuid.uuid4()
+        cursor.fetchone.return_value = (
+            review_id, datetime(2026, 8, 13, tzinfo=timezone.utc), 1, "accepted",
+        )
+        row = {
+            "file_id": 1, "content_group_id": uuid.uuid4(), "content_sha256": "b" * 64,
+            "filename": "paspoort.pdf", "extension": "pdf",
+            "path": "/volume1/data/Documenten/Identiteit/paspoort.pdf",
+            "size_bytes": 905, "workset_status": "active", "sensitivity": None,
+        }
+        with mock.patch.dict("os.environ", {"CORE_REVIEW_WRITES_ENABLED": "true"}), mock.patch.object(
+            self.dashboard, "db_connect", return_value=connection,
+        ), mock.patch.object(
+            self.dashboard, "query_one", return_value={"available": True},
+        ), mock.patch.object(
+            self.dashboard, "query_all", side_effect=[[row], []],
+        ):
+            result = self.dashboard.create_workset_review({
+                "file_id": 1, "idempotency_key": str(uuid.uuid4()),
+                "review_type": "privacy_classification", "decision": "accepted",
+                "privacy_classification": "high",
+            })
+        sql = cursor.execute.call_args_list[0].args[0]
+        self.assertIn("INSERT INTO public.document_review_events", sql)
+        self.assertIn("'privacy_classification'", sql)
+        self.assertNotIn("UPDATE", sql)
+        self.assertEqual("high", result["proposal_privacy_classification"])
+        self.assertEqual("high", result["privacy_classification"])
+        self.assertTrue(result["learning_evidence"])
+        self.assertFalse(result["file_mutations"])
+        self.assertFalse(result["model_updates"])
 
 
 if __name__ == "__main__":
