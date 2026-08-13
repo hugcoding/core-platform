@@ -1,8 +1,15 @@
 import unittest
+from pathlib import Path
 from core.organization.learning_context import build_llm_learning_context
 from core.organization.review_learning import audit_review_paths, analyze_privacy_reviews, analyze_proposal_quality, analyze_reviews
 
 class ReviewLearningTests(unittest.TestCase):
+    def test_runtime_wrapper_exposes_repository_to_python(self):
+        wrapper = (Path(__file__).parents[1] / "tools/runtime/review-learning-analyze").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"', wrapper)
+
     def test_repeated_human_corrections_become_inactive_candidate(self):
         rows = [{"file_id": i, "decision": "accepted", "proposal_document_family_code": "general",
                  "corrected_category_code": "home_living", "corrected_document_family_code": "vve_documents",
