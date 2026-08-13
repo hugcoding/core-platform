@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from core.organization.target_path import CONTRACT_VERSION, propose_target
 from core.organization.review_taxonomy import contextual_options, taxonomy
 from core.organization.path_normalization import normalize_target_path
+from core.organization.privacy_classification import RULE_VERSION as PRIVACY_RULE_VERSION, propose_privacy
 
 
 APP_DIR = Path(__file__).parent
@@ -227,6 +228,15 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
     item["smb_path"] = smb_path(str(row["path"]))
     item["classification_status"] = "accepted" if row.get("category") else "not_reviewed"
     item["migration_status"] = "virtual_only"
+    privacy_proposal = propose_privacy(row)
+    item["privacy_proposal"] = privacy_proposal
+    item["current_privacy_classification"] = row.get("latest_privacy_classification")
+    item["effective_privacy_classification"] = (
+        row.get("latest_privacy_classification") or privacy_proposal["classification"]
+    )
+    item["privacy_source"] = (
+        "human_review" if row.get("latest_privacy_classification") else "core_rule_proposal"
+    )
     reviewed_family = (
         row.get("latest_review_family")
         if row.get("latest_review_decision") == "accepted" else None
@@ -308,6 +318,13 @@ def workset(
             review_storage = bool(query_one(
                 conn, "SELECT to_regclass('public.v_latest_document_review') IS NOT NULL AS available"
             )["available"])
+            privacy_storage = bool(query_one(conn, """
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'document_review_events'
+                      AND column_name = 'corrected_privacy_classification'
+                ) AS available
+            """)["available"]) if review_storage else False
             review_select = """
                 , r.id AS latest_review_id, r.decision AS latest_review_decision,
                   r.corrected_document_family_code AS latest_review_family,
@@ -318,9 +335,19 @@ def workset(
                 LEFT JOIN public.v_latest_document_review r
                   ON r.file_id = w.file_id AND r.review_type = 'target_path'
             """ if review_storage else ""
+            privacy_select = """
+                , p.id AS latest_privacy_review_id,
+                  p.corrected_privacy_classification AS latest_privacy_classification,
+                  p.created_at AS latest_privacy_review_at
+            """ if privacy_storage else ""
+            privacy_join = """
+                LEFT JOIN public.v_latest_document_review p
+                  ON p.file_id = w.file_id AND p.review_type = 'privacy_classification'
+            """ if privacy_storage else ""
             rows = query_all(conn, WORKSET_SELECT.replace(
-                "FROM public.v_active_document_workset w", review_select + " FROM public.v_active_document_workset w"
-            ) + review_join + where +
+                "FROM public.v_active_document_workset w",
+                review_select + privacy_select + " FROM public.v_active_document_workset w"
+            ) + review_join + privacy_join + where +
                 " ORDER BY w.last_qualifying_activity_at DESC NULLS LAST, w.filename, w.file_id",
                 tuple(params),
             )
@@ -363,6 +390,7 @@ def workset(
         "families": sorted(families.values(), key=lambda value: (value["label"].casefold(), value["code"])),
         "review_taxonomy": taxonomy(),
         "review_writes_enabled": review_writes_enabled(),
+        "privacy_review_enabled": review_writes_enabled() and privacy_storage,
         "limit": limit,
         "offset": offset,
         "documents": documents,
@@ -385,7 +413,8 @@ def workset_review_history(file_id: int):
                        decision, corrected_document_family_code, corrected_category_code, review_notes,
                        reviewer, supersedes_event_id, created_at,
                        proposed_category_label, proposed_family_label, proposed_target_path,
-                       proposed_target_path_raw
+                       proposed_target_path_raw, proposal_privacy_classification,
+                       corrected_privacy_classification, privacy_rule_version, privacy_evidence
                 FROM public.document_review_events
                 WHERE file_id = %s
                 ORDER BY created_at DESC, id DESC
@@ -414,7 +443,8 @@ def export_workset_reviews(format: str = Query("csv", pattern="^(csv|json)$")):
                        e.proposal_confidence, e.proposal_reason_code,
                        e.review_contract_version, e.supersedes_event_id,
                        e.proposed_category_label, e.proposed_family_label, e.proposed_target_path,
-                       e.proposed_target_path_raw
+                       e.proposed_target_path_raw, e.proposal_privacy_classification,
+                       e.corrected_privacy_classification, e.privacy_rule_version, e.privacy_evidence
                 FROM public.document_review_events e
                 JOIN public.files f ON f.id = e.file_id
                 ORDER BY e.created_at DESC, e.id DESC
@@ -456,6 +486,12 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
     decision = str(payload.get("decision") or "")
     if decision not in {"accepted", "rejected", "needs_review", "passed"}:
         raise HTTPException(status_code=422, detail="invalid review decision")
+    review_type = str(payload.get("review_type") or "target_path")
+    if review_type not in {"target_path", "privacy_classification"}:
+        raise HTTPException(status_code=422, detail="invalid review type")
+    privacy_classification = str(payload.get("privacy_classification") or "") or None
+    if review_type == "privacy_classification" and privacy_classification not in {"low", "medium", "high"}:
+        raise HTTPException(status_code=422, detail="invalid privacy classification")
     family = str(payload.get("corrected_document_family_code") or "") or None
     category = str(payload.get("corrected_category_code") or "") or None
     notes = str(payload.get("review_notes") or "") or None
@@ -471,9 +507,9 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
         raise HTTPException(status_code=422, detail="invalid document family code")
     valid_categories = {item["code"] for item in taxonomy()["categories"]}
     valid_families = {item["code"] for item in taxonomy()["families"]}
-    if category not in valid_categories:
+    if review_type == "target_path" and category not in valid_categories:
         raise HTTPException(status_code=422, detail="invalid category code")
-    if family not in valid_families:
+    if review_type == "target_path" and family not in valid_families:
         raise HTTPException(status_code=422, detail="invalid document family code")
     if notes and len(notes) > 2000:
         raise HTTPException(status_code=422, detail="review note exceeds 2000 characters")
@@ -493,6 +529,50 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
             if not matches:
                 raise HTTPException(status_code=409, detail="file is no longer an active workset candidate")
             row = matches[0]
+            if review_type == "privacy_classification":
+                privacy = propose_privacy(row)
+                latest = query_all(
+                    conn,
+                    "SELECT id FROM public.v_latest_document_review WHERE file_id = %s AND review_type = 'privacy_classification'",
+                    (file_id,),
+                )
+                supersedes_event_id = latest[0]["id"] if latest else None
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO public.document_review_events (
+                            idempotency_key, review_contract_version, channel, review_type,
+                            file_id, content_group_id, content_sha256,
+                            proposal_confidence, proposal_reason_code, decision,
+                            review_notes, reviewer, supersedes_event_id,
+                            proposal_privacy_classification, corrected_privacy_classification,
+                            privacy_rule_version, privacy_evidence
+                        ) VALUES (%s,%s,'workset_portal','privacy_classification',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (idempotency_key) DO NOTHING
+                        RETURNING id, created_at, file_id, decision
+                    """, (
+                        idempotency_key, PRIVACY_RULE_VERSION, row["file_id"], row["content_group_id"],
+                        row["content_sha256"], privacy["confidence"], privacy["reason_code"], decision,
+                        notes, os.getenv("CORE_REVIEWER", "hugo"), supersedes_event_id,
+                        privacy["classification"], privacy_classification, privacy["rule_version"],
+                        privacy["evidence"],
+                    ))
+                    created = cur.fetchone()
+                    if not created:
+                        cur.execute(
+                            "SELECT id, created_at, file_id, decision FROM public.document_review_events WHERE idempotency_key = %s",
+                            (idempotency_key,),
+                        )
+                        created = cur.fetchone()
+                    if int(created[2]) != file_id or str(created[3]) != decision:
+                        raise HTTPException(status_code=409, detail="idempotency key belongs to another review")
+                return {
+                    "status": "stored", "review_id": str(created[0]), "created_at": iso(created[1]),
+                    "review_type": review_type, "decision": decision,
+                    "privacy_classification": privacy_classification,
+                    "proposal_privacy_classification": privacy["classification"],
+                    "privacy_rule_version": privacy["rule_version"],
+                    "learning_evidence": True, "file_mutations": False, "model_updates": False,
+                }
             proposal = enrich_workset_row(row).get("target_proposal")
             if not proposal:
                 raise HTTPException(status_code=409, detail="file is no longer an active workset candidate")

@@ -8,6 +8,8 @@ ROLLBACK = ROOT / "database/migrations/rollback/20260811_add_document_review_eve
 REFINEMENT = ROOT / "database/migrations/20260811_add_review_refinement_proposals.sql"
 CATEGORY = ROOT / "database/migrations/20260812_add_review_category_choice.sql"
 RAW_PATH = ROOT / "database/migrations/20260813_add_review_raw_target_path.sql"
+PRIVACY = ROOT / "database/migrations/20260813_add_privacy_classification_review.sql"
+PRIVACY_ROLLBACK = ROOT / "database/migrations/rollback/20260813_add_privacy_classification_review.sql"
 
 
 class DocumentReviewEventsMigrationTests(unittest.TestCase):
@@ -43,6 +45,20 @@ class DocumentReviewEventsMigrationTests(unittest.TestCase):
         sql = RAW_PATH.read_text(encoding="utf-8")
         self.assertIn("proposed_target_path_raw", sql)
         self.assertNotIn("UPDATE public.document_review_events", sql)
+
+    def test_privacy_reuses_append_only_review_contract(self):
+        sql = PRIVACY.read_text(encoding="utf-8")
+        self.assertIn("'privacy_classification'", sql)
+        self.assertIn("corrected_privacy_classification", sql)
+        self.assertIn("privacy_rule_version", sql)
+        self.assertIn("privacy_evidence", sql)
+        self.assertNotIn("UPDATE public.document_review_events", sql)
+        self.assertNotIn("CREATE TABLE", sql)
+
+    def test_privacy_rollback_retains_non_privacy_history(self):
+        sql = PRIVACY_ROLLBACK.read_text(encoding="utf-8")
+        self.assertIn("WHERE review_type = 'privacy_classification'", sql)
+        self.assertNotIn("DROP TABLE", sql)
 
 
 if __name__ == "__main__":
