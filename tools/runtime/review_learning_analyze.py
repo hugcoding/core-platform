@@ -12,7 +12,9 @@ from datetime import datetime
 from pathlib import Path
 
 from core.exports.csv_format import write_dict_rows
-from core.organization.review_learning import analyze_privacy_reviews, analyze_proposal_quality, analyze_reviews
+from core.organization.review_learning import (
+    analyze_privacy_reviews, analyze_proposal_quality, analyze_reviews, audit_review_paths,
+)
 from core.organization.learning_context import build_llm_learning_context
 
 
@@ -55,6 +57,7 @@ def main(argv=None) -> int:
         candidates = analyze_reviews(rows, args.minimum_support)
         privacy_candidates = analyze_privacy_reviews(rows, args.minimum_support)
         proposal_quality = analyze_proposal_quality(rows)
+        path_audit = audit_review_paths(rows)
     except (ValueError, subprocess.CalledProcessError, FileNotFoundError) as exc:
         print(f"Review-learning analysis failed: {exc}")
         return 1
@@ -74,6 +77,7 @@ def main(argv=None) -> int:
         "privacy_candidate_count": len(privacy_candidates),
         "candidates": candidates, "privacy_candidates": privacy_candidates,
         "proposal_quality": proposal_quality,
+        "path_systematics_audit": path_audit,
         "llm_learning_context": build_llm_learning_context(candidates),
         "safety": {"database_writes": False, "rules_activated": False,
                    "file_mutations": False, "model_updates": False},
@@ -110,6 +114,14 @@ def main(argv=None) -> int:
         **item, "counterexamples": json.dumps(item["counterexamples"], ensure_ascii=False),
     } for item in proposal_quality]
     write_dict_rows(proposal_csv_path, proposal_csv_rows, proposal_fields)
+    path_audit_csv = output / f"review-learning-path-audit-{stamp}.csv"
+    path_audit_fields = [
+        "file_id", "filename", "source_type", "path", "normalized_path", "status", "reason_codes",
+    ]
+    path_audit_rows = [{
+        **item, "reason_codes": json.dumps(item["reason_codes"], ensure_ascii=False),
+    } for item in path_audit]
+    write_dict_rows(path_audit_csv, path_audit_rows, path_audit_fields)
     lines = ["# SCRUM-98 kandidaatregels uit portalbeoordelingen", "",
              "- Modus: **read-only**", f"- Beoordelingen geanalyseerd: **{len(rows)}**",
              f"- Minimum support: **{args.minimum_support}**",
@@ -139,17 +151,33 @@ def main(argv=None) -> int:
             f"{item['accepted_corrected']} | {item['rejected']} | {item['agreement']:.0%} | "
             f"{item['counterexample_count']} |"
         )
+    audit_counts = {status: sum(item["status"] == status for item in path_audit)
+                    for status in ("pass", "needs_review", "invalid")}
+    lines.extend(["", "## Systematiek en passendheid van doelpaden", "",
+                  f"- Geldig/passend: **{audit_counts['pass']}**",
+                  f"- Review nodig: **{audit_counts['needs_review']}**",
+                  f"- Ongeldig: **{audit_counts['invalid']}**", "",
+                  "| Bron | Bestand | Status | Bevindingen |",
+                  "|---|---|---|---|"])
+    for item in path_audit:
+        if item["status"] != "pass":
+            lines.append(
+                f"| {item['source_type']} | {item['filename']} | {item['status']} | "
+                f"{', '.join(item['reason_codes'])} |"
+            )
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     for latest, source in (("review-learning-candidates-latest.json", json_path),
                            ("review-learning-candidates-latest.md", md_path),
                            ("review-learning-privacy-candidates-latest.csv", privacy_csv_path),
-                           ("review-learning-proposal-quality-latest.csv", proposal_csv_path)):
+                           ("review-learning-proposal-quality-latest.csv", proposal_csv_path),
+                           ("review-learning-path-audit-latest.csv", path_audit_csv)):
         (output / latest).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     print("SCRUM-98 read-only review-learning analysis complete")
     print(f"Report: {md_path.relative_to(ROOT)}")
     print(f"Details: {csv_path.relative_to(ROOT)}")
     print(f"Privacy details: {privacy_csv_path.relative_to(ROOT)}")
     print(f"Proposal quality: {proposal_csv_path.relative_to(ROOT)}")
+    print(f"Path audit: {path_audit_csv.relative_to(ROOT)}")
     print(f"JSON: {json_path.relative_to(ROOT)}")
     return 0
 

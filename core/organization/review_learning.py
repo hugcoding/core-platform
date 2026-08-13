@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from pathlib import PurePosixPath
 from typing import Any
+
+from core.organization.path_normalization import normalize_target_path
+from core.organization.target_path import CATEGORY_LABELS, FAMILY_LABELS
 
 
 def analyze_reviews(rows: list[dict[str, Any]], minimum_support: int = 3) -> list[dict[str, Any]]:
@@ -173,3 +177,77 @@ def analyze_proposal_quality(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
             "counterexamples": counterexamples, "mode": "read_only",
         })
     return assessments
+
+
+def _audit_path(
+    *, file_id: int, filename: str, path: str, source_type: str,
+    category_code: str, family_code: str,
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    try:
+        normalized = normalize_target_path(path)
+    except ValueError as exc:
+        return {
+            "file_id": file_id, "filename": filename, "source_type": source_type,
+            "path": path, "normalized_path": "", "status": "invalid",
+            "reason_codes": [f"invalid_managed_path:{exc}"],
+        }
+    target = str(normalized["normalized"])
+    parts = list(PurePosixPath(target).parts)
+    folded_parts = [part.casefold() for part in parts]
+    if normalized["changed"]:
+        reasons.extend(str(item) for item in normalized["reason_codes"])
+    if PurePosixPath(target).name != filename:
+        reasons.append("filename_changed_or_mismatched")
+    if any(part in {"algemeen", "general"} for part in folded_parts[:-1]):
+        reasons.append("generic_path_layer_present")
+    category_label = CATEGORY_LABELS.get(category_code)
+    if category_label and category_code != "needs_review" and category_label.casefold() not in folded_parts:
+        reasons.append("category_layer_mismatch")
+    family_label = FAMILY_LABELS.get(family_code)
+    canonical_family_labels = {label.casefold(): code for code, label in FAMILY_LABELS.items() if code != "general"}
+    foreign_families = sorted({
+        canonical_family_labels[part] for part in folded_parts
+        if part in canonical_family_labels and canonical_family_labels[part] != family_code
+    })
+    if foreign_families:
+        reasons.append("conflicting_family_layer:" + ",".join(foreign_families))
+    elif family_label and family_code != "general" and family_label.casefold() not in folded_parts:
+        reasons.append("family_layer_omitted")
+    material = [reason for reason in reasons if reason not in {"duplicate_separator_collapsed", "family_layer_omitted"}]
+    return {
+        "file_id": file_id, "filename": filename, "source_type": source_type,
+        "path": path, "normalized_path": target,
+        "status": "needs_review" if material else "pass",
+        "reason_codes": reasons or ["canonical_path_structure_consistent"],
+    }
+
+
+def audit_review_paths(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Audit CORE and latest human paths without treating human input as truth."""
+    latest_by_file: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        if row.get("review_type") != "target_path":
+            continue
+        try:
+            latest_by_file[int(row["file_id"])] = row
+        except (KeyError, TypeError, ValueError):
+            continue
+    audits = []
+    for file_id, row in latest_by_file.items():
+        filename = str(row.get("filename") or "")
+        category = str(row.get("corrected_category_code") or row.get("proposal_category_code") or "")
+        family = str(row.get("corrected_document_family_code") or row.get("proposal_document_family_code") or "")
+        system_path = str(row.get("proposal_target_path") or "")
+        if system_path:
+            audits.append(_audit_path(
+                file_id=file_id, filename=filename, path=system_path, source_type="core_proposal",
+                category_code=category, family_code=family,
+            ))
+        human_path = str(row.get("proposed_target_path") or "")
+        if human_path:
+            audits.append(_audit_path(
+                file_id=file_id, filename=filename, path=human_path, source_type="human_proposal",
+                category_code=category, family_code=family,
+            ))
+    return sorted(audits, key=lambda item: (item["status"] == "pass", item["source_type"], item["file_id"]))
