@@ -116,6 +116,10 @@ def document_family(row: dict[str, Any]) -> tuple[str, str]:
     if accepted in FAMILY_LABELS:
         return accepted, FAMILY_LABELS[accepted]
     evidence = " " + _evidence(row).replace("-", " ") + " "
+    filename_stem = PurePosixPath(str(row.get("filename") or "")).stem.casefold()
+    filename_tokens = {token for token in re.split(r"[^a-z0-9]+", filename_stem) if token}
+    if "cv" in filename_tokens or "curriculum vitae" in evidence:
+        return "resumes", FAMILY_LABELS["resumes"]
     for code, label, terms in FAMILY_RULES:
         if any(term in evidence for term in terms):
             return code, label
