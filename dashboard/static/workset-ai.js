@@ -50,9 +50,9 @@ async function analyzeSelectedWithAi(){
   try{
     const response=await fetch('/api/v1/workset/ai-runs',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({idempotency_key:reviewId(),file_ids:ids,filter_snapshot:aiFilterSnapshot()})});
-    if(!response.ok)throw Error(response.status);const data=await response.json();
+    if(!response.ok){const error=await response.json().catch(()=>({}));throw Error(error.detail||`HTTP ${response.status}`)}const data=await response.json();
     data.proposals.forEach(applyAiProposal);hint.textContent=`${data.proposals.length} AI-voorstellen klaar voor jouw beoordeling.`;
-  }catch(error){hint.textContent='Lokale AI is niet beschikbaar of de selectie is verouderd.'}
+  }catch(error){hint.textContent=`AI-analyse mislukt: ${error.message}`}
   finally{button.disabled=false}
 }
 document.addEventListener('change',event=>{if(event.target.closest('.bulk-select'))updateAiButton()});
