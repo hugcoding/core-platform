@@ -118,3 +118,58 @@ def analyze_privacy_reviews(
             "eligible_for_activation_review": agreement >= 0.75,
         })
     return sorted(candidates, key=lambda item: (-item["support"], -item["agreement"], item["pattern_evidence"]))
+
+
+def analyze_proposal_quality(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Assess category, family and target-path proposals using latest human reviews."""
+    latest_by_file: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        if row.get("review_type") != "target_path":
+            continue
+        try:
+            latest_by_file[int(row["file_id"])] = row
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    dimensions = (
+        ("category", "proposal_category_code", "corrected_category_code"),
+        ("document_family", "proposal_document_family_code", "corrected_document_family_code"),
+        ("target_path", "proposal_target_path", "proposed_target_path"),
+    )
+    assessments = []
+    for dimension, proposal_field, human_field in dimensions:
+        examples = [row for row in latest_by_file.values() if str(row.get(proposal_field) or "")]
+        accepted = [row for row in examples if row.get("decision") == "accepted"]
+        rejected = [row for row in examples if row.get("decision") == "rejected"]
+        passed = [row for row in examples if row.get("decision") in {"needs_review", "passed"}]
+        unchanged, corrected, counterexamples = 0, 0, []
+        for row in accepted:
+            proposal = str(row.get(proposal_field) or "")
+            human = str(row.get(human_field) or "")
+            agrees = not human or human == proposal
+            if agrees:
+                unchanged += 1
+            else:
+                corrected += 1
+                if len(counterexamples) < 5:
+                    counterexamples.append({
+                        "file_id": int(row["file_id"]), "filename": str(row.get("filename") or ""),
+                        "proposal": proposal, "human_value": human,
+                    })
+        for row in rejected:
+            if len(counterexamples) < 5:
+                counterexamples.append({
+                    "file_id": int(row["file_id"]), "filename": str(row.get("filename") or ""),
+                    "proposal": str(row.get(proposal_field) or ""), "human_value": "rejected",
+                })
+        judged = len(accepted) + len(rejected)
+        agreement = unchanged / judged if judged else 0.0
+        assessments.append({
+            "dimension": dimension, "reviewed_proposals": len(examples),
+            "judged_proposals": judged, "accepted_unchanged": unchanged,
+            "accepted_corrected": corrected, "rejected": len(rejected),
+            "deferred_or_passed": len(passed), "agreement": round(agreement, 4),
+            "counterexample_count": corrected + len(rejected),
+            "counterexamples": counterexamples, "mode": "read_only",
+        })
+    return assessments

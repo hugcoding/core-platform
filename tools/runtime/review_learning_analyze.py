@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from core.exports.csv_format import write_dict_rows
-from core.organization.review_learning import analyze_privacy_reviews, analyze_reviews
+from core.organization.review_learning import analyze_privacy_reviews, analyze_proposal_quality, analyze_reviews
 from core.organization.learning_context import build_llm_learning_context
 
 
@@ -54,6 +54,7 @@ def main(argv=None) -> int:
         rows = fetch_rows()
         candidates = analyze_reviews(rows, args.minimum_support)
         privacy_candidates = analyze_privacy_reviews(rows, args.minimum_support)
+        proposal_quality = analyze_proposal_quality(rows)
     except (ValueError, subprocess.CalledProcessError, FileNotFoundError) as exc:
         print(f"Review-learning analysis failed: {exc}")
         return 1
@@ -72,6 +73,7 @@ def main(argv=None) -> int:
         "classification_candidate_count": len(candidates),
         "privacy_candidate_count": len(privacy_candidates),
         "candidates": candidates, "privacy_candidates": privacy_candidates,
+        "proposal_quality": proposal_quality,
         "llm_learning_context": build_llm_learning_context(candidates),
         "safety": {"database_writes": False, "rules_activated": False,
                    "file_mutations": False, "model_updates": False},
@@ -98,6 +100,16 @@ def main(argv=None) -> int:
         "reason_codes": json.dumps(item["reason_codes"]),
     } for item in privacy_candidates]
     write_dict_rows(privacy_csv_path, privacy_csv_rows, privacy_fields)
+    proposal_csv_path = output / f"review-learning-proposal-quality-{stamp}.csv"
+    proposal_fields = [
+        "dimension", "reviewed_proposals", "judged_proposals", "accepted_unchanged",
+        "accepted_corrected", "rejected", "deferred_or_passed", "agreement",
+        "counterexample_count", "counterexamples", "mode",
+    ]
+    proposal_csv_rows = [{
+        **item, "counterexamples": json.dumps(item["counterexamples"], ensure_ascii=False),
+    } for item in proposal_quality]
+    write_dict_rows(proposal_csv_path, proposal_csv_rows, proposal_fields)
     lines = ["# SCRUM-98 kandidaatregels uit portalbeoordelingen", "",
              "- Modus: **read-only**", f"- Beoordelingen geanalyseerd: **{len(rows)}**",
              f"- Minimum support: **{args.minimum_support}**",
@@ -118,15 +130,26 @@ def main(argv=None) -> int:
             f"{item['target_privacy_classification']} | {item['support']} | "
             f"{item['agreement']:.0%} | {item['counterexample_count']} | candidate_only |"
         )
+    lines.extend(["", "## Kwaliteit van CORE-voorstellen", "",
+                  "| Onderdeel | Beoordeeld | Ongewijzigd akkoord | Gecorrigeerd | Afgewezen | Agreement | Tegenvoorbeelden |",
+                  "|---|---:|---:|---:|---:|---:|---:|"])
+    for item in proposal_quality:
+        lines.append(
+            f"| {item['dimension']} | {item['judged_proposals']} | {item['accepted_unchanged']} | "
+            f"{item['accepted_corrected']} | {item['rejected']} | {item['agreement']:.0%} | "
+            f"{item['counterexample_count']} |"
+        )
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     for latest, source in (("review-learning-candidates-latest.json", json_path),
                            ("review-learning-candidates-latest.md", md_path),
-                           ("review-learning-privacy-candidates-latest.csv", privacy_csv_path)):
+                           ("review-learning-privacy-candidates-latest.csv", privacy_csv_path),
+                           ("review-learning-proposal-quality-latest.csv", proposal_csv_path)):
         (output / latest).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     print("SCRUM-98 read-only review-learning analysis complete")
     print(f"Report: {md_path.relative_to(ROOT)}")
     print(f"Details: {csv_path.relative_to(ROOT)}")
     print(f"Privacy details: {privacy_csv_path.relative_to(ROOT)}")
+    print(f"Proposal quality: {proposal_csv_path.relative_to(ROOT)}")
     print(f"JSON: {json_path.relative_to(ROOT)}")
     return 0
 
