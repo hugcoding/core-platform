@@ -97,6 +97,13 @@ passen. De gebruikte taxonomyversie en selectiemethode worden via de API
 geleverd; er wordt hiervoor geen LLM gebruikt. Ook categoriecorrecties blijven
 append-only onderdeel van de volledige reviewhistorie.
 
+`needs_review` is uitsluitend een workflowstatus en verschijnt niet als
+inhoudelijke categorie. Wanneer het doelpadcontract nog geen categorie vindt,
+maakt de portal een eerste laag-confidence voorstel uit verklaarbare pad- en
+bestandsnaamsignalen. Zonder bruikbaar signaal gebruikt de persoonlijke pilot
+expliciet `Persoonlijk & Identiteit` als lage-confidence scopefallback. `Later`
+blijft de manier om geen inhoudelijk oordeel te geven.
+
 ```mermaid
 flowchart LR
     P["Portaal toont CORE-voorstel"] --> H["Hugo beoordeelt of corrigeert familie"]

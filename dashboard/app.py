@@ -247,6 +247,14 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
             "accepted_document_family": item["effective_document_family"],
             "accepted_lifecycle": row.get("lifecycle"),
         })
+        initial_options = contextual_options(row, proposal)
+        if proposal["category_code"] == "needs_review":
+            proposal = propose_target({
+                **row,
+                "accepted_category": initial_options["category_options"][0]["code"],
+                "accepted_document_family": item["effective_document_family"],
+                "accepted_lifecycle": row.get("lifecycle"),
+            })
         item["target_proposal"] = {
             key: proposal[key] for key in (
                 "contract_version", "contract_checksum", "zone_code", "zone_label",

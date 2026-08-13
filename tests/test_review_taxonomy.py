@@ -1,6 +1,6 @@
 import unittest
 
-from core.organization.review_taxonomy import contextual_options, taxonomy
+from core.organization.review_taxonomy import category_options, contextual_options, taxonomy
 
 
 class ReviewTaxonomyTests(unittest.TestCase):
@@ -17,6 +17,15 @@ class ReviewTaxonomyTests(unittest.TestCase):
         contract = taxonomy()
         self.assertIn("home_living", [item["code"] for item in contract["categories"]])
         self.assertGreater(len(contract["families"]), 5)
+        self.assertNotIn("needs_review", [item["code"] for item in contract["categories"]])
+
+    def test_work_path_gets_content_proposal_instead_of_workflow_state(self):
+        options = category_options(
+            {"filename": "getekend contractvoorstel.pdf", "path": "/Documenten/Werk/getekend contractvoorstel.pdf"},
+            {"category_code": "needs_review"},
+        )
+        self.assertEqual("work_career", options[0]["code"])
+        self.assertNotIn("needs_review", [item["code"] for item in options])
 
 
 if __name__ == "__main__":

@@ -8,11 +8,10 @@
     {"code": "family_relationships", "label": "Gezin & Relaties"},
     {"code": "learning_development", "label": "Leren & Ontwikkelen"},
     {"code": "identity_personal", "label": "Persoonlijk & Identiteit"},
-    {"code": "legal", "label": "Juridisch"},
-    {"code": "needs_review", "label": "Te beoordelen"}
+    {"code": "legal", "label": "Juridisch"}
   ],
   "families": [
-    {"code": "general", "label": "Algemeen", "categories": ["needs_review"], "keywords": []},
+    {"code": "general", "label": "Algemeen", "categories": ["work_career", "home_living", "finance", "health", "family_relationships", "learning_development", "identity_personal", "legal"], "keywords": []},
     {"code": "vacancies", "label": "Vacatures", "categories": ["work_career"], "keywords": ["vacature", "functieprofiel"]},
     {"code": "resumes", "label": "CV's", "categories": ["work_career"], "keywords": ["curriculum vitae", " cv ", "_cv_"]},
     {"code": "motivation_letters", "label": "Motivatiebrieven", "categories": ["work_career"], "keywords": ["motivatie", "sollicitatiebrief"]},

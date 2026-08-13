@@ -21,6 +21,46 @@ def family_label(code: str) -> str:
     return next((item["label"] for item in taxonomy()["families"] if item["code"] == code), code)
 
 
+CATEGORY_SIGNALS = {
+    "work_career": ("/werk/", "sollicit", "vacature", "cv & sollicitaties", "contractvoorstel", "werkgever"),
+    "home_living": ("/wonen/", "/vve ", "/vve/", "woning", "eksterlaan", "riolering", "onderhoud"),
+    "finance": ("/geldzaken/", "belasting", "factuur", "bank", "hypotheek", "toeslag", "salaris"),
+    "health": ("/gezondheid/", "medisch", "huisarts", "ziekenhuis", "zorg"),
+    "family_relationships": ("/gezin", "familie", "relatie"),
+    "learning_development": ("/studie/", "/opleiding/", "cursus", "certificaat", "diploma"),
+    "identity_personal": ("/persoonlijk/", "paspoort", "rijbewijs", "geboorteakte", "identiteit"),
+    "legal": ("/juridisch/", "bezwaar", "beroep", "rechtbank", "advocaat"),
+}
+
+
+def category_options(row: dict[str, Any], proposal: dict[str, Any], maximum: int = 4) -> list[dict[str, Any]]:
+    """Rank content categories; workflow state needs_review is never an option."""
+    evidence = "/" + " ".join(str(row.get(key) or "") for key in ("path", "filename")).replace("\\", "/").casefold()
+    current = str(proposal.get("category_code") or "")
+    categories = [item for item in taxonomy()["categories"] if item["code"] != "needs_review"]
+    scores: list[tuple[int, int, dict[str, Any]]] = []
+    for order, item in enumerate(categories):
+        hits = [signal for signal in CATEGORY_SIGNALS.get(item["code"], ()) if signal in evidence]
+        score = len(hits) * 20
+        reasons = ["path_or_filename_signal"] if hits else []
+        if current == item["code"]:
+            score += 100
+            reasons.insert(0, "current_core_proposal")
+        if score:
+            confidence = "high" if score >= 100 and hits else "medium" if hits else "low"
+            scores.append((score, -order, {**item, "reason_codes": reasons, "confidence": confidence}))
+    ranked = [item for _, _, item in sorted(scores, reverse=True)]
+    if not ranked:
+        fallback = next(item for item in categories if item["code"] == "identity_personal")
+        ranked = [{**fallback, "reason_codes": ["personal_scope_fallback"], "confidence": "low"}]
+    for item in categories:
+        if len(ranked) >= maximum:
+            break
+        if not any(candidate["code"] == item["code"] for candidate in ranked):
+            ranked.append({**item, "reason_codes": ["alternative"], "confidence": "low"})
+    return ranked[:maximum]
+
+
 def contextual_options(row: dict[str, Any], proposal: dict[str, Any], maximum: int = 5) -> dict[str, Any]:
     """Return a small explained family shortlist plus the full searchable contract."""
     evidence = " ".join(str(row.get(key) or "") for key in ("filename", "path", "document_family")).casefold()
@@ -45,6 +85,7 @@ def contextual_options(row: dict[str, Any], proposal: dict[str, Any], maximum: i
     return {
         "taxonomy_version": taxonomy()["version"],
         "categories": taxonomy()["categories"],
+        "category_options": category_options(row, proposal),
         "compact_families": compact,
         "all_families": taxonomy()["families"],
         "maximum_compact_options": maximum,
