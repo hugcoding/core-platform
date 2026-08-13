@@ -10,6 +10,13 @@ class ReviewLearningTests(unittest.TestCase):
         )
         self.assertIn('PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"', wrapper)
 
+    def test_runtime_fetches_system_path_and_suggestion_audit(self):
+        runtime = (Path(__file__).parents[1] / "tools/runtime/review_learning_analyze.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("e.proposal_target_path, e.proposed_target_path", runtime)
+        self.assertIn("e.target_path_suggestion_decision", runtime)
+
     def test_repeated_human_corrections_become_inactive_candidate(self):
         rows = [{"file_id": i, "decision": "accepted", "proposal_document_family_code": "general",
                  "corrected_category_code": "home_living", "corrected_document_family_code": "vve_documents",
@@ -99,9 +106,33 @@ class ReviewLearningTests(unittest.TestCase):
         self.assertEqual("pass", audits["human_proposal"]["status"])
         self.assertIn("family_layer_omitted", audits["human_proposal"]["reason_codes"])
 
+    def test_proposal_quality_treats_equivalent_destination_directory_as_agreement(self):
+        rows = [{
+            "file_id": 11, "review_type": "target_path", "decision": "accepted",
+            "filename": "aangifte.pdf", "proposal_category_code": "finance",
+            "proposal_document_family_code": "tax_documents",
+            "proposal_target_path": "/volume1/data/Persoonlijk/Actief/Geldzaken/Belasting/aangifte.pdf",
+            "proposed_target_path": "/volume1/data/Persoonlijk/Actief/Geldzaken/Belasting",
+        }]
+        quality = {item["dimension"]: item for item in analyze_proposal_quality(rows)}
+        self.assertEqual(1, quality["target_path"]["accepted_unchanged"])
+        self.assertEqual(0, quality["target_path"]["accepted_corrected"])
+
     def test_human_path_outside_managed_root_is_invalid(self):
         rows = [{"file_id": 2, "review_type": "target_path", "filename": "x.pdf",
                  "proposal_category_code": "finance", "proposal_document_family_code": "tax_documents",
                  "proposed_target_path": "/tmp/x.pdf"}]
         audit = audit_review_paths(rows)[0]
         self.assertEqual("invalid", audit["status"])
+
+    def test_human_destination_directory_is_audited_with_current_filename(self):
+        rows = [{"file_id": 3, "review_type": "target_path", "filename": "aangifte.pdf",
+                 "corrected_category_code": "finance", "corrected_document_family_code": "tax_documents",
+                 "proposed_target_path": "/volume1/data/Persoonlijk/Actief/Geldzaken/Belasting"}]
+        audit = audit_review_paths(rows)[0]
+        self.assertEqual("pass", audit["status"])
+        self.assertEqual(
+            "/volume1/data/Persoonlijk/Actief/Geldzaken/Belasting/aangifte.pdf",
+            audit["normalized_path"],
+        )
+        self.assertNotIn("filename_changed_or_mismatched", audit["reason_codes"])

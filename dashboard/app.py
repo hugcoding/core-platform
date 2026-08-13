@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 from core.organization.target_path import CONTRACT_VERSION, propose_target
 from core.organization.review_taxonomy import contextual_options, taxonomy
-from core.organization.path_normalization import normalize_target_path
+from core.organization.path_normalization import normalize_target_path, suggest_known_target_path
 from core.organization.privacy_classification import RULE_VERSION as PRIVACY_RULE_VERSION, propose_privacy
 
 
@@ -414,7 +414,8 @@ def workset_review_history(file_id: int):
                        reviewer, supersedes_event_id, created_at,
                        proposed_category_label, proposed_family_label, proposed_target_path,
                        proposed_target_path_raw, proposal_privacy_classification,
-                       corrected_privacy_classification, privacy_rule_version, privacy_evidence
+                       corrected_privacy_classification, privacy_rule_version, privacy_evidence,
+                       target_path_input_kind, target_path_suggestion, target_path_suggestion_decision
                 FROM public.document_review_events
                 WHERE file_id = %s
                 ORDER BY created_at DESC, id DESC
@@ -426,6 +427,32 @@ def workset_review_history(file_id: int):
         raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"review history unavailable: {type(exc).__name__}") from exc
+
+
+@app.get("/api/v1/workset/{file_id}/target-path-suggestion")
+def workset_target_path_suggestion(file_id: int, value: str = Query(..., min_length=1, max_length=500)):
+    """Offer a close confirmed path; never silently rewrite human input."""
+    try:
+        with db_connect() as conn:
+            file_row = query_one(conn, "SELECT filename FROM public.files WHERE id = %s", (file_id,))
+            known = query_all(conn, """
+                SELECT proposed_target_path, proposal_target_path
+                FROM public.document_review_events
+                WHERE decision = 'accepted'
+                  AND (proposed_target_path IS NOT NULL OR proposal_target_path IS NOT NULL)
+                ORDER BY created_at DESC
+                LIMIT 500
+            """)
+        paths = [
+            str(path) for row in known
+            for path in (row.get("proposed_target_path"), row.get("proposal_target_path")) if path
+        ]
+        result = suggest_known_target_path(value, filename=str(file_row["filename"]), known_paths=paths)
+        return {**result, "mode": "advisory_only", "file_mutations": False}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"path suggestion unavailable: {type(exc).__name__}") from exc
 
 
 @app.get("/api/v1/workset/reviews/export")
@@ -444,7 +471,8 @@ def export_workset_reviews(format: str = Query("csv", pattern="^(csv|json)$")):
                        e.review_contract_version, e.supersedes_event_id,
                        e.proposed_category_label, e.proposed_family_label, e.proposed_target_path,
                        e.proposed_target_path_raw, e.proposal_privacy_classification,
-                       e.corrected_privacy_classification, e.privacy_rule_version, e.privacy_evidence
+                       e.corrected_privacy_classification, e.privacy_rule_version, e.privacy_evidence,
+                       e.target_path_input_kind, e.target_path_suggestion, e.target_path_suggestion_decision
                 FROM public.document_review_events e
                 JOIN public.files f ON f.id = e.file_id
                 ORDER BY e.created_at DESC, e.id DESC
@@ -497,12 +525,14 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
     notes = str(payload.get("review_notes") or "") or None
     proposed_category = str(payload.get("proposed_category_label") or "").strip() or None
     proposed_family = str(payload.get("proposed_family_label") or "").strip() or None
-    proposed_path_raw = str(payload.get("proposed_target_path") or "").strip() or None
-    try:
-        normalized_path = normalize_target_path(proposed_path_raw) if proposed_path_raw else None
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    proposed_path = str(normalized_path["normalized"]) if normalized_path else None
+    proposed_path_input = str(payload.get("proposed_target_path") or "").strip() or None
+    proposed_path_raw = str(payload.get("proposed_target_path_original") or "").strip() or proposed_path_input
+    path_suggestion = str(payload.get("target_path_suggestion") or "").strip() or None
+    path_suggestion_decision = str(payload.get("target_path_suggestion_decision") or "no_suggestion")
+    if path_suggestion_decision not in {"accepted", "dismissed", "new_path", "no_suggestion"}:
+        raise HTTPException(status_code=422, detail="invalid target path suggestion decision")
+    normalized_path = None
+    proposed_path = None
     if family and not re.fullmatch(r"[a-z0-9_'-]{1,80}", family):
         raise HTTPException(status_code=422, detail="invalid document family code")
     valid_categories = {item["code"] for item in taxonomy()["categories"]}
@@ -529,6 +559,19 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
             if not matches:
                 raise HTTPException(status_code=409, detail="file is no longer an active workset candidate")
             row = matches[0]
+            try:
+                normalized_path = normalize_target_path(
+                    proposed_path_input, filename=str(row["filename"]),
+                ) if proposed_path_input else None
+                normalized_suggestion = normalize_target_path(
+                    path_suggestion, filename=str(row["filename"]),
+                ) if path_suggestion else None
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            proposed_path = str(normalized_path["normalized"]) if normalized_path else None
+            path_suggestion = str(normalized_suggestion["normalized"]) if normalized_suggestion else None
+            if path_suggestion_decision == "accepted" and proposed_path != path_suggestion:
+                raise HTTPException(status_code=422, detail="accepted suggestion must equal proposed target path")
             if review_type == "privacy_classification":
                 privacy = propose_privacy(row)
                 latest = query_all(
@@ -592,8 +635,9 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                         proposal_reason_code, decision, corrected_document_family_code, corrected_category_code,
                         review_notes, reviewer, supersedes_event_id,
                         proposed_category_label, proposed_family_label, proposed_target_path,
-                        proposed_target_path_raw
-                    ) VALUES (%s,%s,'workset_portal','target_path',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        proposed_target_path_raw, target_path_input_kind,
+                        target_path_suggestion, target_path_suggestion_decision
+                    ) VALUES (%s,%s,'workset_portal','target_path',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (idempotency_key) DO NOTHING
                     RETURNING id, created_at, file_id, decision
                 """, (
@@ -603,6 +647,8 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                     proposal["proposal_confidence"], proposal["proposal_reason_code"], decision,
                     family, category, notes, os.getenv("CORE_REVIEWER", "hugo"), supersedes_event_id,
                     proposed_category, proposed_family, proposed_path, proposed_path_raw,
+                    str(normalized_path["input_kind"]) if normalized_path else None,
+                    path_suggestion, path_suggestion_decision,
                 ))
                 created = cur.fetchone()
                 if not created:
@@ -627,6 +673,9 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
             "proposed_family_label": proposed_family,
             "proposed_target_path": proposed_path,
             "proposed_target_path_raw": proposed_path_raw,
+            "target_path_input_kind": normalized_path["input_kind"] if normalized_path else None,
+            "target_path_suggestion": path_suggestion,
+            "target_path_suggestion_decision": path_suggestion_decision,
             "target_path_normalized": bool(normalized_path and normalized_path["changed"]),
             "effective_target_proposal": {
                 key: effective_proposal[key] for key in (

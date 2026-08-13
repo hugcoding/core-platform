@@ -77,3 +77,25 @@ automatisch als waarheid beschouwd. De audit controleert minimaal:
 Uitkomsten zijn `pass`, `needs_review` of `invalid`, met reason-codes per pad.
 `review-learning-path-audit-latest.csv` bevat zowel CORE- als menselijke
 voorstellen. De audit wijzigt geen opgeslagen voorstel en verplaatst niets.
+
+## Gecontroleerde doelpadassistent
+
+De portal accepteert zowel een doelmap als een volledig doelpad. Bij een
+doelmap voegt CORE uitsluitend voor normalisatie en analyse de bestaande
+bestandsnaam toe. Daardoor is `/Geldzaken/Belasting` een geldige doelmap en
+wordt dit niet meer ten onrechte als een gewijzigde bestandsnaam aangemerkt.
+
+Technische verschillen zoals dubbele `/` worden veilig genormaliseerd.
+Inhoudelijke verschillen worden nooit stil aangepast. De assistent vergelijkt
+invoer met canonieke en eerder door een mens bevestigde paden. Bij een kleine
+afwijking, bijvoorbeeld `Belastingen` tegenover `Belasting`, toont de portal
+een expliciete **Bedoel je?**-suggestie. De reviewer kiest vervolgens:
+
+- het bekende pad gebruiken;
+- bewust een nieuw pad voorstellen;
+- de invoer zelf aanpassen.
+
+De oorspronkelijke invoer, de genormaliseerde waarde, het type invoer
+(`directory` of `full_path`), de aangeboden suggestie en de menselijke keuze
+worden append-only vastgelegd. Dit is learning evidence; het activeert geen
+regel, past geen model aan en wijzigt of verplaatst geen bestand.
