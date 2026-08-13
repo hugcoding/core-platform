@@ -124,6 +124,26 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn('target-path-suggestion")', source)
         self.assertIn('target-path-preview")', source)
         self.assertIn("target_path_suggestion_decision", source)
+        self.assertIn("proposal_evidence", source)
+        self.assertIn("apply_similar_review_proposals", source)
+
+    def test_similarity_evidence_requires_matching_accepted_source_review(self):
+        connection = mock.MagicMock()
+        evidence = {
+            "status": "consensus_proposal", "score": 1.0,
+            "source_review_event_ids": ["aa4aee14-04f1-4e98-9df9-d91123302c83"],
+            "related_file_ids": [7], "normalized_identity": "motivatiebrief duo",
+        }
+        with mock.patch.object(self.dashboard, "query_all", return_value=[{
+            "id": evidence["source_review_event_ids"][0], "file_id": 7,
+            "corrected_category_code": "work_career",
+            "corrected_document_family_code": "motivation_letters",
+        }]):
+            result = self.dashboard.validated_similarity_evidence(
+                connection, evidence, "work_career", "motivation_letters",
+            )
+        self.assertEqual("normalized_filename_cross_format", result["match_kind"])
+        self.assertEqual([7], result["related_file_ids"])
 
     def test_target_path_suggestion_is_advisory(self):
         connection = mock.MagicMock()
