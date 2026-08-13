@@ -77,6 +77,22 @@ class CanonicalTargetPathTests(unittest.TestCase):
         )
         self.assertIn("generic_trajectory_omitted", result["path_reduction_reason_codes"])
 
+    def test_cv_token_before_extension_is_detected_as_resume(self):
+        result = propose_target({
+            "file_id": 16, "filename": "HoogendoornHugo_CV.pdf", "extension": "pdf",
+            "path": "/volume1/data/import/Documenten/CV & Sollicitaties/algemeen/HoogendoornHugo_CV.pdf",
+        })
+        self.assertEqual("resumes", result["document_family_code"])
+        self.assertEqual("CV's", result["folder_label"])
+        self.assertEqual(
+            "/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Sollicitaties/CV's/HoogendoornHugo_CV.pdf",
+            result["suggested_target_path"],
+        )
+
+    def test_cv_substring_inside_word_is_not_a_resume(self):
+        result = propose_target({"file_id": 17, "filename": "documentcvwaarde.pdf", "extension": "pdf"})
+        self.assertEqual("general", result["document_family_code"])
+
     def test_secret_candidate_precedes_normal_category_rules(self):
         result = propose_target({"file_id": 12, "filename": "wachtwoorden.xlsx", "extension": "xlsx"})
         self.assertEqual("quarantine", result["zone_code"])
