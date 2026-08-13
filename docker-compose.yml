@@ -17,6 +17,10 @@ services:
       - STORAGE_PATH=/volume1
       - CORE_REVIEW_WRITES_ENABLED=${CORE_REVIEW_WRITES_ENABLED:-false}
       - CORE_REVIEWER=${CORE_REVIEWER:-hugo}
+      - CORE_LLM_ENABLED=${CORE_LLM_ENABLED:-false}
+      - CORE_LLM_ENDPOINT=${CORE_LLM_ENDPOINT:-http://192.168.68.107:11434/v1}
+      - CORE_LLM_MODEL=${CORE_LLM_MODEL:-qwen3.6:latest}
+      - CORE_LLM_TIMEOUT_SECONDS=${CORE_LLM_TIMEOUT_SECONDS:-600}
     volumes:
       - "./project/exports:/exports:ro"
       - "/proc:/host/proc:ro"
