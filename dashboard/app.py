@@ -415,7 +415,8 @@ def workset_review_history(file_id: int):
                        proposed_category_label, proposed_family_label, proposed_target_path,
                        proposed_target_path_raw, proposal_privacy_classification,
                        corrected_privacy_classification, privacy_rule_version, privacy_evidence,
-                       target_path_input_kind, target_path_suggestion, target_path_suggestion_decision
+                       target_path_input_kind, target_path_suggestion, target_path_suggestion_decision,
+                       batch_id
                 FROM public.document_review_events
                 WHERE file_id = %s
                 ORDER BY created_at DESC, id DESC
@@ -508,7 +509,8 @@ def export_workset_reviews(format: str = Query("csv", pattern="^(csv|json)$")):
                        e.proposed_category_label, e.proposed_family_label, e.proposed_target_path,
                        e.proposed_target_path_raw, e.proposal_privacy_classification,
                        e.corrected_privacy_classification, e.privacy_rule_version, e.privacy_evidence,
-                       e.target_path_input_kind, e.target_path_suggestion, e.target_path_suggestion_decision
+                       e.target_path_input_kind, e.target_path_suggestion, e.target_path_suggestion_decision,
+                       e.batch_id
                 FROM public.document_review_events e
                 JOIN public.files f ON f.id = e.file_id
                 ORDER BY e.created_at DESC, e.id DESC
@@ -535,6 +537,177 @@ def export_workset_reviews(format: str = Query("csv", pattern="^(csv|json)$")):
         raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"review export unavailable: {type(exc).__name__}") from exc
+
+
+def prepare_bulk_review(conn, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    selections = payload.get("items")
+    if not isinstance(selections, list) or not 1 <= len(selections) <= 50:
+        raise HTTPException(status_code=422, detail="select between 1 and 50 visible proposals")
+    try:
+        file_ids = [int(item["file_id"]) for item in selections]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="every bulk item requires a valid file_id") from exc
+    if len(set(file_ids)) != len(file_ids):
+        raise HTTPException(status_code=422, detail="duplicate files are not allowed in a bulk review")
+    rows = query_all(
+        conn, WORKSET_SELECT + " WHERE w.file_id = ANY(%s) AND w.workset_status = 'active'", (file_ids,),
+    )
+    by_id = {int(row["file_id"]): row for row in rows}
+    if set(by_id) != set(file_ids):
+        raise HTTPException(status_code=409, detail="one or more files are no longer active workset candidates")
+    valid_categories = {item["code"] for item in taxonomy()["categories"]}
+    valid_families = {item["code"] for item in taxonomy()["families"]}
+    prepared = []
+    for selection in selections:
+        file_id = int(selection["file_id"])
+        category = str(selection.get("category") or "")
+        family = str(selection.get("family") or "")
+        privacy = str(selection.get("privacy") or "")
+        if category not in valid_categories or family not in valid_families:
+            raise HTTPException(status_code=422, detail=f"invalid classification for file {file_id}")
+        if privacy not in {"low", "medium", "high"}:
+            raise HTTPException(status_code=422, detail=f"invalid privacy label for file {file_id}")
+        row = by_id[file_id]
+        original = enrich_workset_row(row)["target_proposal"]
+        proposal = propose_target({
+            **row, "accepted_category": category, "accepted_document_family": family,
+            "accepted_lifecycle": row.get("lifecycle"),
+        })
+        manual_path = str(selection.get("manual_target_path") or "").strip()
+        normalized = normalize_target_path(
+            manual_path or proposal["suggested_target_path"], filename=str(row["filename"]),
+        )
+        privacy_proposal = propose_privacy(row)
+        prepared.append({
+            "row": row, "file_id": file_id, "filename": str(row["filename"]),
+            "category": category, "family": family, "privacy": privacy,
+            "target_path": str(normalized["normalized"]),
+            "target_path_raw": manual_path or str(normalized["normalized"]),
+            "target_path_input_kind": str(normalized["input_kind"]),
+            "original_proposal": original, "privacy_proposal": privacy_proposal,
+        })
+    return prepared
+
+
+def public_bulk_summary(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{
+        "file_id": item["file_id"], "filename": item["filename"],
+        "target_path": item["target_path"], "privacy": item["privacy"],
+    } for item in items]
+
+
+@app.post("/api/v1/workset/reviews/bulk/preview")
+def preview_bulk_workset_review(payload: dict[str, Any] = Body(...)):
+    try:
+        with db_connect() as conn:
+            prepared = prepare_bulk_review(conn, payload)
+        return {
+            "mode": "confirmation_required", "document_count": len(prepared),
+            "items": public_bulk_summary(prepared), "database_writes": False,
+            "file_mutations": False, "privacy_confirmation_included": True,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"bulk preview unavailable: {type(exc).__name__}") from exc
+
+
+@app.post("/api/v1/workset/reviews/bulk")
+def create_bulk_workset_review(payload: dict[str, Any] = Body(...)):
+    if not review_writes_enabled():
+        raise HTTPException(status_code=403, detail="interactive reviews are disabled")
+    try:
+        idempotency_key = str(payload["idempotency_key"])
+        uuid.UUID(idempotency_key)
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=422, detail="valid UUID idempotency_key required") from exc
+    reviewer = os.getenv("CORE_REVIEWER", "hugo")
+    try:
+        with db_connect() as conn:
+            prepared = prepare_bulk_review(conn, payload)
+            snapshot = public_bulk_summary(prepared)
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO public.document_review_batches (
+                        idempotency_key, channel, decision, document_count, selection_snapshot, reviewer
+                    ) VALUES (%s, 'workset_portal', 'accepted', %s, %s::jsonb, %s)
+                    ON CONFLICT (idempotency_key) DO NOTHING
+                    RETURNING id, created_at
+                """, (idempotency_key, len(prepared), json.dumps(snapshot, ensure_ascii=False), reviewer))
+                batch = cur.fetchone()
+                if not batch:
+                    cur.execute("""
+                        SELECT id, created_at, document_count, selection_snapshot
+                        FROM public.document_review_batches WHERE idempotency_key = %s
+                    """, (idempotency_key,))
+                    existing = cur.fetchone()
+                    if int(existing[2]) != len(prepared) or existing[3] != snapshot:
+                        raise HTTPException(status_code=409, detail="idempotency key belongs to another batch")
+                    return {
+                        "status": "already_stored", "batch_id": str(existing[0]),
+                        "created_at": iso(existing[1]), "document_count": len(prepared),
+                        "classification_reviews": len(prepared), "privacy_reviews": len(prepared),
+                        "file_mutations": False, "model_updates": False,
+                    }
+                batch_id, created_at = batch
+                for item in prepared:
+                    row, original = item["row"], item["original_proposal"]
+                    cur.execute("""
+                        SELECT review_type, id FROM public.v_latest_document_review
+                        WHERE file_id = %s AND review_type IN ('target_path', 'privacy_classification')
+                    """, (item["file_id"],))
+                    supersedes = {kind: event_id for kind, event_id in cur.fetchall()}
+                    target_key = str(uuid.uuid5(uuid.UUID(idempotency_key), f"target:{item['file_id']}"))
+                    cur.execute("""
+                        INSERT INTO public.document_review_events (
+                            idempotency_key, review_contract_version, channel, review_type,
+                            file_id, content_group_id, content_sha256,
+                            proposal_category_code, proposal_document_family_code, proposal_lifecycle,
+                            proposal_target_path, proposal_confidence, proposal_reason_code,
+                            decision, corrected_document_family_code, corrected_category_code,
+                            reviewer, supersedes_event_id, proposed_target_path, proposed_target_path_raw,
+                            target_path_input_kind, target_path_suggestion_decision, batch_id
+                        ) VALUES (%s,%s,'workset_portal','target_path',%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                                  'accepted',%s,%s,%s,%s,%s,%s,%s,'no_suggestion',%s)
+                        ON CONFLICT (idempotency_key) DO NOTHING
+                    """, (
+                        target_key, CONTRACT_VERSION, item["file_id"], row["content_group_id"],
+                        row["content_sha256"], original["category_code"],
+                        original["document_family_code"], original["zone_code"],
+                        original["suggested_target_path"], original["proposal_confidence"],
+                        original["proposal_reason_code"], item["family"], item["category"], reviewer,
+                        supersedes.get("target_path"), item["target_path"], item["target_path_raw"],
+                        item["target_path_input_kind"], batch_id,
+                    ))
+                    privacy_proposal = item["privacy_proposal"]
+                    privacy_key = str(uuid.uuid5(uuid.UUID(idempotency_key), f"privacy:{item['file_id']}"))
+                    cur.execute("""
+                        INSERT INTO public.document_review_events (
+                            idempotency_key, review_contract_version, channel, review_type,
+                            file_id, content_group_id, content_sha256, proposal_confidence,
+                            proposal_reason_code, decision, reviewer, supersedes_event_id,
+                            proposal_privacy_classification, corrected_privacy_classification,
+                            privacy_rule_version, privacy_evidence, batch_id
+                        ) VALUES (%s,%s,'workset_portal','privacy_classification',%s,%s,%s,%s,%s,
+                                  'accepted',%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (idempotency_key) DO NOTHING
+                    """, (
+                        privacy_key, PRIVACY_RULE_VERSION, item["file_id"], row["content_group_id"],
+                        row["content_sha256"], privacy_proposal["confidence"],
+                        privacy_proposal["reason_code"], reviewer,
+                        supersedes.get("privacy_classification"), privacy_proposal["classification"],
+                        item["privacy"], privacy_proposal["rule_version"],
+                        privacy_proposal["evidence"], batch_id,
+                    ))
+        return {
+            "status": "stored", "batch_id": str(batch_id), "created_at": iso(created_at),
+            "document_count": len(prepared), "classification_reviews": len(prepared),
+            "privacy_reviews": len(prepared), "file_mutations": False, "model_updates": False,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"bulk review unavailable: {type(exc).__name__}") from exc
 
 
 @app.post("/api/v1/workset/reviews")

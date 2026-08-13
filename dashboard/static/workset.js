@@ -79,6 +79,55 @@ const reasonLabels={source_metadata_modified_within_configured_window:'Recent ge
 const decisionLabels={accepted:'Akkoord',rejected:'Niet akkoord',needs_review:'Later beoordelen',passed:'Overgeslagen'};
 const privacyReasonLabels={high_impact_privacy_signal:'Identiteit of zeer gevoelige inhoud herkend',personal_or_financial_signal:'Persoonlijke of financiële informatie herkend',existing_normal_classification:'Geen verhoogd privacyrisico herkend',insufficient_privacy_evidence:'Nog onvoldoende bewijs; controle gewenst'};
 const state={offset:0,limit:50,loading:false,documents:[],families:[],reviewEnabled:false,privacyReviewEnabled:false,filteredTotal:0,reviewSummary:{},taxonomy:{categories:[],families:[]}};
+let bulkPreviewPayload=null;
+function visibleBulkCheckboxes(){return[...document.querySelectorAll('.document-card .bulk-select input')]}
+function updateBulkControls(){
+  const bar=ws('bulkReviewBar'),boxes=visibleBulkCheckboxes(),selected=boxes.filter(box=>box.checked);
+  bar.hidden=!state.reviewEnabled||!boxes.length;ws('bulkSelectedCount').textContent=`${selected.length} geselecteerd`;
+  ws('bulkReviewOpen').disabled=!selected.length;ws('bulkSelectAll').checked=boxes.length>0&&selected.length===boxes.length;
+  ws('bulkSelectAll').indeterminate=selected.length>0&&selected.length<boxes.length;
+}
+function decorateBulkCards(){
+  document.querySelectorAll('.document-card').forEach(card=>{
+    const panel=card.querySelector('.review-panel'),privacy=card.querySelector('.privacy-classification');
+    if(!panel||!privacy||card.querySelector('.bulk-select'))return;
+    const label=document.createElement('label');label.className='bulk-select';
+    label.innerHTML='<input type="checkbox" aria-label="Voorstel selecteren"><span>Selecteer</span>';
+    card.prepend(label);
+  });
+  updateBulkControls();
+}
+function collectBulkItems(){return visibleBulkCheckboxes().filter(box=>box.checked).map(box=>{
+  const card=box.closest('.document-card'),panel=card.querySelector('.review-panel');
+  return{file_id:Number(panel.dataset.fileId),category:panel.querySelector('.review-category').value,
+    family:panel.querySelector('.review-family').value,privacy:card.querySelector('.privacy-classification').value,
+    manual_target_path:panel.querySelector('.proposed-path').value.trim()};
+})}
+async function openBulkReview(){
+  const message=ws('bulkReviewMessage');message.textContent='Voorstellen controleren…';
+  const items=collectBulkItems();if(!items.length)return;
+  ws('bulkReviewDialog').showModal();
+  try{
+    const response=await fetch('/api/v1/workset/reviews/bulk/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items})});
+    if(!response.ok)throw Error(response.status);const data=await response.json();
+    bulkPreviewPayload={items,idempotency_key:reviewId()};
+    const labels={low:'Laag',medium:'Middel',high:'Hoog'};
+    ws('bulkReviewSummary').innerHTML=data.items.map(item=>`<tr><td>${wsEsc(item.filename)}</td><td><code>${wsEsc(item.target_path)}</code></td><td><b class="privacy-${wsEsc(item.privacy)}">${wsEsc(labels[item.privacy])}</b></td></tr>`).join('');
+    message.textContent=`${data.document_count} documenten klaar voor expliciete bevestiging.`;ws('bulkReviewConfirm').disabled=false;
+  }catch(error){bulkPreviewPayload=null;message.textContent='De selectie bevat een ongeldig of niet meer actueel voorstel.';ws('bulkReviewConfirm').disabled=true}
+}
+async function confirmBulkReview(){
+  if(!bulkPreviewPayload)return;const button=ws('bulkReviewConfirm'),message=ws('bulkReviewMessage');button.disabled=true;message.textContent='Oordelen auditbaar opslaan…';
+  try{
+    const response=await fetch('/api/v1/workset/reviews/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(bulkPreviewPayload)});
+    if(!response.ok)throw Error(response.status);const data=await response.json();message.textContent=`${data.document_count} documenten, doelpaden en privacylabels bevestigd.`;
+    setTimeout(()=>{ws('bulkReviewDialog').close();bulkPreviewPayload=null;loadWorkset(true)},650);
+  }catch(error){message.textContent='Bulkbeoordeling is niet opgeslagen. Er zijn geen bestanden gewijzigd.';button.disabled=false}
+}
+new MutationObserver(decorateBulkCards).observe(ws('worksetDocuments'),{childList:true,subtree:true});
+ws('bulkSelectAll').addEventListener('change',event=>{visibleBulkCheckboxes().forEach(box=>box.checked=event.target.checked);updateBulkControls()});
+ws('bulkReviewOpen').addEventListener('click',openBulkReview);ws('bulkReviewConfirm').addEventListener('click',confirmBulkReview);
+ws('worksetDocuments').addEventListener('change',event=>{if(event.target.closest('.bulk-select'))updateBulkControls()});
 const reviewId=()=>globalThis.crypto?.randomUUID?crypto.randomUUID():'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0,v=c==='x'?r:(r&3|8);return v.toString(16)});
 const selected=(value,current)=>value===current?' selected':'';
 function categoryOptions(current){return state.taxonomy.categories.map((item,index)=>`<option value="${wsEsc(item.code)}"${selected(item.code,current)||(!state.taxonomy.categories.some(value=>value.code===current)&&index===0?' selected':'')}>${wsEsc(item.label)}</option>`).join('')}

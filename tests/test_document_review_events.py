@@ -12,6 +12,8 @@ PRIVACY = ROOT / "database/migrations/20260813_add_privacy_classification_review
 PRIVACY_ROLLBACK = ROOT / "database/migrations/rollback/20260813_add_privacy_classification_review.sql"
 PATH_ASSISTANT = ROOT / "database/migrations/20260814_add_target_path_suggestion_audit.sql"
 PATH_ASSISTANT_ROLLBACK = ROOT / "database/migrations/rollback/20260814_add_target_path_suggestion_audit.sql"
+BULK = ROOT / "database/migrations/20260814_add_bulk_document_reviews.sql"
+BULK_ROLLBACK = ROOT / "database/migrations/rollback/20260814_add_bulk_document_reviews.sql"
 
 
 class DocumentReviewEventsMigrationTests(unittest.TestCase):
@@ -73,6 +75,18 @@ class DocumentReviewEventsMigrationTests(unittest.TestCase):
         sql = PATH_ASSISTANT_ROLLBACK.read_text(encoding="utf-8")
         self.assertNotIn("DELETE FROM public.document_review_events", sql)
         self.assertNotIn("DROP TABLE", sql)
+
+    def test_bulk_review_has_batch_and_individual_event_link(self):
+        sql = BULK.read_text(encoding="utf-8")
+        self.assertIn("CREATE TABLE IF NOT EXISTS public.document_review_batches", sql)
+        self.assertIn("selection_snapshot jsonb NOT NULL", sql)
+        self.assertIn("ADD COLUMN IF NOT EXISTS batch_id uuid", sql)
+        self.assertNotIn("UPDATE public.document_review_events", sql)
+
+    def test_bulk_rollback_removes_only_batch_extension(self):
+        sql = BULK_ROLLBACK.read_text(encoding="utf-8")
+        self.assertIn("DROP TABLE IF EXISTS public.document_review_batches", sql)
+        self.assertNotIn("DROP TABLE IF EXISTS public.document_review_events", sql)
 
 
 if __name__ == "__main__":
