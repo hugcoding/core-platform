@@ -72,7 +72,7 @@ class CanonicalTargetPathTests(unittest.TestCase):
             "path": "/volume1/data/import/Documenten/CV & Sollicitaties/algemeen/HoogendoornHugo_CV.pdf",
         })
         self.assertEqual(
-            "/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Sollicitaties/HoogendoornHugo_CV.pdf",
+            "/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Sollicitaties/CV's/HoogendoornHugo_CV.pdf",
             result["suggested_target_path"],
         )
         self.assertIn("generic_trajectory_omitted", result["path_reduction_reason_codes"])
