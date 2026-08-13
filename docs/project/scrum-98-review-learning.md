@@ -24,3 +24,22 @@ De JSON-export bevat een begrensde `llm_learning_context`. Een toekomstige
 portalvraag aan een LLM gebruikt deze context als advies met expliciete
 menselijke provenance. Kandidaatpatronen zijn geen actieve businessregels en
 geven de LLM nooit bevoegdheid regels te activeren of bestanden te wijzigen.
+
+## Privacy-learning uit SCRUM-99
+
+Dezelfde opdracht analyseert ook privacyoordelen. Alleen het laatste
+append-only privacyoordeel per document telt mee, zodat herhaald corrigeren van
+één document de support niet kunstmatig verhoogt. Privacykandidaten bevatten:
+
+- het verklaarbare bronsignaal en oorspronkelijke CORE-voorstel;
+- het dominante menselijke oordeel;
+- support en agreement-percentage;
+- maximaal vijf expliciete tegenvoorbeelden;
+- confidence en status `candidate_only`.
+
+Bij minder dan 75% agreement blijft een patroon uitsluitend zichtbaar als
+analyse en is het niet geschikt voor activatiereview. Ook bij hoge agreement
+wordt niets automatisch geactiveerd. Een kandidaat mag privacy `Hoog` nooit
+automatisch verlagen. De analyse schrijft JSON, een algemeen CSV-bestand, een
+afzonderlijk privacy-CSV-bestand en Markdown; database, bestanden, regels en
+modellen blijven ongewijzigd.
