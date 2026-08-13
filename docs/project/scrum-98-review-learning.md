@@ -105,3 +105,39 @@ een nieuw CORE-doelpad als read-only preview. De preview wordt pas onderdeel
 van het append-only oordeel wanneer de reviewer de classificatie opslaat. Is
 er al een handmatig doelpad ingevuld, dan blijft dat zichtbaar en leidend; de
 live preview overschrijft menselijke invoer nooit.
+
+## Bulkgoedkeuring van zichtbare voorstellen
+
+De portal kan maximaal vijftig momenteel zichtbare voorstellen selecteren. De
+keuze **Selecteer alle zichtbare voorstellen** selecteert nooit documenten op
+een andere pagina of achter een ander filter. Vóór opslag vraagt CORE een
+expliciete tweede bevestiging met alleen:
+
+- bestandsnaam;
+- het opnieuw door de server berekende of handmatig voorgestelde doelpad;
+- het privacylabel dat als menselijk oordeel wordt bevestigd.
+
+Een bulkbesluit schrijft één `document_review_batches`-record met een immutable
+selectiesnapshot. Per document schrijft CORE daarnaast twee afzonderlijk
+herleidbare append-only events: één voor classificatie/doelpad en één voor
+privacy. Alle events verwijzen naar hetzelfde `batch_id`. Een UUID-gebaseerde
+idempotency key en deterministische eventkeys voorkomen dubbele opslag bij een
+herhaalde klik.
+
+De server controleert categorie, familie, privacylabel, actuele werksetstatus
+en doelpad opnieuw. Een ongeldig of inmiddels verouderd voorstel blokkeert de
+hele batch; er ontstaat geen gedeeltelijk akkoord. Bulkgoedkeuring activeert
+geen regels of modellen en verplaatst geen bestanden.
+
+Voor sollicitatiedocumenten is het herkenbare traject de fysieke mapstructuur.
+De familie blijft daar metadata en veroorzaakt geen extra submap voor `CV`,
+`Motivatiebrieven`, `Vacatures` of `Gespreksvoorbereiding`. Alleen zonder een
+betrouwbaar traject mag de familie als verzamelmap worden gebruikt. De
+Nederlandse familienaam is **CV**; de technische code blijft `resumes`.
+
+Database-uitbreiding voor acceptatie:
+
+```bash
+docker exec -i postgres psql -v ON_ERROR_STOP=1 -U hugo -d nasdb_test \
+  < database/migrations/20260814_add_bulk_document_reviews.sql
+```

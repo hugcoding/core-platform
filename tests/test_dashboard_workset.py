@@ -27,9 +27,15 @@ class DashboardWorksetTests(unittest.TestCase):
             def post(self, *args, **kwargs):
                 return lambda function: function
 
+        class FakeHTTPException(RuntimeError):
+            def __init__(self, status_code, detail):
+                super().__init__(detail)
+                self.status_code = status_code
+                self.detail = detail
+
         fastapi = types.ModuleType("fastapi")
         fastapi.FastAPI = FakeFastAPI
-        fastapi.HTTPException = RuntimeError
+        fastapi.HTTPException = FakeHTTPException
         fastapi.Query = lambda default, **kwargs: default
         fastapi.Body = lambda default, **kwargs: default
         responses = types.ModuleType("fastapi.responses")
@@ -97,7 +103,7 @@ class DashboardWorksetTests(unittest.TestCase):
 
     def test_source_limits_mutation_to_append_only_review_events(self):
         source = (ROOT / "dashboard" / "app.py").read_text(encoding="utf-8")
-        self.assertEqual(1, source.count("@app.post"))
+        self.assertEqual(3, source.count("@app.post"))
         self.assertIn("INSERT INTO public.document_review_events", source)
         self.assertNotIn("UPDATE public.", source)
         self.assertNotIn("DELETE FROM", source)
@@ -113,6 +119,8 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn("proposed_target_path", source)
         self.assertIn("privacy_classification", source)
         self.assertIn("propose_privacy", source)
+        self.assertIn("document_review_batches", source)
+        self.assertIn("privacy_confirmation_included", source)
         self.assertIn('target-path-suggestion")', source)
         self.assertIn('target-path-preview")', source)
         self.assertIn("target_path_suggestion_decision", source)
@@ -148,6 +156,67 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertEqual("live_preview", result["mode"])
         self.assertIn("/Geldzaken/Belastingen/aangifte.pdf", result["suggested_target_path"])
         self.assertFalse(result["database_writes"])
+        self.assertFalse(result["file_mutations"])
+
+    def test_bulk_preview_contains_only_compact_confirmation_fields(self):
+        connection = mock.MagicMock()
+        connection.__enter__.return_value = connection
+        row = {
+            "file_id": 1, "content_group_id": uuid.uuid4(), "content_sha256": "c" * 64,
+            "filename": "aangifte.pdf", "extension": "pdf",
+            "path": "/volume1/data/import/aangifte.pdf", "workset_status": "active",
+            "lifecycle": None, "sensitivity": None,
+        }
+        payload = {"items": [{"file_id": 1, "category": "finance",
+                               "family": "tax_documents", "privacy": "medium",
+                               "manual_target_path": ""}]}
+        with mock.patch.object(self.dashboard, "db_connect", return_value=connection), mock.patch.object(
+            self.dashboard, "query_all", return_value=[row],
+        ):
+            result = self.dashboard.preview_bulk_workset_review(payload)
+        self.assertEqual("confirmation_required", result["mode"])
+        self.assertEqual({"file_id", "filename", "target_path", "privacy"}, set(result["items"][0]))
+        self.assertEqual("medium", result["items"][0]["privacy"])
+        self.assertFalse(result["database_writes"])
+
+    def test_bulk_preview_rejects_duplicate_file_selection(self):
+        connection = mock.MagicMock()
+        connection.__enter__.return_value = connection
+        item = {"file_id": 1, "category": "finance", "family": "tax_documents", "privacy": "medium"}
+        with mock.patch.object(self.dashboard, "db_connect", return_value=connection):
+            with self.assertRaises(self.dashboard.HTTPException) as raised:
+                self.dashboard.preview_bulk_workset_review({"items": [item, item]})
+        self.assertEqual(422, raised.exception.status_code)
+
+    def test_bulk_apply_writes_batch_and_separate_target_and_privacy_events(self):
+        connection = mock.MagicMock()
+        connection.__enter__.return_value = connection
+        cursor = connection.cursor.return_value.__enter__.return_value
+        batch_id = uuid.uuid4()
+        cursor.fetchone.return_value = (batch_id, datetime(2026, 8, 14, tzinfo=timezone.utc))
+        cursor.fetchall.return_value = []
+        row = {
+            "file_id": 1, "content_group_id": uuid.uuid4(), "content_sha256": "d" * 64,
+            "filename": "aangifte.pdf", "extension": "pdf",
+            "path": "/volume1/data/import/aangifte.pdf", "workset_status": "active",
+            "lifecycle": None, "sensitivity": None,
+        }
+        payload = {"idempotency_key": str(uuid.uuid4()), "items": [{
+            "file_id": 1, "category": "finance", "family": "tax_documents",
+            "privacy": "medium", "manual_target_path": "",
+        }]}
+        with mock.patch.dict("os.environ", {"CORE_REVIEW_WRITES_ENABLED": "true"}), mock.patch.object(
+            self.dashboard, "db_connect", return_value=connection,
+        ), mock.patch.object(self.dashboard, "query_all", return_value=[row]):
+            result = self.dashboard.create_bulk_workset_review(payload)
+        statements = [call.args[0] for call in cursor.execute.call_args_list]
+        event_inserts = [sql for sql in statements if "INSERT INTO public.document_review_events" in sql]
+        self.assertEqual(2, len(event_inserts))
+        self.assertIn("'target_path'", event_inserts[0])
+        self.assertIn("'privacy_classification'", event_inserts[1])
+        self.assertEqual(1, result["document_count"])
+        self.assertEqual(1, result["classification_reviews"])
+        self.assertEqual(1, result["privacy_reviews"])
         self.assertFalse(result["file_mutations"])
 
     def test_review_is_append_only_and_does_not_update_model_or_file(self):

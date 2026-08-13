@@ -13,7 +13,7 @@
   "families": [
     {"code": "general", "label": "Algemeen", "categories": ["work_career", "home_living", "finance", "health", "family_relationships", "learning_development", "identity_personal", "legal"], "keywords": []},
     {"code": "vacancies", "label": "Vacatures", "categories": ["work_career"], "keywords": ["vacature", "functieprofiel"]},
-    {"code": "resumes", "label": "CV's", "categories": ["work_career"], "keywords": ["curriculum vitae", " cv ", "_cv_"]},
+    {"code": "resumes", "label": "CV", "categories": ["work_career"], "keywords": ["curriculum vitae", " cv ", "_cv_"]},
     {"code": "motivation_letters", "label": "Motivatiebrieven", "categories": ["work_career"], "keywords": ["motivatie", "sollicitatiebrief"]},
     {"code": "interview_preparation", "label": "Gespreksvoorbereiding", "categories": ["work_career"], "keywords": ["gesprek", "voorbereiding", "pitch"]},
     {"code": "employment_documents", "label": "Arbeidsdocumenten", "categories": ["work_career"], "keywords": ["arbeidscontract", "werkgever", "salaris"]},

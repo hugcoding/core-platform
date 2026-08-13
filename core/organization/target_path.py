@@ -11,7 +11,7 @@ from typing import Any
 from core.organization.review_taxonomy import taxonomy
 
 
-CONTRACT_VERSION = "canonical-dutch-target-path-v3"
+CONTRACT_VERSION = "canonical-dutch-target-path-v4"
 TARGET_ROOT = "/volume1/data/Persoonlijk"
 ZONE_LABELS = {
     "active": "Actief", "archive": "Archief",
@@ -45,7 +45,7 @@ KEYWORD_RULES = (
 RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
 FAMILY_RULES = (
     ("vacancies", "Vacatures", ("vacature", "functieprofiel")),
-    ("resumes", "CV's", ("curriculum vitae", "_cv_", " cv ")),
+    ("resumes", "CV", ("curriculum vitae", "_cv_", " cv ")),
     ("motivation_letters", "Motivatiebrieven", ("motivatie", "sollicitatiebrief")),
     ("interview_preparation", "Gespreksvoorbereiding", ("gesprek", "voorbereiding", "pitch")),
     ("supporting_analysis", "Ondersteunende analyses", ("analyse", "advies", "feedback", "stress", "afwijzing")),
@@ -183,11 +183,12 @@ def propose_target(row: dict[str, Any]) -> dict[str, Any]:
             }
             if not generic_trajectory:
                 parts.append(trajectory_label)
+                path_reductions.append("family_retained_as_metadata_within_trajectory")
             else:
                 path_reductions.append("generic_trajectory_omitted")
-            if family_code != "general":
+            if generic_trajectory and family_code != "general":
                 parts.append(family)
-            else:
+            elif generic_trajectory:
                 path_reductions.append("generic_family_omitted")
         else:
             if family_code != "general":

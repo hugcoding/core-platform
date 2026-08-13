@@ -62,8 +62,10 @@ class CanonicalTargetPathTests(unittest.TestCase):
             "path": "/volume1/data/import/Documenten/CV & Sollicitaties/rijksoverheid/DUO/vacaturetekst.docx",
         })
         marked = mark_collisions([first, second])
-        self.assertIn("/Sollicitaties/UWV – ETL Engineer/Vacatures/", first["suggested_target_path"])
-        self.assertIn("/Sollicitaties/rijksoverheid – DUO/Vacatures/", second["suggested_target_path"])
+        self.assertIn("/Sollicitaties/UWV – ETL Engineer/", first["suggested_target_path"])
+        self.assertIn("/Sollicitaties/rijksoverheid – DUO/", second["suggested_target_path"])
+        self.assertNotIn("/Vacatures/", first["suggested_target_path"])
+        self.assertIn("family_retained_as_metadata_within_trajectory", first["path_reduction_reason_codes"])
         self.assertTrue(all(row["collision_status"] == "none" for row in marked))
 
     def test_literal_algemeen_source_folder_does_not_become_target_layer(self):
@@ -72,7 +74,7 @@ class CanonicalTargetPathTests(unittest.TestCase):
             "path": "/volume1/data/import/Documenten/CV & Sollicitaties/algemeen/HoogendoornHugo_CV.pdf",
         })
         self.assertEqual(
-            "/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Sollicitaties/CV's/HoogendoornHugo_CV.pdf",
+            "/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Sollicitaties/CV/HoogendoornHugo_CV.pdf",
             result["suggested_target_path"],
         )
         self.assertIn("generic_trajectory_omitted", result["path_reduction_reason_codes"])
@@ -83,9 +85,9 @@ class CanonicalTargetPathTests(unittest.TestCase):
             "path": "/volume1/data/import/Documenten/CV & Sollicitaties/algemeen/HoogendoornHugo_CV.pdf",
         })
         self.assertEqual("resumes", result["document_family_code"])
-        self.assertEqual("CV's", result["folder_label"])
+        self.assertEqual("CV", result["folder_label"])
         self.assertEqual(
-            "/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Sollicitaties/CV's/HoogendoornHugo_CV.pdf",
+            "/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Sollicitaties/CV/HoogendoornHugo_CV.pdf",
             result["suggested_target_path"],
         )
 
@@ -118,7 +120,8 @@ class CanonicalTargetPathTests(unittest.TestCase):
         })
         self.assertEqual("interview_preparation", result["document_family_code"])
         self.assertEqual("Gespreksvoorbereiding", result["folder_label"])
-        self.assertIn("/Gespreksvoorbereiding/", result["suggested_target_path"])
+        self.assertNotIn("/Gespreksvoorbereiding/", result["suggested_target_path"])
+        self.assertIn("family_retained_as_metadata_within_trajectory", result["path_reduction_reason_codes"])
 
 
 if __name__ == "__main__":
