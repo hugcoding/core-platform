@@ -66,6 +66,17 @@ class CanonicalTargetPathTests(unittest.TestCase):
         self.assertIn("/Sollicitaties/rijksoverheid – DUO/Vacatures/", second["suggested_target_path"])
         self.assertTrue(all(row["collision_status"] == "none" for row in marked))
 
+    def test_literal_algemeen_source_folder_does_not_become_target_layer(self):
+        result = propose_target({
+            "file_id": 15, "filename": "HoogendoornHugo_CV.pdf", "extension": "pdf",
+            "path": "/volume1/data/import/Documenten/CV & Sollicitaties/algemeen/HoogendoornHugo_CV.pdf",
+        })
+        self.assertEqual(
+            "/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Sollicitaties/HoogendoornHugo_CV.pdf",
+            result["suggested_target_path"],
+        )
+        self.assertIn("generic_trajectory_omitted", result["path_reduction_reason_codes"])
+
     def test_secret_candidate_precedes_normal_category_rules(self):
         result = propose_target({"file_id": 12, "filename": "wachtwoorden.xlsx", "extension": "xlsx"})
         self.assertEqual("quarantine", result["zone_code"])
