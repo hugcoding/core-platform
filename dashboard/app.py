@@ -23,6 +23,12 @@ from core.organization.review_taxonomy import contextual_options, taxonomy
 from core.organization.path_normalization import normalize_target_path, suggest_known_target_path
 from core.organization.privacy_classification import RULE_VERSION as PRIVACY_RULE_VERSION, propose_privacy
 from core.organization.similar_documents import apply_similar_review_proposals
+from core.semantic.rag import GenerationRequest, OpenAICompatibleLocalProvider
+from core.semantic.workset_llm import (
+    MAX_DOCUMENTS as LLM_MAX_DOCUMENTS, PROMPT_VERSION as LLM_PROMPT_VERSION,
+    SCHEMA_VERSION as LLM_SCHEMA_VERSION, abstention as llm_abstention,
+    build_prompt as build_llm_prompt, extract_bounded_context, validate_proposal as validate_llm_proposal,
+)
 
 
 APP_DIR = Path(__file__).parent
@@ -210,6 +216,10 @@ def review_writes_enabled() -> bool:
     return os.getenv("CORE_REVIEW_WRITES_ENABLED", "false").casefold() == "true"
 
 
+def llm_enabled() -> bool:
+    return os.getenv("CORE_LLM_ENABLED", "false").casefold() == "true"
+
+
 def validated_similarity_evidence(conn, raw: Any, category: str | None,
                                   family: str | None) -> dict[str, Any]:
     if not raw:
@@ -275,6 +285,18 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
     item["privacy_source"] = (
         "human_review" if row.get("latest_privacy_classification") else "core_rule_proposal"
     )
+    if row.get("ai_proposal_id"):
+        item["ai_proposal"] = {
+            "id": str(row["ai_proposal_id"]), "run_id": str(row["ai_run_id"]),
+            "status": row.get("ai_status"), "category_code": row.get("ai_category_code"),
+            "family_code": row.get("ai_family_code"), "lifecycle": row.get("ai_lifecycle"),
+            "privacy_advice": row.get("ai_privacy_advice"), "confidence": row.get("ai_confidence"),
+            "relation_kind": row.get("ai_relation_kind"), "related_file_ids": row.get("ai_related_file_ids") or [],
+            "reason": row.get("ai_reason"), "model_id": row.get("ai_model_id"),
+            "prompt_version": row.get("ai_prompt_version"), "created_at": iso(row.get("ai_created_at")),
+        }
+    else:
+        item["ai_proposal"] = None
     reviewed_family = (
         row.get("latest_review_family")
         if row.get("latest_review_decision") == "accepted" else None
@@ -382,10 +404,25 @@ def workset(
                 LEFT JOIN public.v_latest_document_review p
                   ON p.file_id = w.file_id AND p.review_type = 'privacy_classification'
             """ if privacy_storage else ""
+            ai_storage = bool(query_one(
+                conn, "SELECT to_regclass('public.v_latest_workset_ai_proposal') IS NOT NULL AS available"
+            )["available"])
+            ai_select = """
+                , a.id AS ai_proposal_id, a.run_id AS ai_run_id, a.status AS ai_status,
+                  a.category_code AS ai_category_code, a.family_code AS ai_family_code,
+                  a.lifecycle AS ai_lifecycle, a.privacy_advice AS ai_privacy_advice,
+                  a.confidence AS ai_confidence, a.relation_kind AS ai_relation_kind,
+                  a.related_file_ids AS ai_related_file_ids, a.reason AS ai_reason,
+                  a.model_id AS ai_model_id, a.prompt_version AS ai_prompt_version,
+                  a.created_at AS ai_created_at
+            """ if ai_storage else ""
+            ai_join = """
+                LEFT JOIN public.v_latest_workset_ai_proposal a ON a.file_id = w.file_id
+            """ if ai_storage else ""
             rows = query_all(conn, WORKSET_SELECT.replace(
                 "FROM public.v_active_document_workset w",
-                review_select + privacy_select + " FROM public.v_active_document_workset w"
-            ) + review_join + privacy_join + where +
+                review_select + privacy_select + ai_select + " FROM public.v_active_document_workset w"
+            ) + review_join + privacy_join + ai_join + where +
                 " ORDER BY w.last_qualifying_activity_at DESC NULLS LAST, w.filename, w.file_id",
                 tuple(params),
             )
@@ -449,6 +486,7 @@ def workset(
         "review_taxonomy": taxonomy(),
         "review_writes_enabled": review_writes_enabled(),
         "privacy_review_enabled": review_writes_enabled() and privacy_storage,
+        "llm_enabled": llm_enabled() and ai_storage,
         "limit": limit,
         "offset": offset,
         "documents": documents,
@@ -658,6 +696,125 @@ def public_bulk_summary(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     } for item in items]
 
 
+def relevant_review_examples(document: dict[str, Any], candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    terms = {term for term in re.split(r"[^a-z0-9]+", str(document["filename"]).casefold()) if len(term) > 2}
+    ranked = sorted(
+        (item for item in candidates if int(item["file_id"]) != int(document["file_id"])),
+        key=lambda item: (-len(terms.intersection({
+            term for term in re.split(r"[^a-z0-9]+", str(item["filename"]).casefold()) if len(term) > 2
+        })), str(item["created_at"]), int(item["file_id"])),
+    )
+    return ranked[:3]
+
+
+def public_ai_proposal(row: dict[str, Any]) -> dict[str, Any]:
+    return {key: iso(value) for key, value in row.items() if key != "content_sha256"}
+
+
+@app.post("/api/v1/workset/ai-runs")
+def create_workset_ai_run(payload: dict[str, Any] = Body(...)):
+    if not review_writes_enabled() or not llm_enabled():
+        raise HTTPException(status_code=403, detail="local workset AI is disabled")
+    try:
+        idempotency_key = str(uuid.UUID(str(payload["idempotency_key"])))
+        file_ids = [int(value) for value in payload["file_ids"]]
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=422, detail="valid idempotency key and file IDs required") from exc
+    if not 1 <= len(file_ids) <= LLM_MAX_DOCUMENTS or len(set(file_ids)) != len(file_ids):
+        raise HTTPException(status_code=422, detail="select between 1 and 5 unique documents")
+    filters = payload.get("filter_snapshot") or {}
+    if not isinstance(filters, dict) or len(json.dumps(filters)) > 4000:
+        raise HTTPException(status_code=422, detail="invalid filter snapshot")
+    endpoint = os.getenv("CORE_LLM_ENDPOINT", "http://127.0.0.1:11434/v1")
+    model = os.getenv("CORE_LLM_MODEL", "qwen3.6:latest")
+    try:
+        provider = OpenAICompatibleLocalProvider(
+            endpoint, timeout_seconds=int(os.getenv("CORE_LLM_TIMEOUT_SECONDS", "600")),
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=f"invalid local LLM configuration: {exc}") from exc
+    prompt = json.loads((Path(__file__).parents[1] / "project/prompts/scrum-101-workset-llm-v1.json").read_text("utf-8"))
+    try:
+        with db_connect() as conn:
+            if not query_one(conn, "SELECT to_regclass('public.workset_ai_runs') IS NOT NULL AS available")["available"]:
+                raise HTTPException(status_code=503, detail="workset AI migration is not applied")
+            existing = query_all(conn, "SELECT id, created_at FROM public.workset_ai_runs WHERE idempotency_key=%s", (idempotency_key,))
+            if existing:
+                proposals = query_all(conn, "SELECT * FROM public.workset_ai_proposals WHERE run_id=%s ORDER BY file_id", (existing[0]["id"],))
+                return {"status": "already_stored", "run_id": str(existing[0]["id"]),
+                        "created_at": iso(existing[0]["created_at"]),
+                        "proposals": [public_ai_proposal(item) for item in proposals],
+                        "file_mutations": False, "model_updates": False}
+            rows = query_all(conn, WORKSET_SELECT + " WHERE w.file_id=ANY(%s) AND w.workset_status='active'", (file_ids,))
+            if {int(row["file_id"]) for row in rows} != set(file_ids):
+                raise HTTPException(status_code=409, detail="one or more files are no longer active candidates")
+            examples = query_all(conn, """
+                SELECT e.id AS review_id,e.file_id,f.filename,e.corrected_category_code AS category_code,
+                       e.corrected_document_family_code AS family_code,e.created_at
+                FROM public.document_review_events e JOIN public.files f ON f.id=e.file_id
+                WHERE e.review_type='target_path' AND e.decision='accepted'
+                  AND e.corrected_category_code IS NOT NULL AND e.corrected_document_family_code IS NOT NULL
+                ORDER BY e.created_at DESC LIMIT 100
+            """)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"AI selection unavailable: {type(exc).__name__}") from exc
+    started, results = time.monotonic(), []
+    usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    for row in sorted(rows, key=lambda item: file_ids.index(int(item["file_id"]))):
+        selected_examples = relevant_review_examples(row, examples)
+        try:
+            context = extract_bounded_context(str(row["path"]))
+            if context["status"] != "ready":
+                proposal = llm_abstention(int(row["file_id"]), context["reason"])
+            else:
+                system, user = build_llm_prompt({**row, "core_category": row.get("category"),
+                    "core_family": row.get("document_family")}, context, selected_examples, prompt["system_prompt"])
+                generated = provider.generate(GenerationRequest(model, system, user))
+                proposal = validate_llm_proposal(generated["content"], int(row["file_id"]))
+                for key in usage:
+                    usage[key] += int(generated.get("usage", {}).get(key) or 0)
+        except Exception as exc:
+            context = {"status": "error", "reason": type(exc).__name__, "text": ""}
+            proposal = llm_abstention(int(row["file_id"]), f"local_processing_error:{type(exc).__name__}")
+        results.append({**proposal, "filename": str(row["filename"]),
+            "content_sha256": str(row["content_sha256"]),
+            "example_review_ids": [str(item["review_id"]) for item in selected_examples],
+            "extraction_metadata": {key: value for key, value in context.items() if key != "text"}})
+    run_status = "completed_with_errors" if any(item["status"] == "abstained" for item in results) else "completed"
+    duration = round(time.monotonic() - started, 3)
+    try:
+        with db_connect() as conn, conn.cursor() as cur:
+            cur.execute("""INSERT INTO public.workset_ai_runs
+                (idempotency_key,channel,status,selected_file_ids,selection_snapshot,provider_id,model_id,
+                 prompt_version,schema_version,document_count,proposal_count,error_count,prompt_tokens,
+                 completion_tokens,total_tokens,duration_seconds)
+                VALUES (%s,'workset_portal',%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                RETURNING id,created_at""", (idempotency_key,run_status,file_ids,
+                json.dumps({"file_ids": file_ids,"filters": filters},ensure_ascii=False),provider.provider_id,
+                model,LLM_PROMPT_VERSION,LLM_SCHEMA_VERSION,len(results),sum(x["status"]=="ready" for x in results),
+                sum(x["status"]=="abstained" for x in results),usage["prompt_tokens"],usage["completion_tokens"],
+                usage["total_tokens"],duration))
+            run_id, created_at = cur.fetchone()
+            for item in results:
+                cur.execute("""INSERT INTO public.workset_ai_proposals
+                    (run_id,file_id,content_sha256,status,category_code,family_code,lifecycle,privacy_advice,
+                     confidence,relation_kind,related_file_ids,reason,example_review_ids,extraction_metadata)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING id""",
+                    (run_id,item["file_id"],item["content_sha256"],item["status"],item["category_code"],
+                     item["family_code"],item["lifecycle"],item["privacy_advice"],item["confidence"],
+                     item["relation_kind"],item["related_file_ids"],item["reason"],item["example_review_ids"],
+                     json.dumps(item["extraction_metadata"],ensure_ascii=False)))
+                item["id"] = str(cur.fetchone()[0])
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"AI proposal storage unavailable: {type(exc).__name__}") from exc
+    return {"status":run_status,"run_id":str(run_id),"created_at":iso(created_at),"model_id":model,
+            "prompt_version":LLM_PROMPT_VERSION,"document_count":len(results),
+            "proposals":[public_ai_proposal(item) for item in results],"raw_text_stored":False,
+            "file_mutations":False,"model_updates":False}
+
+
 @app.post("/api/v1/workset/reviews/bulk/preview")
 def preview_bulk_workset_review(payload: dict[str, Any] = Body(...)):
     try:
@@ -801,6 +958,7 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
     proposed_path_input = str(payload.get("proposed_target_path") or "").strip() or None
     proposed_path_raw = str(payload.get("proposed_target_path_original") or "").strip() or proposed_path_input
     raw_similarity_evidence = payload.get("similarity_evidence")
+    ai_proposal_id = str(payload.get("ai_proposal_id") or "").strip() or None
     path_suggestion = str(payload.get("target_path_suggestion") or "").strip() or None
     path_suggestion_decision = str(payload.get("target_path_suggestion_decision") or "no_suggestion")
     if path_suggestion_decision not in {"accepted", "dismissed", "new_path", "no_suggestion"}:
@@ -833,6 +991,17 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
             if not matches:
                 raise HTTPException(status_code=409, detail="file is no longer an active workset candidate")
             row = matches[0]
+            if ai_proposal_id:
+                try:
+                    ai_proposal_id = str(uuid.UUID(ai_proposal_id))
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail="invalid AI proposal id") from exc
+                ai_match = query_all(conn, """
+                    SELECT id FROM public.v_latest_workset_ai_proposal
+                    WHERE id=%s AND file_id=%s
+                """, (ai_proposal_id, file_id))
+                if review_type != "target_path" or not ai_match:
+                    raise HTTPException(status_code=409, detail="AI proposal is stale")
             similarity_evidence = validated_similarity_evidence(
                 conn, raw_similarity_evidence, category, family,
             ) if review_type == "target_path" else {}
@@ -913,8 +1082,9 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                         review_notes, reviewer, supersedes_event_id,
                         proposed_category_label, proposed_family_label, proposed_target_path,
                         proposed_target_path_raw, target_path_input_kind,
-                        target_path_suggestion, target_path_suggestion_decision, proposal_evidence
-                    ) VALUES (%s,%s,'workset_portal','target_path',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+                        target_path_suggestion, target_path_suggestion_decision, proposal_evidence,
+                        ai_proposal_id
+                    ) VALUES (%s,%s,'workset_portal','target_path',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)
                     ON CONFLICT (idempotency_key) DO NOTHING
                     RETURNING id, created_at, file_id, decision
                 """, (
@@ -927,6 +1097,7 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                     str(normalized_path["input_kind"]) if normalized_path else None,
                     path_suggestion, path_suggestion_decision,
                     json.dumps(similarity_evidence, ensure_ascii=False),
+                    ai_proposal_id,
                 ))
                 created = cur.fetchone()
                 if not created:
@@ -956,6 +1127,7 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
             "target_path_suggestion_decision": path_suggestion_decision,
             "target_path_normalized": bool(normalized_path and normalized_path["changed"]),
             "similarity_evidence_stored": bool(similarity_evidence),
+            "ai_proposal_id": ai_proposal_id,
             "effective_target_proposal": {
                 key: effective_proposal[key] for key in (
                     "document_family_code", "folder_label", "suggested_target_path",

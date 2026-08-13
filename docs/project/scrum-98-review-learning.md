@@ -171,3 +171,44 @@ docker exec -i postgres psql -v ON_ERROR_STOP=1 -U hugo -d nasdb_test \
 ```
 
 Terugdraaien kan met het gelijknamige script onder `database/migrations/rollback`.
+
+## Lokale AI op een expliciete selectie
+
+SCRUM-101 voegt in de werkset de knop **AI-voorstellen maken** toe. De gebruiker
+selecteert expliciet één tot maximaal vijf zichtbare documenten binnen de huidige
+filters. CORE leest lokaal een begrensde hoeveelheid tekst, kiest maximaal drie
+relevante eerder bevestigde beoordelingen als voorbeelden en vraagt de lokale LLM
+om een categorie, familie, lifecycle, documentrelatie en privacyadvies.
+
+Het resultaat is herkenbaar **AI-advies** en verschijnt in dezelfde bestaande
+reviewinterface. De gebruiker kan het ongewijzigd accepteren of corrigeren. Het
+menselijke reviewevent verwijst naar het AI-voorstel, waardoor CORE het verschil
+tussen advies en definitief oordeel later kan analyseren. Privacy blijft apart te
+bevestigen.
+
+Veiligheidsgrenzen:
+
+- lokale, OpenAI-compatible provider via een privé-adres;
+- maximaal vijf expliciet geselecteerde documenten;
+- alleen actuele actieve bestanden;
+- canonieke categorie- en familiecodes worden server-side gevalideerd;
+- bij onvoldoende of ongeldige uitvoer onthoudt de LLM zich;
+- ruwe documenttekst wordt niet in de AI-tabellen opgeslagen;
+- runs zijn idempotent en leggen filters, model, prompt en bronreviews vast;
+- geen regelactivering, modeltraining of bestandsmutatie.
+
+Configuratie voor acceptatie staat in `.env`:
+
+```dotenv
+CORE_LLM_ENABLED=true
+CORE_LLM_ENDPOINT=http://192.168.68.107:11434/v1
+CORE_LLM_MODEL=qwen3.6:latest
+CORE_LLM_TIMEOUT_SECONDS=600
+```
+
+Database-uitbreiding:
+
+```bash
+docker exec -i postgres psql -v ON_ERROR_STOP=1 -U hugo -d nasdb_test \
+  < database/migrations/20260814_add_workset_llm_assistant.sql
+```

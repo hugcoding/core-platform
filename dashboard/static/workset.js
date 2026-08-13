@@ -6,6 +6,7 @@ globalThis.fetch=(resource,options={})=>{
     const payload=JSON.parse(options.body),input=activePathReviewPanel.querySelector('.proposed-path');
     const doc=state.documents.find(item=>String(item.file_id)===String(payload.file_id));
     if(doc?.similar_document_proposal?.status==='consensus_proposal')payload.similarity_evidence=doc.similar_document_proposal;
+    if(activePathReviewPanel.dataset.aiProposalId)payload.ai_proposal_id=activePathReviewPanel.dataset.aiProposalId;
     if(input&&payload.review_type!=='privacy_classification'){
       payload.proposed_target_path_original=input.dataset.originalValue||input.value;
       payload.target_path_suggestion=input.dataset.suggestion||'';
@@ -80,7 +81,7 @@ const wsBytes=value=>{let size=Number(value||0),unit=0;while(size>=1024&&unit<4)
 const reasonLabels={source_metadata_modified_within_configured_window:'Recent gewijzigd in documentmetadata',source_metadata_created_within_configured_window:'Recent aangemaakt volgens documentmetadata',filesystem_mtime_within_configured_window:'Recent gewijzigd op de opslag',conflicting_temporal_evidence:'Datums moeten worden beoordeeld',no_qualifying_activity_within_configured_window:'Geen activiteit binnen het ingestelde venster',invalid_or_missing_activity_timestamp:'Activiteitsdatum ontbreekt of is ongeldig'};
 const decisionLabels={accepted:'Akkoord',rejected:'Niet akkoord',needs_review:'Later beoordelen',passed:'Overgeslagen'};
 const privacyReasonLabels={high_impact_privacy_signal:'Identiteit of zeer gevoelige inhoud herkend',personal_or_financial_signal:'Persoonlijke of financiële informatie herkend',existing_normal_classification:'Geen verhoogd privacyrisico herkend',insufficient_privacy_evidence:'Nog onvoldoende bewijs; controle gewenst'};
-const state={offset:0,limit:50,loading:false,documents:[],families:[],reviewEnabled:false,privacyReviewEnabled:false,filteredTotal:0,reviewSummary:{},taxonomy:{categories:[],families:[]}};
+const state={offset:0,limit:50,loading:false,documents:[],families:[],reviewEnabled:false,privacyReviewEnabled:false,llmEnabled:false,filteredTotal:0,reviewSummary:{},taxonomy:{categories:[],families:[]}};
 let bulkPreviewPayload=null;
 function visibleBulkCheckboxes(){return[...document.querySelectorAll('.document-card .bulk-select input')]}
 function updateBulkControls(){

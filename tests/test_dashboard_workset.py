@@ -76,6 +76,7 @@ class DashboardWorksetTests(unittest.TestCase):
             self.dashboard, "query_one", side_effect=[
                 {"total": 3, "active": 1, "inactive": 1, "needs_review": 1},
                 {"available": False},
+                {"available": False},
             ],
         ), mock.patch.object(self.dashboard, "query_all", return_value=[row]) as query_all:
             result = self.dashboard.workset(
@@ -103,7 +104,7 @@ class DashboardWorksetTests(unittest.TestCase):
 
     def test_source_limits_mutation_to_append_only_review_events(self):
         source = (ROOT / "dashboard" / "app.py").read_text(encoding="utf-8")
-        self.assertEqual(3, source.count("@app.post"))
+        self.assertEqual(4, source.count("@app.post"))
         self.assertIn("INSERT INTO public.document_review_events", source)
         self.assertNotIn("UPDATE public.", source)
         self.assertNotIn("DELETE FROM", source)
@@ -126,6 +127,7 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn("target_path_suggestion_decision", source)
         self.assertIn("proposal_evidence", source)
         self.assertIn("apply_similar_review_proposals", source)
+        self.assertIn('@app.post("/api/v1/workset/ai-runs")', source)
 
     def test_similarity_evidence_requires_matching_accepted_source_review(self):
         connection = mock.MagicMock()
@@ -160,6 +162,17 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertTrue(result["requires_confirmation"])
         self.assertEqual("advisory_only", result["mode"])
         self.assertFalse(result["file_mutations"])
+
+    def test_workset_ai_rejects_more_than_five_selected_documents(self):
+        with mock.patch.dict("os.environ", {
+            "CORE_REVIEW_WRITES_ENABLED": "true", "CORE_LLM_ENABLED": "true",
+        }):
+            with self.assertRaises(self.dashboard.HTTPException) as raised:
+                self.dashboard.create_workset_ai_run({
+                    "idempotency_key": str(uuid.uuid4()), "file_ids": [1, 2, 3, 4, 5, 6],
+                    "filter_snapshot": {"status": "active"},
+                })
+        self.assertEqual(422, raised.exception.status_code)
 
     def test_changed_category_and_family_recalculate_read_only_preview(self):
         connection = mock.MagicMock()
