@@ -35,6 +35,23 @@ async function requestPathSuggestion(input){
     input.dataset.suggestion=data.suggestion;box.querySelector('code').textContent=data.suggestion;box.hidden=false;
   }catch(error){box.hidden=true}
 }
+async function refreshTargetPathPreview(panel){
+  const category=panel.querySelector('.review-category').value,family=panel.querySelector('.review-family').value;
+  if(!category||!family)return;
+  try{
+    const response=await nativeFetch(`/api/v1/workset/${panel.dataset.fileId}/target-path-preview?category=${encodeURIComponent(category)}&family=${encodeURIComponent(family)}`,{cache:'no-store'});
+    if(!response.ok)return;
+    const data=await response.json(),card=panel.closest('.document-card'),target=card.querySelector('.target-proposal');
+    if(target){target.querySelector('span').innerHTML=`<i class="source-badge">CORE-preview</i>${wsEsc(data.proposal_confidence)}`;target.querySelector('code').textContent=data.suggested_target_path}
+    let note=panel.querySelector('.live-path-preview');if(!note){note=document.createElement('small');note.className='live-path-preview';panel.prepend(note)}
+    const manual=panel.querySelector('.proposed-path').value.trim();
+    note.textContent=manual?'Nieuw CORE-voorstel berekend; jouw handmatige doelpad blijft leidend.':'Doelpad live herberekend; wordt pas opgeslagen bij jouw beoordeling.';
+  }catch(error){}
+}
+document.addEventListener('change',event=>{
+  if(!event.target.matches('.review-category,.review-family,.all-families'))return;
+  const panel=event.target.closest('.review-panel');setTimeout(()=>refreshTargetPathPreview(panel),0);
+});
 document.addEventListener('input',event=>{
   if(!event.target.matches('.proposed-path'))return;
   clearTimeout(pathSuggestionTimer);pathSuggestionTimer=setTimeout(()=>requestPathSuggestion(event.target),300);
