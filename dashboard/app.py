@@ -22,6 +22,7 @@ from core.organization.target_path import CONTRACT_VERSION, propose_target
 from core.organization.review_taxonomy import contextual_options, taxonomy
 from core.organization.path_normalization import normalize_target_path, suggest_known_target_path
 from core.organization.privacy_classification import RULE_VERSION as PRIVACY_RULE_VERSION, propose_privacy
+from core.organization.similar_documents import apply_similar_review_proposals
 
 
 APP_DIR = Path(__file__).parent
@@ -209,6 +210,43 @@ def review_writes_enabled() -> bool:
     return os.getenv("CORE_REVIEW_WRITES_ENABLED", "false").casefold() == "true"
 
 
+def validated_similarity_evidence(conn, raw: Any, category: str | None,
+                                  family: str | None) -> dict[str, Any]:
+    if not raw:
+        return {}
+    if not isinstance(raw, dict) or raw.get("status") != "consensus_proposal":
+        raise HTTPException(status_code=422, detail="invalid similar-document evidence")
+    try:
+        review_ids = [str(uuid.UUID(value)) for value in raw["source_review_event_ids"]]
+        related_ids = [int(value) for value in raw.get("related_file_ids", [])]
+        score = float(raw["score"])
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=422, detail="invalid similar-document evidence") from exc
+    if not 1 <= len(review_ids) <= 10 or len(related_ids) > 10 or not 0.0 <= score <= 1.0:
+        raise HTTPException(status_code=422, detail="invalid similar-document evidence bounds")
+    sources = query_all(conn, """
+        SELECT id, file_id, corrected_category_code, corrected_document_family_code
+        FROM public.document_review_events
+        WHERE id = ANY(%s::uuid[]) AND review_type = 'target_path' AND decision = 'accepted'
+    """, (review_ids,))
+    if len(sources) != len(set(review_ids)) or any(
+        str(source["corrected_category_code"]) != category
+        or str(source["corrected_document_family_code"]) != family
+        for source in sources
+    ):
+        raise HTTPException(status_code=409, detail="similar-document source review changed")
+    return {
+        "rule_version": str(raw.get("rule_version") or "")[:80],
+        "normalized_identity": str(raw.get("normalized_identity") or "")[:200],
+        "match_kind": "normalized_filename_cross_format",
+        "score": score,
+        "related_file_ids": sorted(set(related_ids)),
+        "source_review_event_ids": sorted(set(review_ids)),
+        "proposed_category_code": category,
+        "proposed_document_family_code": family,
+    }
+
+
 WORKSET_SELECT = """
     SELECT
         w.file_id, w.content_group_id, w.content_sha256, w.filename, w.extension, w.path,
@@ -353,7 +391,27 @@ def workset(
             )
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"workset unavailable: {type(exc).__name__}") from exc
-    enriched = [enrich_workset_row(row) for row in rows]
+    enriched = apply_similar_review_proposals([enrich_workset_row(row) for row in rows])
+    for item in enriched:
+        similar = item.get("similar_document_proposal") or {}
+        if similar.get("status") != "consensus_proposal" or item.get("workset_status") != "active":
+            continue
+        row = next(row for row in rows if int(row["file_id"]) == int(item["file_id"]))
+        proposal = propose_target({
+            **row,
+            "accepted_category": similar["proposed_category_code"],
+            "accepted_document_family": similar["proposed_document_family_code"],
+            "accepted_lifecycle": row.get("lifecycle"),
+        })
+        item["target_proposal"] = {key: proposal[key] for key in (
+            "contract_version", "contract_checksum", "zone_code", "zone_label",
+            "category_code", "category_label", "trajectory_code", "trajectory_label",
+            "document_family_code", "folder_label", "suggested_target_path",
+            "proposal_reason_code", "proposal_confidence",
+        )}
+        item["target_proposal"]["proposal_reason_code"] = "similar_human_review_consensus"
+        item["target_proposal"]["proposal_confidence"] = "high"
+        item["review_options"] = contextual_options(row, proposal)
     review_summary = {
         "pending": sum(not item.get("latest_review_id") for item in enriched),
         "reviewed": sum(bool(item.get("latest_review_id")) for item in enriched),
@@ -568,6 +626,9 @@ def prepare_bulk_review(conn, payload: dict[str, Any]) -> list[dict[str, Any]]:
         if privacy not in {"low", "medium", "high"}:
             raise HTTPException(status_code=422, detail=f"invalid privacy label for file {file_id}")
         row = by_id[file_id]
+        similarity_evidence = validated_similarity_evidence(
+            conn, selection.get("similarity_evidence"), category, family,
+        )
         original = enrich_workset_row(row)["target_proposal"]
         proposal = propose_target({
             **row, "accepted_category": category, "accepted_document_family": family,
@@ -585,6 +646,7 @@ def prepare_bulk_review(conn, payload: dict[str, Any]) -> list[dict[str, Any]]:
             "target_path_raw": manual_path or str(normalized["normalized"]),
             "target_path_input_kind": str(normalized["input_kind"]),
             "original_proposal": original, "privacy_proposal": privacy_proposal,
+            "similarity_evidence": similarity_evidence,
         })
     return prepared
 
@@ -666,9 +728,10 @@ def create_bulk_workset_review(payload: dict[str, Any] = Body(...)):
                             proposal_target_path, proposal_confidence, proposal_reason_code,
                             decision, corrected_document_family_code, corrected_category_code,
                             reviewer, supersedes_event_id, proposed_target_path, proposed_target_path_raw,
-                            target_path_input_kind, target_path_suggestion_decision, batch_id
+                            target_path_input_kind, target_path_suggestion_decision, batch_id,
+                            proposal_evidence
                         ) VALUES (%s,%s,'workset_portal','target_path',%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                                  'accepted',%s,%s,%s,%s,%s,%s,%s,'no_suggestion',%s)
+                                  'accepted',%s,%s,%s,%s,%s,%s,%s,'no_suggestion',%s,%s::jsonb)
                         ON CONFLICT (idempotency_key) DO NOTHING
                     """, (
                         target_key, CONTRACT_VERSION, item["file_id"], row["content_group_id"],
@@ -678,6 +741,7 @@ def create_bulk_workset_review(payload: dict[str, Any] = Body(...)):
                         original["proposal_reason_code"], item["family"], item["category"], reviewer,
                         supersedes.get("target_path"), item["target_path"], item["target_path_raw"],
                         item["target_path_input_kind"], batch_id,
+                        json.dumps(item["similarity_evidence"], ensure_ascii=False),
                     ))
                     privacy_proposal = item["privacy_proposal"]
                     privacy_key = str(uuid.uuid5(uuid.UUID(idempotency_key), f"privacy:{item['file_id']}"))
@@ -736,6 +800,7 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
     proposed_family = str(payload.get("proposed_family_label") or "").strip() or None
     proposed_path_input = str(payload.get("proposed_target_path") or "").strip() or None
     proposed_path_raw = str(payload.get("proposed_target_path_original") or "").strip() or proposed_path_input
+    raw_similarity_evidence = payload.get("similarity_evidence")
     path_suggestion = str(payload.get("target_path_suggestion") or "").strip() or None
     path_suggestion_decision = str(payload.get("target_path_suggestion_decision") or "no_suggestion")
     if path_suggestion_decision not in {"accepted", "dismissed", "new_path", "no_suggestion"}:
@@ -768,6 +833,9 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
             if not matches:
                 raise HTTPException(status_code=409, detail="file is no longer an active workset candidate")
             row = matches[0]
+            similarity_evidence = validated_similarity_evidence(
+                conn, raw_similarity_evidence, category, family,
+            ) if review_type == "target_path" else {}
             try:
                 normalized_path = normalize_target_path(
                     proposed_path_input, filename=str(row["filename"]),
@@ -845,8 +913,8 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                         review_notes, reviewer, supersedes_event_id,
                         proposed_category_label, proposed_family_label, proposed_target_path,
                         proposed_target_path_raw, target_path_input_kind,
-                        target_path_suggestion, target_path_suggestion_decision
-                    ) VALUES (%s,%s,'workset_portal','target_path',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        target_path_suggestion, target_path_suggestion_decision, proposal_evidence
+                    ) VALUES (%s,%s,'workset_portal','target_path',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
                     ON CONFLICT (idempotency_key) DO NOTHING
                     RETURNING id, created_at, file_id, decision
                 """, (
@@ -858,6 +926,7 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                     proposed_category, proposed_family, proposed_path, proposed_path_raw,
                     str(normalized_path["input_kind"]) if normalized_path else None,
                     path_suggestion, path_suggestion_decision,
+                    json.dumps(similarity_evidence, ensure_ascii=False),
                 ))
                 created = cur.fetchone()
                 if not created:
@@ -886,6 +955,7 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
             "target_path_suggestion": path_suggestion,
             "target_path_suggestion_decision": path_suggestion_decision,
             "target_path_normalized": bool(normalized_path and normalized_path["changed"]),
+            "similarity_evidence_stored": bool(similarity_evidence),
             "effective_target_proposal": {
                 key: effective_proposal[key] for key in (
                     "document_family_code", "folder_label", "suggested_target_path",

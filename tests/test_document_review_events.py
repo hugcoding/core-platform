@@ -14,6 +14,8 @@ PATH_ASSISTANT = ROOT / "database/migrations/20260814_add_target_path_suggestion
 PATH_ASSISTANT_ROLLBACK = ROOT / "database/migrations/rollback/20260814_add_target_path_suggestion_audit.sql"
 BULK = ROOT / "database/migrations/20260814_add_bulk_document_reviews.sql"
 BULK_ROLLBACK = ROOT / "database/migrations/rollback/20260814_add_bulk_document_reviews.sql"
+SIMILAR = ROOT / "database/migrations/20260814_add_similar_document_review_evidence.sql"
+SIMILAR_ROLLBACK = ROOT / "database/migrations/rollback/20260814_add_similar_document_review_evidence.sql"
 
 
 class DocumentReviewEventsMigrationTests(unittest.TestCase):
@@ -87,6 +89,15 @@ class DocumentReviewEventsMigrationTests(unittest.TestCase):
         sql = BULK_ROLLBACK.read_text(encoding="utf-8")
         self.assertIn("DROP TABLE IF EXISTS public.document_review_batches", sql)
         self.assertNotIn("DROP TABLE IF EXISTS public.document_review_events", sql)
+
+    def test_similar_document_provenance_is_append_only_json(self):
+        sql = SIMILAR.read_text(encoding="utf-8")
+        self.assertIn("proposal_evidence jsonb NOT NULL", sql)
+        self.assertIn("jsonb_typeof(proposal_evidence) = 'object'", sql)
+        self.assertNotIn("UPDATE public.document_review_events", sql)
+        rollback = SIMILAR_ROLLBACK.read_text(encoding="utf-8")
+        self.assertIn("DROP COLUMN IF EXISTS proposal_evidence", rollback)
+        self.assertNotIn("DROP TABLE IF EXISTS public.document_review_events", rollback)
 
 
 if __name__ == "__main__":

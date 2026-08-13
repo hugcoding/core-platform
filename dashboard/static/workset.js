@@ -4,6 +4,8 @@ const nativeFetch=globalThis.fetch.bind(globalThis);
 globalThis.fetch=(resource,options={})=>{
   if(String(resource)==='/api/v1/workset/reviews'&&activePathReviewPanel&&options.body){
     const payload=JSON.parse(options.body),input=activePathReviewPanel.querySelector('.proposed-path');
+    const doc=state.documents.find(item=>String(item.file_id)===String(payload.file_id));
+    if(doc?.similar_document_proposal?.status==='consensus_proposal')payload.similarity_evidence=doc.similar_document_proposal;
     if(input&&payload.review_type!=='privacy_classification'){
       payload.proposed_target_path_original=input.dataset.originalValue||input.value;
       payload.target_path_suggestion=input.dataset.suggestion||'';
@@ -99,9 +101,11 @@ function decorateBulkCards(){
 }
 function collectBulkItems(){return visibleBulkCheckboxes().filter(box=>box.checked).map(box=>{
   const card=box.closest('.document-card'),panel=card.querySelector('.review-panel');
+  const doc=state.documents.find(item=>String(item.file_id)===panel.dataset.fileId);
   return{file_id:Number(panel.dataset.fileId),category:panel.querySelector('.review-category').value,
     family:panel.querySelector('.review-family').value,privacy:card.querySelector('.privacy-classification').value,
-    manual_target_path:panel.querySelector('.proposed-path').value.trim()};
+    manual_target_path:panel.querySelector('.proposed-path').value.trim(),
+    similarity_evidence:doc?.similar_document_proposal?.status==='consensus_proposal'?doc.similar_document_proposal:null};
 })}
 async function openBulkReview(){
   const message=ws('bulkReviewMessage');message.textContent='Voorstellen controleren…';

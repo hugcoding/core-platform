@@ -141,3 +141,33 @@ Database-uitbreiding voor acceptatie:
 docker exec -i postgres psql -v ON_ERROR_STOP=1 -U hugo -d nasdb_test \
   < database/migrations/20260814_add_bulk_document_reviews.sql
 ```
+
+## Overeenkomstige documenten en uitvoeringen
+
+CORE hergebruikt een geaccepteerd menselijk oordeel nu als **voorstel** wanneer
+een ander document conservatief als dezelfde logische documentidentiteit wordt
+herkend. De eerste versie gebruikt een genormaliseerde bestandsnaam en ondersteunt
+PDF-, DOCX- en XLSX-uitvoeringen. Daardoor kunnen bijvoorbeeld
+`Motivatiebrief DUO.docx` en `Motivatiebrief DUO.pdf` bij hetzelfde logische
+document horen, terwijl beide bestanden behouden blijven.
+
+De veiligheidsgrenzen zijn:
+
+- alleen een eerder geaccepteerd menselijk categorie- en familieoordeel telt;
+- bekende taal- en kopiesuffixen mogen bij de naamvergelijking worden genegeerd;
+- bij tegenstrijdige menselijke oordelen neemt CORE niets over;
+- het doelpad wordt altijd opnieuw voor het afzonderlijke bestand opgebouwd;
+- privacy wordt niet overgenomen en blijft een aparte bevestiging;
+- het portaal toont de overeenkomstige documenten en de herkomst van het voorstel;
+- een nieuw akkoord legt bronreviews en gerelateerde bestanden append-only vast
+  in `document_review_events.proposal_evidence`;
+- er wordt geen regel geactiveerd, geen model getraind en geen bestand gewijzigd.
+
+Migratie voor de auditbare herkomst:
+
+```bash
+docker exec -i postgres psql -v ON_ERROR_STOP=1 -U hugo -d nasdb_test \
+  < database/migrations/20260814_add_similar_document_review_evidence.sql
+```
+
+Terugdraaien kan met het gelijknamige script onder `database/migrations/rollback`.
