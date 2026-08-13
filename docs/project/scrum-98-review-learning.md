@@ -60,3 +60,20 @@ tegenvoorbeelden tonen document, CORE-voorstel en menselijke correctie. De
 vaste export `review-learning-proposal-quality-latest.csv` maakt deze controle
 ook zonder het brede JSON-rapport toegankelijk. Dit is kwaliteitsmeting en
 activeert geen categorie-, familie- of doelpadregel.
+
+## Systematiek en passendheid van doelpaden
+
+CORE controleert zowel het oorspronkelijke systeemvoorstel als een handmatig
+voorgesteld pad. Menselijke invoer is waardevol bewijs, maar wordt niet
+automatisch als waarheid beschouwd. De audit controleert minimaal:
+
+- beheerde absolute root en veilige padnormalisatie;
+- behoud van de bestandsnaam;
+- aanwezigheid van betekenisloze `Algemeen`-lagen;
+- aansluiting van de categorie op de fysieke categorielaag;
+- conflicterende familielagen;
+- bewuste weglating van een familielaag als niet-blokkerende observatie.
+
+Uitkomsten zijn `pass`, `needs_review` of `invalid`, met reason-codes per pad.
+`review-learning-path-audit-latest.csv` bevat zowel CORE- als menselijke
+voorstellen. De audit wijzigt geen opgeslagen voorstel en verplaatst niets.

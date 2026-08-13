@@ -1,6 +1,6 @@
 import unittest
 from core.organization.learning_context import build_llm_learning_context
-from core.organization.review_learning import analyze_privacy_reviews, analyze_proposal_quality, analyze_reviews
+from core.organization.review_learning import audit_review_paths, analyze_privacy_reviews, analyze_proposal_quality, analyze_reviews
 
 class ReviewLearningTests(unittest.TestCase):
     def test_repeated_human_corrections_become_inactive_candidate(self):
@@ -76,3 +76,25 @@ class ReviewLearningTests(unittest.TestCase):
         self.assertEqual(1, by_dimension["document_family"]["accepted_corrected"])
         self.assertEqual(1, by_dimension["target_path"]["accepted_corrected"])
         self.assertEqual(2, by_dimension["target_path"]["counterexample_count"])
+
+    def test_core_and_human_paths_are_audited_for_structure_and_fit(self):
+        rows = [{
+            "file_id": 1, "review_type": "target_path", "decision": "accepted",
+            "filename": "cv.pdf", "proposal_category_code": "work_career",
+            "corrected_category_code": "work_career", "proposal_document_family_code": "general",
+            "corrected_document_family_code": "resumes",
+            "proposal_target_path": "/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Algemeen/cv.pdf",
+            "proposed_target_path": "/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Sollicitaties/cv.pdf",
+        }]
+        audits = {item["source_type"]: item for item in audit_review_paths(rows)}
+        self.assertEqual("needs_review", audits["core_proposal"]["status"])
+        self.assertIn("generic_path_layer_present", audits["core_proposal"]["reason_codes"])
+        self.assertEqual("pass", audits["human_proposal"]["status"])
+        self.assertIn("family_layer_omitted", audits["human_proposal"]["reason_codes"])
+
+    def test_human_path_outside_managed_root_is_invalid(self):
+        rows = [{"file_id": 2, "review_type": "target_path", "filename": "x.pdf",
+                 "proposal_category_code": "finance", "proposal_document_family_code": "tax_documents",
+                 "proposed_target_path": "/tmp/x.pdf"}]
+        audit = audit_review_paths(rows)[0]
+        self.assertEqual("invalid", audit["status"])
