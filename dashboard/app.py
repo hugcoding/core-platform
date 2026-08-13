@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 from core.organization.target_path import CONTRACT_VERSION, propose_target
 from core.organization.review_taxonomy import contextual_options, taxonomy
+from core.organization.path_normalization import normalize_target_path
 
 
 APP_DIR = Path(__file__).parent
@@ -383,7 +384,8 @@ def workset_review_history(file_id: int):
                        proposal_target_path, proposal_confidence, proposal_reason_code,
                        decision, corrected_document_family_code, corrected_category_code, review_notes,
                        reviewer, supersedes_event_id, created_at,
-                       proposed_category_label, proposed_family_label, proposed_target_path
+                       proposed_category_label, proposed_family_label, proposed_target_path,
+                       proposed_target_path_raw
                 FROM public.document_review_events
                 WHERE file_id = %s
                 ORDER BY created_at DESC, id DESC
@@ -411,7 +413,8 @@ def export_workset_reviews(format: str = Query("csv", pattern="^(csv|json)$")):
                        e.proposal_lifecycle, e.proposal_target_path,
                        e.proposal_confidence, e.proposal_reason_code,
                        e.review_contract_version, e.supersedes_event_id,
-                       e.proposed_category_label, e.proposed_family_label, e.proposed_target_path
+                       e.proposed_category_label, e.proposed_family_label, e.proposed_target_path,
+                       e.proposed_target_path_raw
                 FROM public.document_review_events e
                 JOIN public.files f ON f.id = e.file_id
                 ORDER BY e.created_at DESC, e.id DESC
@@ -458,7 +461,12 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
     notes = str(payload.get("review_notes") or "") or None
     proposed_category = str(payload.get("proposed_category_label") or "").strip() or None
     proposed_family = str(payload.get("proposed_family_label") or "").strip() or None
-    proposed_path = str(payload.get("proposed_target_path") or "").strip() or None
+    proposed_path_raw = str(payload.get("proposed_target_path") or "").strip() or None
+    try:
+        normalized_path = normalize_target_path(proposed_path_raw) if proposed_path_raw else None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    proposed_path = str(normalized_path["normalized"]) if normalized_path else None
     if family and not re.fullmatch(r"[a-z0-9_'-]{1,80}", family):
         raise HTTPException(status_code=422, detail="invalid document family code")
     valid_categories = {item["code"] for item in taxonomy()["categories"]}
@@ -503,8 +511,9 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                         proposal_lifecycle, proposal_target_path, proposal_confidence,
                         proposal_reason_code, decision, corrected_document_family_code, corrected_category_code,
                         review_notes, reviewer, supersedes_event_id,
-                        proposed_category_label, proposed_family_label, proposed_target_path
-                    ) VALUES (%s,%s,'workset_portal','target_path',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        proposed_category_label, proposed_family_label, proposed_target_path,
+                        proposed_target_path_raw
+                    ) VALUES (%s,%s,'workset_portal','target_path',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (idempotency_key) DO NOTHING
                     RETURNING id, created_at, file_id, decision
                 """, (
@@ -513,7 +522,7 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                     proposal["zone_code"], proposal["suggested_target_path"],
                     proposal["proposal_confidence"], proposal["proposal_reason_code"], decision,
                     family, category, notes, os.getenv("CORE_REVIEWER", "hugo"), supersedes_event_id,
-                    proposed_category, proposed_family, proposed_path,
+                    proposed_category, proposed_family, proposed_path, proposed_path_raw,
                 ))
                 created = cur.fetchone()
                 if not created:
@@ -537,6 +546,8 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
             "proposed_category_label": proposed_category,
             "proposed_family_label": proposed_family,
             "proposed_target_path": proposed_path,
+            "proposed_target_path_raw": proposed_path_raw,
+            "target_path_normalized": bool(normalized_path and normalized_path["changed"]),
             "effective_target_proposal": {
                 key: effective_proposal[key] for key in (
                     "document_family_code", "folder_label", "suggested_target_path",

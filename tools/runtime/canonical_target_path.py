@@ -39,7 +39,7 @@ FIELDS = ["file_id", "content_group_id", "path", "filename", "extension", "size_
           "accepted_document_family", "accepted_lifecycle", "zone_code", "zone_label", "category_code",
           "category_label", "trajectory_code", "trajectory_label", "document_family_code",
           "folder_label", "suggested_target_path", "proposal_reason_code",
-          "proposal_confidence", "collision_status", "contract_version", "contract_checksum",
+          "proposal_confidence", "path_reduction_reason_codes", "collision_status", "contract_version", "contract_checksum",
           "database_writes", "file_mutations"]
 
 
@@ -69,7 +69,8 @@ def main(argv=None) -> int:
     csv_path = output / f"canonical-target-path-{stamp}.csv"
     json_path = output / f"canonical-target-path-{stamp}.json"
     md_path = output / f"canonical-target-path-{stamp}.md"
-    write_dict_rows(csv_path, rows, FIELDS)
+    csv_rows = [{**row, "path_reduction_reason_codes": json.dumps(row["path_reduction_reason_codes"])} for row in rows]
+    write_dict_rows(csv_path, csv_rows, FIELDS)
     summary = {
         "selected": len(rows),
         "accepted_classification": sum(r["proposal_reason_code"] == "accepted_human_classification" for r in rows),
