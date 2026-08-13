@@ -23,11 +23,12 @@ QUERY = """
 COPY (
   SELECT e.id, e.file_id, e.review_type, e.decision, e.proposal_category_code,
          e.proposal_document_family_code, e.corrected_category_code,
-         e.corrected_document_family_code, e.proposed_target_path,
+         e.corrected_document_family_code, e.proposal_target_path, e.proposed_target_path,
          e.proposed_target_path_raw, e.created_at,
          e.proposal_privacy_classification, e.corrected_privacy_classification,
          e.proposal_confidence, e.proposal_reason_code, e.privacy_rule_version,
-         e.privacy_evidence, f.filename
+         e.privacy_evidence, e.target_path_input_kind, e.target_path_suggestion,
+         e.target_path_suggestion_decision, f.filename
   FROM public.document_review_events e
   JOIN public.files f ON f.id = e.file_id
   WHERE e.channel = 'workset_portal'

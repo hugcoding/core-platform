@@ -113,6 +113,24 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn("proposed_target_path", source)
         self.assertIn("privacy_classification", source)
         self.assertIn("propose_privacy", source)
+        self.assertIn('target-path-suggestion")', source)
+        self.assertIn("target_path_suggestion_decision", source)
+
+    def test_target_path_suggestion_is_advisory(self):
+        connection = mock.MagicMock()
+        connection.__enter__.return_value = connection
+        with mock.patch.object(self.dashboard, "db_connect", return_value=connection), mock.patch.object(
+            self.dashboard, "query_one", return_value={"filename": "aangifte.pdf"},
+        ), mock.patch.object(self.dashboard, "query_all", return_value=[{
+            "proposed_target_path": "/volume1/data/Persoonlijk/Actief/Geldzaken/Belasting/vorig.pdf",
+            "proposal_target_path": None,
+        }]):
+            result = self.dashboard.workset_target_path_suggestion(
+                1, "/volume1/data/Persoonlijk/Actief/Geldzaken/Belastingen",
+            )
+        self.assertTrue(result["requires_confirmation"])
+        self.assertEqual("advisory_only", result["mode"])
+        self.assertFalse(result["file_mutations"])
 
     def test_review_is_append_only_and_does_not_update_model_or_file(self):
         connection = mock.MagicMock()

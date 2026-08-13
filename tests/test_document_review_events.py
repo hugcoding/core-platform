@@ -10,6 +10,8 @@ CATEGORY = ROOT / "database/migrations/20260812_add_review_category_choice.sql"
 RAW_PATH = ROOT / "database/migrations/20260813_add_review_raw_target_path.sql"
 PRIVACY = ROOT / "database/migrations/20260813_add_privacy_classification_review.sql"
 PRIVACY_ROLLBACK = ROOT / "database/migrations/rollback/20260813_add_privacy_classification_review.sql"
+PATH_ASSISTANT = ROOT / "database/migrations/20260814_add_target_path_suggestion_audit.sql"
+PATH_ASSISTANT_ROLLBACK = ROOT / "database/migrations/rollback/20260814_add_target_path_suggestion_audit.sql"
 
 
 class DocumentReviewEventsMigrationTests(unittest.TestCase):
@@ -58,6 +60,18 @@ class DocumentReviewEventsMigrationTests(unittest.TestCase):
     def test_privacy_rollback_retains_non_privacy_history(self):
         sql = PRIVACY_ROLLBACK.read_text(encoding="utf-8")
         self.assertIn("WHERE review_type = 'privacy_classification'", sql)
+        self.assertNotIn("DROP TABLE", sql)
+
+    def test_path_assistant_evidence_is_append_only(self):
+        sql = PATH_ASSISTANT.read_text(encoding="utf-8")
+        for field in ("target_path_input_kind", "target_path_suggestion", "target_path_suggestion_decision"):
+            self.assertIn(field, sql)
+        self.assertNotIn("UPDATE public.document_review_events", sql)
+        self.assertNotIn("CREATE TABLE", sql)
+
+    def test_path_assistant_rollback_retains_review_history(self):
+        sql = PATH_ASSISTANT_ROLLBACK.read_text(encoding="utf-8")
+        self.assertNotIn("DELETE FROM public.document_review_events", sql)
         self.assertNotIn("DROP TABLE", sql)
 
 

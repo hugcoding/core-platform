@@ -1,3 +1,59 @@
+// SCRUM-98 controlled path assistance. Suggestions are advisory until clicked.
+let activePathReviewPanel=null,pathSuggestionTimer=null;
+const nativeFetch=globalThis.fetch.bind(globalThis);
+globalThis.fetch=(resource,options={})=>{
+  if(String(resource)==='/api/v1/workset/reviews'&&activePathReviewPanel&&options.body){
+    const payload=JSON.parse(options.body),input=activePathReviewPanel.querySelector('.proposed-path');
+    if(input&&payload.review_type!=='privacy_classification'){
+      payload.proposed_target_path_original=input.dataset.originalValue||input.value;
+      payload.target_path_suggestion=input.dataset.suggestion||'';
+      payload.target_path_suggestion_decision=input.dataset.suggestionDecision||'no_suggestion';
+      options={...options,body:JSON.stringify(payload)};
+    }
+  }
+  return nativeFetch(resource,options);
+};
+function pathSuggestionBox(input){
+  let box=input.parentElement.querySelector('.path-suggestion');
+  if(!box){
+    box=document.createElement('div');box.className='path-suggestion';box.hidden=true;
+    box.innerHTML='<span>Bedoel je <code></code>?</span><button type="button" class="use-path-suggestion">Gebruik dit pad</button><button type="button" class="keep-new-path">Bewust nieuw pad</button>';
+    input.parentElement.append(box);
+  }
+  return box;
+}
+async function requestPathSuggestion(input){
+  const panel=input.closest('.review-panel'),value=input.value.trim(),box=pathSuggestionBox(input);
+  input.dataset.originalValue=value;input.dataset.suggestion='';input.dataset.suggestionDecision='no_suggestion';
+  if(!value.startsWith('/')){box.hidden=true;return}
+  try{
+    const response=await nativeFetch(`/api/v1/workset/${panel.dataset.fileId}/target-path-suggestion?value=${encodeURIComponent(value)}`,{cache:'no-store'});
+    if(!response.ok){box.hidden=true;return}
+    const data=await response.json();
+    if(data.technical_normalization){input.value=data.suggestion;input.dataset.suggestion=data.suggestion;input.dataset.suggestionDecision='accepted';box.hidden=true;return}
+    if(!data.requires_confirmation){box.hidden=true;return}
+    input.dataset.suggestion=data.suggestion;box.querySelector('code').textContent=data.suggestion;box.hidden=false;
+  }catch(error){box.hidden=true}
+}
+document.addEventListener('input',event=>{
+  if(!event.target.matches('.proposed-path'))return;
+  clearTimeout(pathSuggestionTimer);pathSuggestionTimer=setTimeout(()=>requestPathSuggestion(event.target),300);
+});
+document.addEventListener('click',event=>{
+  const reviewButton=event.target.closest('[data-decision]');
+  if(reviewButton)activePathReviewPanel=reviewButton.closest('.review-panel');
+  const use=event.target.closest('.use-path-suggestion');
+  if(use){
+    const box=use.closest('.path-suggestion'),input=box.parentElement.querySelector('.proposed-path');
+    input.dataset.originalValue=input.dataset.originalValue||input.value;
+    input.value=input.dataset.suggestion;input.dataset.suggestionDecision='accepted';box.hidden=true;return;
+  }
+  const keep=event.target.closest('.keep-new-path');
+  if(keep){
+    const box=keep.closest('.path-suggestion'),input=box.parentElement.querySelector('.proposed-path');
+    input.dataset.suggestionDecision='new_path';box.hidden=true;
+  }
+},true);
 const ws=id=>document.getElementById(id),wsNf=new Intl.NumberFormat('nl-NL');
 const wsEsc=value=>String(value??'').replace(/[&<>'"]/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
 const wsDt=value=>value?new Date(value).toLocaleString('nl-NL',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}):'Onbekend';

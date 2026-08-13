@@ -150,7 +150,17 @@ def analyze_proposal_quality(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
         for row in accepted:
             proposal = str(row.get(proposal_field) or "")
             human = str(row.get(human_field) or "")
-            agrees = not human or human == proposal
+            if dimension == "target_path" and human:
+                filename = str(row.get("filename") or "")
+                try:
+                    proposal = str(normalize_target_path(proposal, filename=filename)["normalized"])
+                    human = str(normalize_target_path(human, filename=filename)["normalized"])
+                except ValueError:
+                    # Invalid input remains a visible disagreement/counterexample.
+                    pass
+            agrees = not human or (
+                human.casefold() == proposal.casefold() if dimension == "target_path" else human == proposal
+            )
             if agrees:
                 unchanged += 1
             else:
@@ -185,7 +195,7 @@ def _audit_path(
 ) -> dict[str, Any]:
     reasons: list[str] = []
     try:
-        normalized = normalize_target_path(path)
+        normalized = normalize_target_path(path, filename=filename)
     except ValueError as exc:
         return {
             "file_id": file_id, "filename": filename, "source_type": source_type,
@@ -197,7 +207,7 @@ def _audit_path(
     folded_parts = [part.casefold() for part in parts]
     if normalized["changed"]:
         reasons.extend(str(item) for item in normalized["reason_codes"])
-    if PurePosixPath(target).name != filename:
+    if PurePosixPath(target).name.casefold() != filename.casefold():
         reasons.append("filename_changed_or_mismatched")
     if any(part in {"algemeen", "general"} for part in folded_parts[:-1]):
         reasons.append("generic_path_layer_present")
@@ -214,7 +224,10 @@ def _audit_path(
         reasons.append("conflicting_family_layer:" + ",".join(foreign_families))
     elif family_label and family_code != "general" and family_label.casefold() not in folded_parts:
         reasons.append("family_layer_omitted")
-    material = [reason for reason in reasons if reason not in {"duplicate_separator_collapsed", "family_layer_omitted"}]
+    material = [reason for reason in reasons if reason not in {
+        "duplicate_separator_collapsed", "filename_appended_to_destination_directory",
+        "family_layer_omitted",
+    }]
     return {
         "file_id": file_id, "filename": filename, "source_type": source_type,
         "path": path, "normalized_path": target,
