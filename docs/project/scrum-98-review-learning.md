@@ -99,3 +99,9 @@ De oorspronkelijke invoer, de genormaliseerde waarde, het type invoer
 (`directory` of `full_path`), de aangeboden suggestie en de menselijke keuze
 worden append-only vastgelegd. Dit is learning evidence; het activeert geen
 regel, past geen model aan en wijzigt of verplaatst geen bestand.
+
+Bij een wijziging van categorie of familie berekent de portal bovendien direct
+een nieuw CORE-doelpad als read-only preview. De preview wordt pas onderdeel
+van het append-only oordeel wanneer de reviewer de classificatie opslaat. Is
+er al een handmatig doelpad ingevuld, dan blijft dat zichtbaar en leidend; de
+live preview overschrijft menselijke invoer nooit.

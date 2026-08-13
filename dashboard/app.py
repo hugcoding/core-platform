@@ -455,6 +455,42 @@ def workset_target_path_suggestion(file_id: int, value: str = Query(..., min_len
         raise HTTPException(status_code=503, detail=f"path suggestion unavailable: {type(exc).__name__}") from exc
 
 
+@app.get("/api/v1/workset/{file_id}/target-path-preview")
+def workset_target_path_preview(
+    file_id: int, category: str = Query(..., min_length=1, max_length=80),
+    family: str = Query(..., min_length=1, max_length=80),
+):
+    """Recalculate a target proposal from unsaved portal selections."""
+    valid_categories = {item["code"] for item in taxonomy()["categories"]}
+    valid_families = {item["code"] for item in taxonomy()["families"]}
+    if category not in valid_categories or family not in valid_families:
+        raise HTTPException(status_code=422, detail="invalid category or document family")
+    try:
+        with db_connect() as conn:
+            matches = query_all(
+                conn, WORKSET_SELECT + " WHERE w.file_id = %s AND w.workset_status = 'active'", (file_id,),
+            )
+        if not matches:
+            raise HTTPException(status_code=409, detail="file is no longer an active workset candidate")
+        row = matches[0]
+        preview = propose_target({
+            **row, "accepted_category": category,
+            "accepted_document_family": family,
+            "accepted_lifecycle": row.get("lifecycle"),
+        })
+        return {
+            "category_code": category, "document_family_code": family,
+            "suggested_target_path": preview["suggested_target_path"],
+            "proposal_confidence": preview["proposal_confidence"],
+            "proposal_reason_code": preview["proposal_reason_code"],
+            "mode": "live_preview", "database_writes": False, "file_mutations": False,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"target path preview unavailable: {type(exc).__name__}") from exc
+
+
 @app.get("/api/v1/workset/reviews/export")
 def export_workset_reviews(format: str = Query("csv", pattern="^(csv|json)$")):
     try:

@@ -114,6 +114,7 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn("privacy_classification", source)
         self.assertIn("propose_privacy", source)
         self.assertIn('target-path-suggestion")', source)
+        self.assertIn('target-path-preview")', source)
         self.assertIn("target_path_suggestion_decision", source)
 
     def test_target_path_suggestion_is_advisory(self):
@@ -130,6 +131,23 @@ class DashboardWorksetTests(unittest.TestCase):
             )
         self.assertTrue(result["requires_confirmation"])
         self.assertEqual("advisory_only", result["mode"])
+        self.assertFalse(result["file_mutations"])
+
+    def test_changed_category_and_family_recalculate_read_only_preview(self):
+        connection = mock.MagicMock()
+        connection.__enter__.return_value = connection
+        row = {
+            "file_id": 1, "filename": "aangifte.pdf", "extension": "pdf",
+            "path": "/volume1/data/import/aangifte.pdf", "workset_status": "active",
+            "lifecycle": None,
+        }
+        with mock.patch.object(self.dashboard, "db_connect", return_value=connection), mock.patch.object(
+            self.dashboard, "query_all", return_value=[row],
+        ):
+            result = self.dashboard.workset_target_path_preview(1, "finance", "tax_documents")
+        self.assertEqual("live_preview", result["mode"])
+        self.assertIn("/Geldzaken/Belastingen/aangifte.pdf", result["suggested_target_path"])
+        self.assertFalse(result["database_writes"])
         self.assertFalse(result["file_mutations"])
 
     def test_review_is_append_only_and_does_not_update_model_or_file(self):
