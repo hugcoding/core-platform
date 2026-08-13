@@ -172,7 +172,12 @@ def propose_target(row: dict[str, Any]) -> dict[str, Any]:
         if category == "work_career" and "sollicit" in _evidence(row):
             trajectory_code, trajectory_label = application_trajectory(row)
             parts.append("Sollicitaties")
-            if trajectory_code not in {"general_work", "general_preparation", "general_applications"}:
+            generic_trajectory = trajectory_code in {
+                "general_work", "general_preparation", "general_applications", "algemeen", "general"
+            } or trajectory_label.strip().casefold() in {
+                "algemeen", "algemeen werk", "algemene sollicitaties", "general"
+            }
+            if not generic_trajectory:
                 parts.append(trajectory_label)
             else:
                 path_reductions.append("generic_trajectory_omitted")
