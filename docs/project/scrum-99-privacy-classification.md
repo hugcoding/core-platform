@@ -45,6 +45,13 @@ flowchart LR
 De volledige historie en CSV/JSON-export bevatten zowel voorstel als menselijk
 oordeel. De huidige model- of ruleversie wordt niet automatisch aangepast.
 
+De read-only opdracht `core workset review-learning-analyze --minimum-support 3
+--dry-run` groepeert de laatste privacybeoordeling per document tot inactieve
+kandidaatregels. Support, agreement en tegenvoorbeelden maken zichtbaar of een
+patroon voldoende consistent is voor latere menselijke refinement. De analyse
+activeert geen regel, traint geen model en kan privacy `Hoog` niet automatisch
+verlagen.
+
 ## Deployment in acceptatie
 
 Na merge en pull:
@@ -58,4 +65,3 @@ docker compose up -d --build dashboard
 Rollback verwijdert alleen privacyreviewevents en privacykolommen; bestaande
 doelpad-, categorie- en familiehistorie blijft behouden. Gebruik rollback daarom
 alleen wanneer verlies van de nieuwe privacyoordelen expliciet aanvaardbaar is.
-
