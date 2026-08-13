@@ -1,8 +1,21 @@
 import unittest
+import subprocess
+import sys
+from pathlib import Path
 from core.organization.learning_context import build_llm_learning_context
 from core.organization.review_learning import analyze_reviews
 
 class ReviewLearningTests(unittest.TestCase):
+    def test_runtime_imports_core_when_started_by_script_path(self):
+        root = Path(__file__).resolve().parents[1]
+        completed = subprocess.run(
+            [sys.executable, str(root / "tools/runtime/review_learning_analyze.py"), "--help"],
+            cwd=Path(__file__).resolve().parent,
+            capture_output=True, text=True,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertIn("--minimum-support", completed.stdout)
+
     def test_repeated_human_corrections_become_inactive_candidate(self):
         rows = [{"file_id": i, "decision": "accepted", "proposal_document_family_code": "general",
                  "corrected_category_code": "home_living", "corrected_document_family_code": "vve_documents",

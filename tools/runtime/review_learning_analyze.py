@@ -8,15 +8,19 @@ import io
 import json
 import os
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from core.exports.csv_format import write_dict_rows
 from core.organization.review_learning import analyze_reviews
 from core.organization.learning_context import build_llm_learning_context
 
-
-ROOT = Path(__file__).resolve().parents[2]
 QUERY = """
 COPY (
   SELECT id, file_id, decision, proposal_category_code,
