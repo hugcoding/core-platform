@@ -1,6 +1,6 @@
 import unittest
 from core.organization.learning_context import build_llm_learning_context
-from core.organization.review_learning import analyze_privacy_reviews, analyze_reviews
+from core.organization.review_learning import analyze_privacy_reviews, analyze_proposal_quality, analyze_reviews
 
 class ReviewLearningTests(unittest.TestCase):
     def test_repeated_human_corrections_become_inactive_candidate(self):
@@ -53,3 +53,26 @@ class ReviewLearningTests(unittest.TestCase):
         candidate = analyze_privacy_reviews(rows, minimum_support=2)[0]
         self.assertEqual(2, candidate["support"])
         self.assertEqual(1.0, candidate["agreement"])
+
+    def test_proposal_quality_checks_category_family_and_path(self):
+        rows = [
+            {"file_id": 1, "review_type": "target_path", "decision": "accepted",
+             "proposal_category_code": "work", "corrected_category_code": "work",
+             "proposal_document_family_code": "general", "corrected_document_family_code": "cv",
+             "proposal_target_path": "/data/Algemeen/a.pdf", "proposed_target_path": "/data/CV/a.pdf",
+             "filename": "a.pdf"},
+            {"file_id": 2, "review_type": "target_path", "decision": "accepted",
+             "proposal_category_code": "work", "corrected_category_code": "work",
+             "proposal_document_family_code": "cv", "corrected_document_family_code": "cv",
+             "proposal_target_path": "/data/CV/b.pdf", "proposed_target_path": "",
+             "filename": "b.pdf"},
+            {"file_id": 3, "review_type": "target_path", "decision": "rejected",
+             "proposal_category_code": "work", "proposal_document_family_code": "general",
+             "proposal_target_path": "/data/Algemeen/c.pdf", "filename": "c.pdf"},
+        ]
+        by_dimension = {item["dimension"]: item for item in analyze_proposal_quality(rows)}
+        self.assertEqual(2, by_dimension["category"]["accepted_unchanged"])
+        self.assertEqual(1, by_dimension["category"]["rejected"])
+        self.assertEqual(1, by_dimension["document_family"]["accepted_corrected"])
+        self.assertEqual(1, by_dimension["target_path"]["accepted_corrected"])
+        self.assertEqual(2, by_dimension["target_path"]["counterexample_count"])

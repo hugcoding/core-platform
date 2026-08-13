@@ -43,3 +43,20 @@ wordt niets automatisch geactiveerd. Een kandidaat mag privacy `Hoog` nooit
 automatisch verlagen. De analyse schrijft JSON, een algemeen CSV-bestand, een
 afzonderlijk privacy-CSV-bestand en Markdown; database, bestanden, regels en
 modellen blijven ongewijzigd.
+
+## Controle van CORE-voorstellen
+
+De analyse meet daarnaast afzonderlijk de kwaliteit van categorie-, familie- en
+doelpadvoorstellen. Per onderdeel toont het rapport hoeveel laatste menselijke
+oordelen:
+
+- het voorstel ongewijzigd bevestigden;
+- een gecorrigeerde waarde bevatten;
+- het voorstel afwezen;
+- werden uitgesteld of overgeslagen.
+
+Agreement wordt berekend over werkelijk beoordeelde voorstellen. Maximaal vijf
+tegenvoorbeelden tonen document, CORE-voorstel en menselijke correctie. De
+vaste export `review-learning-proposal-quality-latest.csv` maakt deze controle
+ook zonder het brede JSON-rapport toegankelijk. Dit is kwaliteitsmeting en
+activeert geen categorie-, familie- of doelpadregel.

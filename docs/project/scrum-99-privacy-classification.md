@@ -52,6 +52,11 @@ patroon voldoende consistent is voor latere menselijke refinement. De analyse
 activeert geen regel, traint geen model en kan privacy `Hoog` niet automatisch
 verlagen.
 
+Dezelfde analyse controleert tevens of de bestaande CORE-voorstellen voor
+categorie, documentfamilie en doelpad ongewijzigd zijn bevestigd, gecorrigeerd
+of afgewezen. Zo wordt privacy-learning niet los beoordeeld van de kwaliteit
+van de rest van het documentvoorstel.
+
 ## Deployment in acceptatie
 
 Na merge en pull:
