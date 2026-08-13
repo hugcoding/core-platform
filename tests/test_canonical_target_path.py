@@ -13,8 +13,10 @@ class CanonicalTargetPathTests(unittest.TestCase):
                                  "accepted_document_family": "Sollicitaties"})
         self.assertEqual("work_career", result["category_code"])
         self.assertEqual("Werk & Loopbaan", result["category_label"])
-        self.assertEqual("/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Sollicitaties/Algemeen werk/Algemeen/brief.docx",
+        self.assertEqual("/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Sollicitaties/brief.docx",
                          result["suggested_target_path"])
+        self.assertEqual(["generic_trajectory_omitted", "generic_family_omitted"],
+                         result["path_reduction_reason_codes"])
         self.assertFalse(result["file_mutations"])
 
     def test_administration_is_never_a_top_level_category(self):

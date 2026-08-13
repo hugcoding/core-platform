@@ -164,15 +164,27 @@ def propose_target(row: dict[str, Any]) -> dict[str, Any]:
         zone, reason, confidence = "quarantine", "accepted_quarantine_classification", "high"
     filename = safe_component(str(row.get("filename") or ""), fallback=f"Bestand {row.get('file_id', '')}")
     parts = [TARGET_ROOT, ZONE_LABELS[zone]]
+    path_reductions = []
     if zone == "quarantine":
         parts.append(family)
     elif category != "needs_review":
         parts.append(CATEGORY_LABELS[category])
         if category == "work_career" and "sollicit" in _evidence(row):
             trajectory_code, trajectory_label = application_trajectory(row)
-            parts.extend(("Sollicitaties", trajectory_label, family))
+            parts.append("Sollicitaties")
+            if trajectory_code not in {"general_work", "general_preparation", "general_applications"}:
+                parts.append(trajectory_label)
+            else:
+                path_reductions.append("generic_trajectory_omitted")
+            if family_code != "general":
+                parts.append(family)
+            else:
+                path_reductions.append("generic_family_omitted")
         else:
-            parts.append(family)
+            if family_code != "general":
+                parts.append(family)
+            else:
+                path_reductions.append("generic_family_omitted")
     parts.append(filename)
     return {
         **row, "contract_version": CONTRACT_VERSION, "contract_checksum": contract_checksum(),
@@ -182,6 +194,7 @@ def propose_target(row: dict[str, Any]) -> dict[str, Any]:
         "document_family_code": family_code, "folder_label": family,
         "suggested_target_path": str(PurePosixPath(*parts)),
         "proposal_reason_code": reason, "proposal_confidence": confidence,
+        "path_reduction_reason_codes": path_reductions,
         "database_writes": False, "file_mutations": False,
     }
 

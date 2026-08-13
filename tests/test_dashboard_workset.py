@@ -138,6 +138,7 @@ class DashboardWorksetTests(unittest.TestCase):
                 "file_id": 1, "idempotency_key": str(uuid.uuid4()),
                 "decision": "accepted", "corrected_category_code": "work_career",
                 "corrected_document_family_code": "vacancies",
+                "proposed_target_path": "/volume1/data/Persoonlijk/Actief//Werk/file.pdf",
             })
         sql = cursor.execute.call_args_list[0].args[0]
         self.assertIn("INSERT INTO public.document_review_events", sql)
@@ -148,6 +149,8 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertEqual("accepted", result["decision"])
         self.assertEqual("work_career", result["corrected_category_code"])
         self.assertEqual("vacancies", result["effective_target_proposal"]["document_family_code"])
+        self.assertEqual("/volume1/data/Persoonlijk/Actief/Werk/file.pdf", result["proposed_target_path"])
+        self.assertTrue(result["target_path_normalized"])
 
 
 if __name__ == "__main__":

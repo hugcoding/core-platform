@@ -75,8 +75,10 @@ Actief/Werk & Loopbaan/Sollicitaties/<organisatie of traject>/<documentfamilie>/
 
 De ondersteunde families zijn vooralsnog `Vacatures`, `CV's`,
 `Motivatiebrieven`, `Gespreksvoorbereiding` en `Ondersteunende analyses`.
-Onvoldoende specifieke documenten blijven in `Algemeen`; dat is zichtbaar
-restwerk en geen stilzwijgende classificatie.
+`Algemeen` blijft een technische fallbackclassificatie, maar veroorzaakt geen
+betekenisloze fysieke maplaag. Generieke trajecten en families worden uit het
+doelpad weggelaten met auditbare reason-codes zoals
+`generic_trajectory_omitted` en `generic_family_omitted`.
 
 ## Uitvoeren in acceptatie
 
