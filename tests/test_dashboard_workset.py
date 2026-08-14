@@ -128,6 +128,7 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn("proposal_evidence", source)
         self.assertIn("apply_similar_review_proposals", source)
         self.assertIn('@app.post("/api/v1/workset/ai-runs")', source)
+        self.assertIn("%s::uuid[]", source)
 
     def test_similarity_evidence_requires_matching_accepted_source_review(self):
         connection = mock.MagicMock()

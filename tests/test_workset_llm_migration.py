@@ -17,6 +17,14 @@ class WorksetLlmMigrationTests(unittest.TestCase):
         self.assertIn("DROP TABLE IF EXISTS public.workset_ai_runs", rollback)
         self.assertNotIn("DROP TABLE IF EXISTS public.document_review_events", rollback)
 
+    def test_dashboard_runtime_can_read_read_only_nas_documents(self):
+        dockerfile = (ROOT / "Dockerfile.dashboard").read_text("utf-8")
+        self.assertNotIn("USER 65534:65534", dockerfile)
+        compose = (ROOT / "docker-compose.yml").read_text("utf-8")
+        self.assertIn('"/volume1:/volume1:ro"', compose)
+        self.assertIn("read_only: true", compose)
+        self.assertIn('no-new-privileges:true', compose)
+
 
 if __name__ == "__main__":
     unittest.main()

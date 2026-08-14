@@ -801,7 +801,7 @@ def create_workset_ai_run(payload: dict[str, Any] = Body(...)):
                 cur.execute("""INSERT INTO public.workset_ai_proposals
                     (run_id,file_id,content_sha256,status,category_code,family_code,lifecycle,privacy_advice,
                      confidence,relation_kind,related_file_ids,reason,example_review_ids,extraction_metadata)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) RETURNING id""",
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::bigint[],%s,%s::uuid[],%s::jsonb) RETURNING id""",
                     (run_id,item["file_id"],item["content_sha256"],item["status"],item["category_code"],
                      item["family_code"],item["lifecycle"],item["privacy_advice"],item["confidence"],
                      item["relation_kind"],item["related_file_ids"],item["reason"],item["example_review_ids"],

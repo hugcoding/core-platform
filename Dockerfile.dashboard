@@ -7,7 +7,9 @@ COPY dashboard ./dashboard
 COPY core ./core
 COPY project/prompts ./project/prompts
 
-USER 65534:65534
+# The portal performs explicitly requested local extraction from a read-only NAS
+# mount. Synology ACLs deny these files to nobody(65534); container/root remains
+# constrained by read_only, no-new-privileges and the read-only /volume1 bind.
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD wget -q -O /dev/null http://127.0.0.1:8080/api/health || exit 1
