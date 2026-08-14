@@ -101,8 +101,13 @@ append-only onderdeel van de volledige reviewhistorie.
 inhoudelijke categorie. Wanneer het doelpadcontract nog geen categorie vindt,
 maakt de portal een eerste laag-confidence voorstel uit verklaarbare pad- en
 bestandsnaamsignalen. Zonder bruikbaar signaal gebruikt de persoonlijke pilot
-expliciet `Persoonlijk & Identiteit` als lage-confidence scopefallback. `Later`
-blijft de manier om geen inhoudelijk oordeel te geven.
+expliciet `Persoonlijk & Identiteit` als lage-confidence scopefallback.
+
+Het overzicht toont in de prominente reviewkaart het aantal documenten binnen
+de actuele filters. Lifecycleconflicten blijven als afzonderlijke kleinere
+indicator zichtbaar. Reviewbesluiten gebruiken onderscheidende labels:
+`Uitgesteld` betekent later opnieuw beoordelen; `Niet beoordelen` betekent dat
+het document bewust buiten deze beoordelingsstroom is gehouden.
 
 ```mermaid
 flowchart LR
