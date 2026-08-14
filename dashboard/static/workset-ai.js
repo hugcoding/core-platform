@@ -8,7 +8,7 @@ function selectedAiDocuments(){
 function aiFilterSnapshot(){return{
   status:ws('worksetStatus').value,review_state:ws('worksetReview').value,
   decision:ws('worksetDecision').value,extension:ws('worksetExtension').value,
-  family:ws('worksetFamily').value,search:ws('worksetSearch').value.trim()
+  family:ws('worksetFamily').value,sort:ws('worksetSort').value,search:ws('worksetSearch').value.trim()
 }}
 function renderStoredAiProposals(){
   state.documents.forEach(doc=>{

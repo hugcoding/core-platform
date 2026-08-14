@@ -212,3 +212,17 @@ Database-uitbreiding:
 docker exec -i postgres psql -v ON_ERROR_STOP=1 -U hugo -d nasdb_test \
   < database/migrations/20260814_add_workset_llm_assistant.sql
 ```
+
+### Contextafhankelijke sortering
+
+De portaalstand **Slimme standaard** sluit aan op de actuele handeling:
+
+- nog te beoordelen documenten staan op nieuwste relevante documentactiviteit;
+- beoordeelde documenten en afzonderlijke besluitfilters staan op nieuwste
+  menselijke beoordeling;
+- bestandsnaam en `file_id` zijn vaste tie-breakers voor stabiele paginering.
+
+De gebruiker kan dit overschrijven met **Recent actief**, **Laatst beoordeeld**,
+**Bestandsnaam A–Z** of **Bestandsnaam Z–A**. Alleen vooraf toegestane
+sorteercodes worden door de API omgezet naar SQL; vrije SQL-invoer is niet
+mogelijk.
