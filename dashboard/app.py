@@ -271,6 +271,29 @@ WORKSET_SELECT = """
 """
 
 
+def workset_order_by(
+    sort: str, review_state: str, review_decision: str, review_storage: bool,
+) -> str:
+    effective = sort
+    if effective == "context":
+        effective = (
+            "review_desc"
+            if review_storage and (review_state == "reviewed" or review_decision != "all")
+            else "activity_desc"
+        )
+    orders = {
+        "activity_desc": "w.last_qualifying_activity_at DESC NULLS LAST, LOWER(w.filename), w.filename, w.file_id",
+        "review_desc": (
+            "r.created_at DESC NULLS LAST, LOWER(w.filename), w.filename, w.file_id"
+            if review_storage else
+            "w.last_qualifying_activity_at DESC NULLS LAST, LOWER(w.filename), w.filename, w.file_id"
+        ),
+        "filename_asc": "LOWER(w.filename), w.filename, w.file_id",
+        "filename_desc": "LOWER(w.filename) DESC, w.filename DESC, w.file_id",
+    }
+    return " ORDER BY " + orders[effective]
+
+
 def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
     item = {key: iso(value) for key, value in row.items()}
     item["smb_path"] = smb_path(str(row["path"]))
@@ -350,6 +373,7 @@ def workset(
     family: str = Query("all", max_length=80, pattern="^[a-z0-9_'-]{1,80}$|^all$"),
     review_state: str = Query("pending", pattern="^(pending|reviewed|all)$"),
     review_decision: str = Query("all", pattern="^(accepted|rejected|needs_review|passed|all)$"),
+    sort: str = Query("context", pattern="^(context|activity_desc|review_desc|filename_asc|filename_desc)$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -423,8 +447,9 @@ def workset(
             rows = query_all(conn, WORKSET_SELECT.replace(
                 "FROM public.v_active_document_workset w",
                 review_select + privacy_select + ai_select + " FROM public.v_active_document_workset w"
-            ) + review_join + privacy_join + ai_join + where +
-                " ORDER BY w.last_qualifying_activity_at DESC NULLS LAST, w.filename, w.file_id",
+            ) + review_join + privacy_join + ai_join + where + workset_order_by(
+                sort, review_state, review_decision, review_storage,
+            ),
                 tuple(params),
             )
     except Exception as exc:

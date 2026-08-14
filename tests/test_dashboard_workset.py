@@ -157,6 +157,30 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn("'workset:rendered',renderSimilarDocumentProposals", similar)
         self.assertNotIn("MutationObserver", workset + ai + similar)
 
+    def test_context_sort_uses_review_time_for_reviewed_documents(self):
+        order = self.dashboard.workset_order_by("context", "reviewed", "all", True)
+        self.assertIn("r.created_at DESC NULLS LAST", order)
+        self.assertTrue(order.endswith("LOWER(w.filename), w.filename, w.file_id"))
+
+    def test_context_sort_uses_activity_for_open_documents(self):
+        order = self.dashboard.workset_order_by("context", "pending", "all", True)
+        self.assertIn("w.last_qualifying_activity_at DESC NULLS LAST", order)
+        self.assertTrue(order.endswith("LOWER(w.filename), w.filename, w.file_id"))
+
+    def test_explicit_filename_sort_is_deterministic(self):
+        ascending = self.dashboard.workset_order_by("filename_asc", "pending", "all", True)
+        descending = self.dashboard.workset_order_by("filename_desc", "pending", "all", True)
+        self.assertEqual(" ORDER BY LOWER(w.filename), w.filename, w.file_id", ascending)
+        self.assertIn("LOWER(w.filename) DESC", descending)
+        self.assertTrue(descending.endswith("w.file_id"))
+
+    def test_workset_portal_exposes_sort_control(self):
+        html = (ROOT / "dashboard" / "static" / "workset.html").read_text(encoding="utf-8")
+        script = (ROOT / "dashboard" / "static" / "workset.js").read_text(encoding="utf-8")
+        self.assertIn('id="worksetSort"', html)
+        self.assertIn('value="context"', html)
+        self.assertIn("sort:ws('worksetSort').value", script)
+
     def test_similarity_evidence_requires_matching_accepted_source_review(self):
         connection = mock.MagicMock()
         evidence = {
