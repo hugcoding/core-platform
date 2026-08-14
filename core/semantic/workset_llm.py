@@ -11,12 +11,27 @@ from core.semantic.extraction import extract_document
 
 
 SCHEMA_VERSION = "workset-llm-proposal-v1"
-PROMPT_VERSION = "scrum-101-workset-llm-v1"
+PROMPT_VERSION = "scrum-101-workset-llm-v2"
 MAX_DOCUMENTS = 5
 MAX_TEXT_CHARACTERS = 12_000
 LIFECYCLES = {"active", "archive", "needs_review"}
 PRIVACY = {"low", "medium", "high"}
 RELATIONS = {"none", "source_document", "exported_representation", "version", "related_document"}
+
+
+def reason_is_dutch(reason: str) -> bool:
+    words = {word.strip(".,:;!?()[]").lower() for word in reason.split()}
+    dutch = words & {
+        "de", "het", "een", "van", "voor", "met", "wordt", "bevat", "omdat",
+        "naar", "geen", "deze", "dit", "menselijke", "gegevens", "bevestigd",
+        "overeenkomt", "gericht", "offerte", "inhoud",
+    }
+    english = words & {
+        "the", "this", "are", "for", "from", "with", "contains", "because",
+        "and", "human", "data", "aligns", "related", "current", "offer",
+        "explicitly", "indicated", "without",
+    }
+    return not (len(english) >= 2 and len(english) > len(dutch))
 
 
 def extract_bounded_context(path: str) -> dict[str, Any]:
@@ -91,6 +106,8 @@ def validate_proposal(content: str, file_id: int) -> dict[str, Any]:
         return abstention(file_id, "invalid_confidence_or_relation")
     if not isinstance(reason, str) or not reason.strip() or len(reason) > 600:
         return abstention(file_id, "invalid_reason")
+    if not reason_is_dutch(reason):
+        return abstention(file_id, "reason_not_dutch")
     if not isinstance(related, list) or len(related) > 5:
         return abstention(file_id, "invalid_related_files")
     try:
