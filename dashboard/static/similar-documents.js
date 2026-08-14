@@ -20,6 +20,4 @@ function renderSimilarDocumentProposals(){
   });
 }
 
-new MutationObserver(renderSimilarDocumentProposals).observe(
-  document.getElementById('worksetDocuments'), {childList:true,subtree:true}
-);
+document.addEventListener('workset:rendered',renderSimilarDocumentProposals);

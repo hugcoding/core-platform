@@ -130,6 +130,33 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn('@app.post("/api/v1/workset/ai-runs")', source)
         self.assertIn("%s::uuid[]", source)
 
+    def test_stored_ai_proposal_keeps_file_identity_for_portal_refresh(self):
+        row = {
+            "file_id": 42,
+            "path": "/volume1/data/import/document.pdf",
+            "filename": "document.pdf",
+            "extension": "pdf",
+            "workset_status": "inactive",
+            "ai_proposal_id": uuid.uuid4(),
+            "ai_run_id": uuid.uuid4(),
+            "ai_status": "abstained",
+            "ai_confidence": "low",
+            "ai_relation_kind": "none",
+            "ai_reason": "insufficient_evidence",
+        }
+        result = self.dashboard.enrich_workset_row(row)
+        self.assertEqual(42, result["ai_proposal"]["file_id"])
+
+    def test_portal_enhancements_follow_explicit_render_event(self):
+        workset = (ROOT / "dashboard" / "static" / "workset.js").read_text(encoding="utf-8")
+        ai = (ROOT / "dashboard" / "static" / "workset-ai.js").read_text(encoding="utf-8")
+        similar = (ROOT / "dashboard" / "static" / "similar-documents.js").read_text(encoding="utf-8")
+        self.assertIn("new CustomEvent('workset:rendered')", workset)
+        self.assertIn("'workset:rendered',decorateBulkCards", workset)
+        self.assertIn("'workset:rendered',updateAiButton", ai)
+        self.assertIn("'workset:rendered',renderSimilarDocumentProposals", similar)
+        self.assertNotIn("MutationObserver", workset + ai + similar)
+
     def test_similarity_evidence_requires_matching_accepted_source_review(self):
         connection = mock.MagicMock()
         evidence = {
