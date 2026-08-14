@@ -759,7 +759,7 @@ def create_workset_ai_run(payload: dict[str, Any] = Body(...)):
         )
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=503, detail=f"invalid local LLM configuration: {exc}") from exc
-    prompt = json.loads((Path(__file__).parents[1] / "project/prompts/scrum-101-workset-llm-v1.json").read_text("utf-8"))
+    prompt = json.loads((Path(__file__).parents[1] / "project/prompts/scrum-101-workset-llm-v2.json").read_text("utf-8"))
     try:
         with db_connect() as conn:
             if not query_one(conn, "SELECT to_regclass('public.workset_ai_runs') IS NOT NULL AS available")["available"]:

@@ -226,3 +226,18 @@ De gebruiker kan dit overschrijven met **Recent actief**, **Laatst beoordeeld**,
 **Bestandsnaam A–Z** of **Bestandsnaam Z–A**. Alleen vooraf toegestane
 sorteercodes worden door de API omgezet naar SQL; vrije SQL-invoer is niet
 mogelijk.
+
+### Compacte AI-lineage en Nederlandse uitleg
+
+Een geanalyseerd document krijgt een compact **AI**-icoon. De details openen met
+hover of toetsenbordfocus op desktop en met een tik op mobiel. De popover toont
+status, categorie, familie, confidence, reden, privacyadvies, documentrelatie,
+model, promptversie en analysedatum. Het icoon is uitsluitend informatief en
+bevestigt geen voorstel.
+
+Prompt v2 verplicht een korte Nederlandse `reason`. Een duidelijk Engelstalige
+reden wordt server-side afgewezen als `reason_not_dutch` en resulteert in een
+onthouding met menselijke review. Historische Engelstalige redenen blijven voor
+lineage in de database staan, maar krijgen in het portaal een Nederlandse
+melding. Technische codes, modellen en promptversies blijven ongewijzigd
+zichtbaar.

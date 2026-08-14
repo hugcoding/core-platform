@@ -3,7 +3,7 @@ import unittest
 from unittest import mock
 
 from core.semantic.workset_llm import (
-    MAX_DOCUMENTS, build_prompt, extract_bounded_context, validate_proposal,
+    MAX_DOCUMENTS, PROMPT_VERSION, build_prompt, extract_bounded_context, validate_proposal,
 )
 
 
@@ -23,6 +23,7 @@ class WorksetLlmTests(unittest.TestCase):
         self.assertIn("allowed_categories", user)
         self.assertIn("voorbeeld.pdf => category=work_career", user)
         self.assertIn("DOCUMENT_TEXT:\ninhoud", user)
+        self.assertEqual("scrum-101-workset-llm-v2", PROMPT_VERSION)
 
     @mock.patch("core.semantic.workset_llm.extract_document", return_value=(" tekst  met   spaties ", 1))
     def test_extraction_does_not_return_unbounded_text(self, _extract):
@@ -48,6 +49,17 @@ class WorksetLlmTests(unittest.TestCase):
             "relation_kind": "none", "related_file_ids": [], "reason": "x",
         }), 4)
         self.assertTrue(proposal["abstained"])
+
+    def test_clearly_english_reason_abstains(self):
+        proposal = validate_proposal(json.dumps({
+            "file_id": 4, "abstained": False, "category_code": "work_career",
+            "family_code": "motivation_letters", "lifecycle": "active",
+            "privacy_advice": "medium", "confidence": "high",
+            "relation_kind": "none", "related_file_ids": [],
+            "reason": "This document contains data from the current offer and aligns with human examples.",
+        }), 4)
+        self.assertTrue(proposal["abstained"])
+        self.assertEqual("reason_not_dutch", proposal["reason"])
 
 
 if __name__ == "__main__":

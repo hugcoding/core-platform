@@ -1,4 +1,10 @@
 // SCRUM-101: local AI on at most five explicitly selected visible documents.
+function aiReasonInDutch(reason){
+  const known={invalid_confidence_or_relation:'Confidence of documentrelatie was niet betrouwbaar.',reason_not_dutch:'De AI-toelichting voldeed niet aan de verplichte Nederlandse taal.',model_abstained:'De AI vond onvoldoende bewijs.',provider_response_not_valid_json:'De AI gaf geen geldig voorstel terug.',unknown_taxonomy_value:'Het voorstel paste niet binnen de CORE-taxonomie.'};
+  if(known[reason])return known[reason];
+  const english=(String(reason).toLowerCase().match(/\b(the|this|are|for|from|with|contains|because|and|human|aligns|related|current|offer)\b/g)||[]).length;
+  return english>=2?'Deze historische AI-toelichting was niet Nederlandstalig; de oorspronkelijke lineage blijft auditbaar bewaard.':reason;
+}
 function selectedAiDocuments(){
   return visibleBulkCheckboxes().filter(box=>box.checked).map(box=>{
     const panel=box.closest('.document-card').querySelector('.review-panel');
@@ -14,7 +20,7 @@ function renderStoredAiProposals(){
   state.documents.forEach(doc=>{
     if(!doc.ai_proposal)return;
     const panel=document.querySelector(`.review-panel[data-file-id="${doc.file_id}"]`);
-    if(panel&&!panel.closest('.document-card').querySelector('.ai-proposal'))applyAiProposal(doc.ai_proposal);
+    if(panel&&!panel.closest('.document-card').querySelector('.ai-info'))applyAiProposal(doc.ai_proposal);
   });
 }
 function updateAiButton(){
@@ -38,11 +44,20 @@ function applyAiProposal(proposal){
     }
     family.value=proposal.family_code;refreshTargetPathPreview(panel);
   }
-  let card=panel.closest('.document-card').querySelector('.ai-proposal');
-  if(!card){card=document.createElement('aside');card.className='ai-proposal';panel.before(card)}
-  card.innerHTML=proposal.status==='ready'
-    ? `<strong>Lokale AI-voorstel</strong><span>${wsEsc(proposal.confidence)} · ${wsEsc(proposal.relation_kind)}</span><p>${wsEsc(proposal.reason)}</p><small>Privacyadvies ${wsEsc(proposal.privacy_advice)} blijft apart te bevestigen.</small>`
-    : `<strong>Lokale AI onthoudt zich</strong><p>${wsEsc(proposal.reason)}</p>`;
+  const documentCard=panel.closest('.document-card'),top=documentCard.querySelector('.document-top');
+  let info=top.querySelector('.ai-info');
+  if(!info){info=document.createElement('span');info.className='ai-info';top.querySelector('.status-pill').before(info)}
+  const ready=proposal.status==='ready',category=state.taxonomy.categories.find(item=>item.code===proposal.category_code),
+    family=state.taxonomy.families.find(item=>item.code===proposal.family_code),
+    relations={none:'Geen documentrelatie',source_document:'Brondocument',exported_representation:'Geëxporteerde uitvoering',version:'Versie',related_document:'Verwant document'},
+    reason=aiReasonInDutch(proposal.reason);
+  info.className=`ai-info ${ready?'ready':'abstained'}`;
+  info.innerHTML=`<button type="button" class="ai-info-button" aria-expanded="false" aria-label="AI-informatie voor ${wsEsc(doc.filename)}">AI</button>
+    <section class="ai-info-popover" role="tooltip" hidden>
+      <strong>${ready?'AI-voorstel beschikbaar':'AI heeft zich onthouden'}</strong>
+      <dl><dt>Status</dt><dd>${wsEsc(proposal.status)}</dd>${ready?`<dt>Categorie</dt><dd>${wsEsc(category?.label||proposal.category_code)}</dd><dt>Familie</dt><dd>${wsEsc(family?.label||proposal.family_code)}</dd>`:''}<dt>Confidence</dt><dd>${wsEsc(proposal.confidence)}</dd><dt>Reden</dt><dd>${wsEsc(reason)}</dd>${ready?`<dt>Privacyadvies</dt><dd>${wsEsc(proposal.privacy_advice)}</dd><dt>Relatie</dt><dd>${wsEsc(relations[proposal.relation_kind]||proposal.relation_kind)}</dd>`:''}<dt>Model</dt><dd>${wsEsc(proposal.model_id)}</dd><dt>Prompt</dt><dd>${wsEsc(proposal.prompt_version)}</dd><dt>Analyse</dt><dd>${wsEsc(wsDt(proposal.created_at))}</dd></dl>
+      <small>AI-advies; niets is automatisch bevestigd.</small>
+    </section>`;
 }
 async function analyzeSelectedWithAi(){
   const ids=selectedAiDocuments(),button=ws('worksetAiAnalyze'),hint=ws('worksetAiHint');
@@ -56,5 +71,20 @@ async function analyzeSelectedWithAi(){
   finally{button.disabled=false}
 }
 document.addEventListener('change',event=>{if(event.target.closest('.bulk-select'))updateAiButton()});
+document.addEventListener('click',event=>{
+  const button=event.target.closest('.ai-info-button');
+  document.querySelectorAll('.ai-info-button[aria-expanded="true"]').forEach(open=>{
+    if(open!==button){open.setAttribute('aria-expanded','false');open.nextElementSibling.hidden=true}
+  });
+  if(!button)return;
+  const popover=button.nextElementSibling,open=button.getAttribute('aria-expanded')!=='true';
+  button.setAttribute('aria-expanded',String(open));popover.hidden=!open;
+});
+document.addEventListener('keydown',event=>{
+  if(event.key!=='Escape')return;
+  document.querySelectorAll('.ai-info-button[aria-expanded="true"]').forEach(button=>{
+    button.setAttribute('aria-expanded','false');button.nextElementSibling.hidden=true;button.focus();
+  });
+});
 document.addEventListener('workset:rendered',updateAiButton);
 ws('worksetAiAnalyze').addEventListener('click',analyzeSelectedWithAi);

@@ -181,6 +181,17 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn('value="context"', html)
         self.assertIn("sort:ws('worksetSort').value", script)
 
+    def test_ai_lineage_uses_accessible_compact_info_control(self):
+        script = (ROOT / "dashboard" / "static" / "workset-ai.js").read_text(encoding="utf-8")
+        css = (ROOT / "dashboard" / "static" / "workset.css").read_text(encoding="utf-8")
+        self.assertIn('class="ai-info-button"', script)
+        self.assertIn('aria-expanded="false"', script)
+        self.assertIn('role="tooltip"', script)
+        for field in ("confidence", "reason", "privacy_advice", "model_id", "prompt_version", "created_at"):
+            self.assertIn(f"proposal.{field}", script)
+        self.assertIn(".ai-info:hover .ai-info-popover", css)
+        self.assertNotIn("className='ai-proposal'", script)
+
     def test_similarity_evidence_requires_matching_accepted_source_review(self):
         connection = mock.MagicMock()
         evidence = {
