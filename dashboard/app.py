@@ -288,6 +288,7 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
     if row.get("ai_proposal_id"):
         item["ai_proposal"] = {
             "id": str(row["ai_proposal_id"]), "run_id": str(row["ai_run_id"]),
+            "file_id": int(row["file_id"]),
             "status": row.get("ai_status"), "category_code": row.get("ai_category_code"),
             "family_code": row.get("ai_family_code"), "lifecycle": row.get("ai_lifecycle"),
             "privacy_advice": row.get("ai_privacy_advice"), "confidence": row.get("ai_confidence"),

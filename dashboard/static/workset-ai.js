@@ -56,5 +56,5 @@ async function analyzeSelectedWithAi(){
   finally{button.disabled=false}
 }
 document.addEventListener('change',event=>{if(event.target.closest('.bulk-select'))updateAiButton()});
-new MutationObserver(updateAiButton).observe(ws('worksetDocuments'),{childList:true,subtree:true});
+document.addEventListener('workset:rendered',updateAiButton);
 ws('worksetAiAnalyze').addEventListener('click',analyzeSelectedWithAi);
