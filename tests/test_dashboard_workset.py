@@ -181,6 +181,17 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn('value="context"', html)
         self.assertIn("sort:ws('worksetSort').value", script)
 
+    def test_overview_uses_current_filtered_review_count(self):
+        script = (ROOT / "dashboard" / "static" / "workset.js").read_text(encoding="utf-8")
+        self.assertIn("[label,state.filteredTotal,'review','huidige filters']", script)
+        self.assertIn("'Lifecycle beoordelen',state.worksetSummary.needs_review", script)
+        self.assertIn("review==='pending'?'Te beoordelen'", script)
+
+    def test_deferred_and_not_applicable_reviews_have_distinct_labels(self):
+        script = (ROOT / "dashboard" / "static" / "workset.js").read_text(encoding="utf-8")
+        self.assertIn("needs_review:'Uitgesteld'", script)
+        self.assertIn("passed:'Niet beoordelen'", script)
+
     def test_ai_lineage_uses_accessible_compact_info_control(self):
         script = (ROOT / "dashboard" / "static" / "workset-ai.js").read_text(encoding="utf-8")
         css = (ROOT / "dashboard" / "static" / "workset.css").read_text(encoding="utf-8")
