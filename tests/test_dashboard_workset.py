@@ -204,6 +204,30 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn("source_review_event_ids", trajectory)
         self.assertNotIn("MutationObserver", workset + ai + similar + trajectory)
 
+    def test_original_path_is_clickable_with_compact_copy_icon(self):
+        script = (ROOT / "dashboard" / "static" / "workset.js").read_text(encoding="utf-8")
+        css = (ROOT / "dashboard" / "static" / "workset.css").read_text(encoding="utf-8")
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        source = (ROOT / "dashboard" / "app.py").read_text(encoding="utf-8")
+        self.assertIn('/api/v1/workset/${encodeURIComponent(doc.file_id)}/content', script)
+        self.assertIn('class="copy-original-path"', script)
+        self.assertIn('aria-label="Pad kopiëren"', script)
+        self.assertIn("const visiblePath=doc.smb_path||doc.path", script)
+        self.assertIn("card.querySelector(':scope>.copy-path')?.remove()", script)
+        self.assertIn(".original-path-row", css)
+        self.assertIn('@app.get("/api/v1/workset/{file_id}/content")', source)
+        self.assertIn('content_disposition_type="inline"', source)
+        self.assertIn('"/volume1:/volume1:ro"', compose)
+
+    def test_open_document_returns_not_found_for_unknown_file(self):
+        connection = mock.MagicMock(); connection.__enter__.return_value = connection
+        with mock.patch.object(self.dashboard, "db_connect", return_value=connection), mock.patch.object(
+            self.dashboard, "query_all", return_value=[],
+        ):
+            with self.assertRaises(self.dashboard.HTTPException) as raised:
+                self.dashboard.open_workset_document(999)
+        self.assertEqual(404, raised.exception.status_code)
+
     def test_context_sort_uses_review_time_for_reviewed_documents(self):
         order = self.dashboard.workset_order_by("context", "reviewed", "all", True)
         self.assertIn("r.created_at DESC NULLS LAST", order)

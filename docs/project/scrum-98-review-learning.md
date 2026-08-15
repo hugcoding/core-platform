@@ -28,6 +28,16 @@ en eventuele conflicten worden append-only als menselijke learning evidence
 opgeslagen. Dit is uitsluitend een voorstel: CORE hernoemt, verplaatst of
 overschrijft hierbij geen bestand.
 
+## Origineel document openen
+
+Het oorspronkelijke pad wordt als standaard Windows/SMB-pad getoond, bijvoorbeeld
+`\\192.168.68.105\data\...`, en is een klikbare documentlink. CORE leest
+het bestand via de read-only NAS-koppeling en biedt het met `no-store` aan de
+browser aan; PDF opent doorgaans direct en een Office-bestand wordt aan de
+browser of gekoppelde app overgedragen. Alleen bestaande databasebestanden onder
+`/volume1/data` zijn toegestaan. Naast de link staat uitsluitend een compact
+icoon om het SMB-pad te kopiëren.
+
 CORE normaliseert menselijke doelpadvoorstellen vóór opslag. Meerdere `/`
 worden één separator; relatieve segmenten, control characters en paden buiten
 de beheerde roots worden geweigerd. De ruwe invoer blijft naast het

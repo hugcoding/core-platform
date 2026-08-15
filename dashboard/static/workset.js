@@ -147,6 +147,22 @@ function decorateFilenameProposals(){
   });
 }
 document.addEventListener('workset:rendered',decorateFilenameProposals);
+function decorateOriginalDocumentLinks(){
+  document.querySelectorAll('.document-card').forEach(card=>{
+    const main=card.querySelector('.document-main'),source=main?.querySelector(':scope>code');
+    if(!source||main.querySelector('.original-path-row'))return;
+    const doc=state.documents.find(item=>item.path===source.getAttribute('title'));if(!doc)return;
+    const row=document.createElement('div');row.className='original-path-row';
+    const visiblePath=doc.smb_path||doc.path;
+    row.innerHTML=`<a href="/api/v1/workset/${encodeURIComponent(doc.file_id)}/content" target="_blank" rel="noopener noreferrer" title="Origineel document openen">${wsEsc(visiblePath)}</a><button type="button" class="copy-original-path" data-path="${wsEsc(visiblePath)}" aria-label="Pad kopiëren" title="Pad kopiëren">⧉</button>`;
+    source.replaceWith(row);card.querySelector(':scope>.copy-path')?.remove();
+  });
+}
+document.addEventListener('workset:rendered',decorateOriginalDocumentLinks);
+document.addEventListener('click',async event=>{
+  const button=event.target.closest('.copy-original-path');if(!button)return;
+  try{await copyText(button.dataset.path);button.classList.add('copied');button.title='Pad gekopieerd';button.setAttribute('aria-label','Pad gekopieerd');setTimeout(()=>{button.classList.remove('copied');button.title='Pad kopiëren';button.setAttribute('aria-label','Pad kopiëren')},1400)}catch(error){button.title='Kopiëren mislukt'}
+});
 ws('bulkSelectAll').addEventListener('change',event=>{visibleBulkCheckboxes().forEach(box=>box.checked=event.target.checked);updateBulkControls()});
 ws('bulkReviewOpen').addEventListener('click',openBulkReview);ws('bulkReviewConfirm').addEventListener('click',confirmBulkReview);
 ws('worksetDocuments').addEventListener('change',event=>{if(event.target.closest('.bulk-select'))updateBulkControls()});

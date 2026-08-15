@@ -141,6 +141,34 @@ def workset_page():
     return FileResponse(APP_DIR / "static" / "workset.html")
 
 
+@app.get("/api/v1/workset/{file_id}/content")
+def open_workset_document(file_id: int):
+    """Open original content from the read-only NAS mount; never mutate it."""
+    try:
+        with db_connect() as conn:
+            rows = query_all(conn, """
+                SELECT id, path, filename FROM public.files
+                WHERE id = %s AND deleted_at IS NULL
+            """, (file_id,))
+        if not rows:
+            raise HTTPException(status_code=404, detail="document not found")
+        row = rows[0]
+        root = Path("/volume1/data").resolve()
+        source = Path(str(row["path"])).resolve()
+        if source == root or root not in source.parents:
+            raise HTTPException(status_code=403, detail="document is outside the managed data root")
+        if not source.is_file():
+            raise HTTPException(status_code=404, detail="document is unavailable on storage")
+        return FileResponse(
+            source, filename=str(row["filename"]), content_disposition_type="inline",
+            headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"document unavailable: {type(exc).__name__}") from exc
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "service": "core-pulse", "uptime_seconds": round(time.monotonic() - STARTED)}
