@@ -8,7 +8,7 @@ import re
 import shutil
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -308,6 +308,20 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
     item["privacy_source"] = (
         "human_review" if row.get("latest_privacy_classification") else "core_rule_proposal"
     )
+    item["nominations"] = {
+        "archive": ({
+            "id": str(row["archive_nomination_id"]),
+            "review_at": iso(row.get("archive_review_at")),
+            "reason": row.get("archive_nomination_reason"),
+            "policy_version": row.get("archive_policy_version"),
+        } if row.get("archive_nomination_id") else None),
+        "deletion": ({
+            "id": str(row["deletion_nomination_id"]),
+            "review_at": iso(row.get("deletion_review_at")),
+            "reason": row.get("deletion_nomination_reason"),
+            "policy_version": row.get("deletion_policy_version"),
+        } if row.get("deletion_nomination_id") else None),
+    }
     if row.get("ai_proposal_id"):
         item["ai_proposal"] = {
             "id": str(row["ai_proposal_id"]), "run_id": str(row["ai_run_id"]),
@@ -373,6 +387,7 @@ def workset(
     family: str = Query("all", max_length=80, pattern="^[a-z0-9_'-]{1,80}$|^all$"),
     review_state: str = Query("pending", pattern="^(pending|reviewed|all)$"),
     review_decision: str = Query("all", pattern="^(accepted|rejected|needs_review|passed|all)$"),
+    nomination: str = Query("all", pattern="^(all|archive|deletion|none)$"),
     sort: str = Query("context", pattern="^(context|activity_desc|review_desc|filename_asc|filename_desc)$"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -444,10 +459,32 @@ def workset(
             ai_join = """
                 LEFT JOIN public.v_latest_workset_ai_proposal a ON a.file_id = w.file_id
             """ if ai_storage else ""
+            nomination_storage = bool(query_one(
+                conn, "SELECT to_regclass('public.v_active_document_lifecycle_nominations') IS NOT NULL AS available"
+            )["available"])
+            nomination_select = """
+                , na.id AS archive_nomination_id, na.review_at AS archive_review_at,
+                  na.reason AS archive_nomination_reason, na.policy_version AS archive_policy_version,
+                  nd.id AS deletion_nomination_id, nd.review_at AS deletion_review_at,
+                  nd.reason AS deletion_nomination_reason, nd.policy_version AS deletion_policy_version
+            """ if nomination_storage else ""
+            nomination_join = """
+                LEFT JOIN public.v_active_document_lifecycle_nominations na
+                  ON na.file_id = w.file_id AND na.nomination_type = 'archive'
+                LEFT JOIN public.v_active_document_lifecycle_nominations nd
+                  ON nd.file_id = w.file_id AND nd.nomination_type = 'deletion'
+            """ if nomination_storage else ""
+            nomination_summary = query_one(conn, """
+                SELECT
+                    COUNT(*) FILTER (WHERE nomination_type = 'archive') AS archive,
+                    COUNT(*) FILTER (WHERE nomination_type = 'deletion') AS deletion
+                FROM public.v_active_document_lifecycle_nominations
+            """) if nomination_storage else {"archive": 0, "deletion": 0}
             rows = query_all(conn, WORKSET_SELECT.replace(
                 "FROM public.v_active_document_workset w",
-                review_select + privacy_select + ai_select + " FROM public.v_active_document_workset w"
-            ) + review_join + privacy_join + ai_join + where + workset_order_by(
+                review_select + privacy_select + ai_select + nomination_select
+                + " FROM public.v_active_document_workset w"
+            ) + review_join + privacy_join + ai_join + nomination_join + where + workset_order_by(
                 sort, review_state, review_decision, review_storage,
             ),
                 tuple(params),
@@ -489,6 +526,12 @@ def workset(
         enriched = [item for item in enriched if item.get("latest_review_id")]
     if review_decision != "all":
         enriched = [item for item in enriched if item.get("latest_review_decision") == review_decision]
+    if nomination == "archive":
+        enriched = [item for item in enriched if item["nominations"]["archive"]]
+    elif nomination == "deletion":
+        enriched = [item for item in enriched if item["nominations"]["deletion"]]
+    elif nomination == "none":
+        enriched = [item for item in enriched if not any(item["nominations"].values())]
     families: dict[str, dict[str, Any]] = {}
     for item in enriched:
         proposal = item.get("target_proposal") or {}
@@ -507,11 +550,13 @@ def workset(
         "mode": "interactive_review" if review_writes_enabled() else "read_only",
         "summary": summary,
         "review_summary": review_summary,
+        "nomination_summary": nomination_summary,
         "filtered_total": count,
         "families": sorted(families.values(), key=lambda value: (value["label"].casefold(), value["code"])),
         "review_taxonomy": taxonomy(),
         "review_writes_enabled": review_writes_enabled(),
         "privacy_review_enabled": review_writes_enabled() and privacy_storage,
+        "nomination_writes_enabled": review_writes_enabled() and nomination_storage,
         "llm_enabled": llm_enabled() and ai_storage,
         "limit": limit,
         "offset": offset,
@@ -519,6 +564,102 @@ def workset(
         "safety": {"database_writes": review_writes_enabled(), "file_mutations": False,
                    "model_updates": False},
     }
+
+
+@app.post("/api/v1/workset/nominations")
+def create_document_lifecycle_nomination(payload: dict[str, Any] = Body(...)):
+    """Append or withdraw a nomination without changing a file or its workset state."""
+    if not review_writes_enabled():
+        raise HTTPException(status_code=403, detail="interactive nominations are disabled")
+    try:
+        file_id = int(payload["file_id"])
+        idempotency_key = str(uuid.UUID(str(payload["idempotency_key"])))
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=422, detail="valid file_id and idempotency key required") from exc
+    nomination_type = str(payload.get("nomination_type") or "")
+    action = str(payload.get("action") or "")
+    reason = str(payload.get("reason") or "manual_portal_nomination").strip()
+    if nomination_type not in {"archive", "deletion"} or action not in {"nominated", "withdrawn"}:
+        raise HTTPException(status_code=422, detail="invalid nomination type or action")
+    if not 1 <= len(reason) <= 1000:
+        raise HTTPException(status_code=422, detail="nomination reason must contain 1 to 1000 characters")
+    environment = os.getenv("CORE_ENVIRONMENT", "acceptance")
+    try:
+        with db_connect() as conn:
+            if not query_one(conn, """
+                SELECT to_regclass('public.document_lifecycle_nomination_events') IS NOT NULL AS available
+            """)["available"]:
+                raise HTTPException(status_code=503, detail="nomination migration is not applied")
+            matches = query_all(conn, WORKSET_SELECT + " WHERE w.file_id = %s", (file_id,))
+            if not matches:
+                raise HTTPException(status_code=409, detail="file is no longer in the document workset")
+            row = matches[0]
+            latest = query_all(conn, """
+                SELECT * FROM public.v_latest_document_lifecycle_nomination
+                WHERE file_id = %s AND nomination_type = %s
+            """, (file_id, nomination_type))
+            previous = latest[0] if latest else None
+            if action == "withdrawn" and (not previous or previous["action"] != "nominated"):
+                raise HTTPException(status_code=409, detail="there is no active nomination to withdraw")
+            policy = query_all(conn, """
+                SELECT id, policy_code, policy_version, configuration
+                FROM public.v_current_policies
+                WHERE policy_code = 'document_retention' AND environment = %s
+            """, (environment,))
+            if not policy:
+                raise HTTPException(status_code=409, detail="no active document retention policy is available")
+            policy = policy[0]
+            try:
+                days = int(policy["configuration"][
+                    "archive_review_days" if nomination_type == "archive" else "deletion_review_days"
+                ])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise HTTPException(status_code=409, detail="active retention policy is incomplete") from exc
+            if days < 0 or days > 3650:
+                raise HTTPException(status_code=409, detail="active retention policy review period is invalid")
+            review_at = (
+                previous["review_at"] if action == "withdrawn"
+                else datetime.now(timezone.utc) + timedelta(days=days)
+            )
+            privacy = propose_privacy(row)["classification"]
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO public.document_lifecycle_nomination_events (
+                        idempotency_key, file_id, content_group_id, content_sha256,
+                        nomination_type, action, reason, policy_id, policy_code,
+                        policy_version, policy_snapshot, review_at, workset_status_snapshot,
+                        category_snapshot, family_snapshot, privacy_snapshot, nominated_by,
+                        supersedes_event_id
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (idempotency_key) DO NOTHING
+                    RETURNING id, created_at, file_id, nomination_type, action
+                """, (
+                    idempotency_key, row["file_id"], row["content_group_id"], row["content_sha256"],
+                    nomination_type, action, reason, policy["id"], policy["policy_code"],
+                    policy["policy_version"], json.dumps(policy["configuration"], ensure_ascii=False),
+                    review_at, row["workset_status"], row.get("category"), row.get("document_family"),
+                    privacy, os.getenv("CORE_REVIEWER", "hugo"), previous["id"] if previous else None,
+                ))
+                created = cur.fetchone()
+                if not created:
+                    cur.execute("""
+                        SELECT id, created_at, file_id, nomination_type, action
+                        FROM public.document_lifecycle_nomination_events WHERE idempotency_key = %s
+                    """, (idempotency_key,))
+                    created = cur.fetchone()
+                if int(created[2]) != file_id or created[3] != nomination_type or created[4] != action:
+                    raise HTTPException(status_code=409, detail="idempotency key belongs to another nomination")
+        return {
+            "status": "stored", "nomination_id": str(created[0]), "created_at": iso(created[1]),
+            "file_id": file_id, "nomination_type": nomination_type, "action": action,
+            "review_at": iso(review_at), "policy_version": policy["policy_version"],
+            "workset_status_unchanged": True, "archive_status_unchanged": True,
+            "file_mutations": False, "model_updates": False,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"nomination unavailable: {type(exc).__name__}") from exc
 
 
 @app.get("/api/v1/workset/{file_id}/reviews")

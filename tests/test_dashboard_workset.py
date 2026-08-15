@@ -77,6 +77,7 @@ class DashboardWorksetTests(unittest.TestCase):
                 {"total": 3, "active": 1, "inactive": 1, "needs_review": 1},
                 {"available": False},
                 {"available": False},
+                {"available": False},
             ],
         ), mock.patch.object(self.dashboard, "query_all", return_value=[row]) as query_all:
             result = self.dashboard.workset(
@@ -104,7 +105,7 @@ class DashboardWorksetTests(unittest.TestCase):
 
     def test_source_limits_mutation_to_append_only_review_events(self):
         source = (ROOT / "dashboard" / "app.py").read_text(encoding="utf-8")
-        self.assertEqual(4, source.count("@app.post"))
+        self.assertEqual(5, source.count("@app.post"))
         self.assertIn("INSERT INTO public.document_review_events", source)
         self.assertNotIn("UPDATE public.", source)
         self.assertNotIn("DELETE FROM", source)
@@ -129,6 +130,49 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn("apply_similar_review_proposals", source)
         self.assertIn('@app.post("/api/v1/workset/ai-runs")', source)
         self.assertIn("%s::uuid[]", source)
+        self.assertIn('@app.post("/api/v1/workset/nominations")', source)
+        self.assertIn("workset_status_unchanged", source)
+        self.assertIn("archive_status_unchanged", source)
+
+    def test_deletion_nomination_is_append_only_and_keeps_workset_active(self):
+        connection = mock.MagicMock()
+        connection.__enter__.return_value = connection
+        cursor = connection.cursor.return_value.__enter__.return_value
+        nomination_id = uuid.uuid4()
+        cursor.fetchone.return_value = (
+            nomination_id, datetime(2026, 8, 15, tzinfo=timezone.utc),
+            1, "deletion", "nominated",
+        )
+        row = {
+            "file_id": 1, "content_group_id": uuid.uuid4(), "content_sha256": "e" * 64,
+            "filename": "document.pdf", "extension": "pdf",
+            "path": "/volume1/data/import/document.pdf", "workset_status": "active",
+            "category": "finance", "document_family": "tax_documents", "sensitivity": None,
+        }
+        policy = {
+            "id": uuid.uuid4(), "policy_code": "document_retention",
+            "policy_version": "retention-nomination-v1",
+            "configuration": {"archive_review_days": 0, "deletion_review_days": 90},
+        }
+        with mock.patch.dict("os.environ", {
+            "CORE_REVIEW_WRITES_ENABLED": "true", "CORE_ENVIRONMENT": "acceptance",
+        }), mock.patch.object(self.dashboard, "db_connect", return_value=connection), mock.patch.object(
+            self.dashboard, "query_one", return_value={"available": True},
+        ), mock.patch.object(
+            self.dashboard, "query_all", side_effect=[[row], [], [policy]],
+        ):
+            result = self.dashboard.create_document_lifecycle_nomination({
+                "file_id": 1, "idempotency_key": str(uuid.uuid4()),
+                "nomination_type": "deletion", "action": "nominated",
+                "reason": "Dubbele tijdelijke export",
+            })
+        sql = cursor.execute.call_args.args[0]
+        self.assertIn("INSERT INTO public.document_lifecycle_nomination_events", sql)
+        self.assertNotIn("UPDATE", sql)
+        self.assertTrue(result["workset_status_unchanged"])
+        self.assertTrue(result["archive_status_unchanged"])
+        self.assertFalse(result["file_mutations"])
+        self.assertEqual("deletion", result["nomination_type"])
 
     def test_stored_ai_proposal_keeps_file_identity_for_portal_refresh(self):
         row = {

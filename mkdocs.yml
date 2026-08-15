@@ -72,6 +72,7 @@ nav:
       - SCRUM-96 Nederlands doelpadcontract: project/scrum-96-dutch-target-path-contract.md
       - SCRUM-98 Review learning: project/scrum-98-review-learning.md
       - SCRUM-99 Privacyclassificatie: project/scrum-99-privacy-classification.md
+      - SCRUM-104 Lifecycle-nominaties: project/scrum-104-lifecycle-nominations.md
       - SCRUM-92 Database-backed policies: project/scrum-92-policy-registry.md
   - Runtime:
       - Scanner: wiki/scanner.md

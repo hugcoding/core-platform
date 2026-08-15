@@ -32,6 +32,10 @@ werkset staat in [SCRUM-89 Actieve werkset pilot](scrum-89-active-workset-pilot.
 De minimale, immutable en OAP-gescheiden opslag van business policies staat in
 [SCRUM-92 Database-backed CORE policies](scrum-92-policy-registry.md). De eerste
 policy bevat het negenmaandenvenster voor actieve PDF-, Word- en Exceldocumenten.
+De veilige retentieslice staat in
+[SCRUM-104 lifecycle-nominaties](scrum-104-lifecycle-nominations.md):
+archief- en verwijdernominaties blijven onafhankelijk van de actieve werkset en
+wijzigen geen bestanden.
 
 De read-only databasegroeimeting en contractgrenzen voor operationele, semantic-
 en classificatiedata staan in
