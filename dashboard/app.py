@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 from core.organization.target_path import CONTRACT_VERSION, propose_target
 from core.organization.review_taxonomy import contextual_options, taxonomy
+from core.organization.review_learning import build_proposed_family_candidates
 from core.organization.path_normalization import normalize_target_path, suggest_known_target_path
 from core.organization.filename_normalization import normalize_proposed_filename, target_with_filename
 from core.organization.privacy_classification import RULE_VERSION as PRIVACY_RULE_VERSION, propose_privacy
@@ -139,6 +140,34 @@ def dashboard():
 @app.get("/coreworkset")
 def workset_page():
     return FileResponse(APP_DIR / "static" / "workset.html")
+
+
+@app.get("/api/v1/workset/{file_id}/content")
+def open_workset_document(file_id: int):
+    """Open original content from the read-only NAS mount; never mutate it."""
+    try:
+        with db_connect() as conn:
+            rows = query_all(conn, """
+                SELECT id, path, filename FROM public.files
+                WHERE id = %s AND deleted_at IS NULL
+            """, (file_id,))
+        if not rows:
+            raise HTTPException(status_code=404, detail="document not found")
+        row = rows[0]
+        root = Path("/volume1/data").resolve()
+        source = Path(str(row["path"])).resolve()
+        if source == root or root not in source.parents:
+            raise HTTPException(status_code=403, detail="document is outside the managed data root")
+        if not source.is_file():
+            raise HTTPException(status_code=404, detail="document is unavailable on storage")
+        return FileResponse(
+            source, filename=str(row["filename"]), content_disposition_type="inline",
+            headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"document unavailable: {type(exc).__name__}") from exc
 
 
 @app.get("/api/health")
@@ -485,7 +514,8 @@ def workset(
             trajectory_reviews = query_all(conn, """
                 SELECT DISTINCT ON (e.file_id)
                        e.id, e.file_id, e.decision, e.proposed_target_path,
-                       e.created_at, f.filename, f.path
+                       e.created_at, e.review_type, e.proposed_family_label,
+                       e.corrected_category_code, f.filename, f.path
                 FROM public.document_review_events e
                 JOIN public.files f ON f.id = e.file_id
                 WHERE e.review_type = 'target_path'
@@ -524,6 +554,7 @@ def workset(
         item["target_proposal"]["proposal_confidence"] = "high"
         item["review_options"] = contextual_options(row, proposal)
     trajectory_rules = build_trajectory_rules(trajectory_reviews)
+    family_candidates = build_proposed_family_candidates(trajectory_reviews)
     for item in enriched:
         current = item.get("target_proposal") or {}
         if current.get("category_code") != "work_career":
@@ -550,6 +581,11 @@ def workset(
         item["target_proposal"]["proposal_confidence"] = "high"
         item["trajectory_learning_proposal"] = rule
         item["review_options"] = contextual_options(row, proposal)
+    for item in enriched:
+        options = item.get("review_options")
+        if not options:
+            continue
+        options["candidate_families"] = family_candidates
     review_summary = {
         "pending": sum(not item.get("latest_review_id") for item in enriched),
         "reviewed": sum(bool(item.get("latest_review_id")) for item in enriched),

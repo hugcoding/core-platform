@@ -1,7 +1,10 @@
 import unittest
 from pathlib import Path
 from core.organization.learning_context import build_llm_learning_context
-from core.organization.review_learning import audit_review_paths, analyze_privacy_reviews, analyze_proposal_quality, analyze_reviews
+from core.organization.review_learning import (
+    audit_review_paths, analyze_privacy_reviews, analyze_proposal_quality, analyze_reviews,
+    build_proposed_family_candidates,
+)
 
 class ReviewLearningTests(unittest.TestCase):
     def test_runtime_wrapper_exposes_repository_to_python(self):
@@ -136,3 +139,25 @@ class ReviewLearningTests(unittest.TestCase):
             audit["normalized_path"],
         )
         self.assertNotIn("filename_changed_or_mismatched", audit["reason_codes"])
+
+    def test_three_hypotheek_proposals_become_visible_candidate_only(self):
+        rows = [{
+            "id": f"00000000-0000-0000-0000-{file_id:012d}",
+            "file_id": file_id, "review_type": "target_path", "decision": "accepted",
+            "corrected_category_code": "home_living", "proposed_family_label": "Hypotheek",
+        } for file_id in (1, 2, 3)]
+        candidates = build_proposed_family_candidates(rows)
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("Hypotheek", candidates[0]["family_label"])
+        self.assertEqual(3, candidates[0]["support"])
+        self.assertEqual("candidate_only", candidates[0]["activation_status"])
+        self.assertEqual(3, len(candidates[0]["source_review_event_ids"]))
+
+    def test_rejected_hypotheek_proposal_blocks_candidate(self):
+        rows = [{
+            "id": f"00000000-0000-0000-0000-{file_id:012d}",
+            "file_id": file_id, "review_type": "target_path",
+            "decision": "rejected" if file_id == 4 else "accepted",
+            "corrected_category_code": "home_living", "proposed_family_label": "Hypotheek",
+        } for file_id in (1, 2, 3, 4)]
+        self.assertEqual([], build_proposed_family_candidates(rows))
