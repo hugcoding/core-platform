@@ -315,3 +315,18 @@ in een nieuw document wordt herkend, stelt CORE dezelfde twee lagen voor. De
 bladterm `DUO` is het herkenningssignaal; `Rijksoverheid/DUO` blijft als één
 auditbare hiërarchie gekoppeld aan de menselijke bronbeoordeling. Ook dit begint
 na één voorbeeld met medium confidence en blijft uitsluitend een voorstel.
+
+## Begrensde cursuscontext
+
+`Persoonlijk & Identiteit` is nooit een algemene fallback. Bij onvoldoende
+bewijs blijft een document `Te beoordelen` met low confidence en moet de
+gebruiker een categorie kiezen. Een herkenbare combinatie zoals een Python- of
+data-sciencecursus met een `notebooks`-map mag deterministisch
+`Leren & Ontwikkelen / Cursusmateriaal` voorstellen met medium confidence.
+
+Daarnaast kan één geaccepteerde menselijke beoordeling binnen exact dezelfde
+herkenbare cursushoofdmap een proposal-only contextregel opleveren. Drie
+consistente beoordelingen verhogen de confidence naar high; een afwijkend
+menselijk categorieoordeel blokkeert de contextregel. De bronreviews blijven
+zichtbaar en er wordt geen algemene regel gemaakt dat ieder Python-document
+leermateriaal is.

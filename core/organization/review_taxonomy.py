@@ -50,9 +50,6 @@ def category_options(row: dict[str, Any], proposal: dict[str, Any], maximum: int
             confidence = "high" if score >= 100 and hits else "medium" if hits else "low"
             scores.append((score, -order, {**item, "reason_codes": reasons, "confidence": confidence}))
     ranked = [item for _, _, item in sorted(scores, reverse=True)]
-    if not ranked:
-        fallback = next(item for item in categories if item["code"] == "identity_personal")
-        ranked = [{**fallback, "reason_codes": ["personal_scope_fallback"], "confidence": "low"}]
     for item in categories:
         if len(ranked) >= maximum:
             break

@@ -27,6 +27,14 @@ class ReviewTaxonomyTests(unittest.TestCase):
         self.assertEqual("work_career", options[0]["code"])
         self.assertNotIn("needs_review", [item["code"] for item in options])
 
+    def test_unknown_document_does_not_fallback_to_personal_identity(self):
+        options = category_options(
+            {"filename": "onbekend.pdf", "path": "/Documenten/onbekend.pdf"},
+            {"category_code": "needs_review"},
+        )
+        self.assertTrue(options)
+        self.assertTrue(all(item["reason_codes"] == ["alternative"] for item in options))
+
 
 if __name__ == "__main__":
     unittest.main()
