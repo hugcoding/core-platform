@@ -72,3 +72,11 @@ docker compose up -d --build --no-deps dashboard
 
 Rollback verwijdert de nominatie-opslag en views. De immutable policy snapshot
 blijft bewust bestaan voor audit en forward recovery.
+## Portaalgedrag
+
+Een archief- of verwijdernominatie gebruikt geen browserpopup. Een eventuele
+toelichting uit het bestaande notitieveld wordt als reden opgeslagen; zonder
+notitie gebruikt CORE een neutrale auditreden. Na opslag blijft het document in
+de huidige beoordelingslijst staan en toont de knop zelf duidelijk de actieve
+markering. Nogmaals klikken trekt de nominatie append-only in. De nominatie
+wijzigt het bestand en de actieve werksetstatus niet.
