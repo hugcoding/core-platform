@@ -4,9 +4,11 @@ const nativeFetch=globalThis.fetch.bind(globalThis);
 globalThis.fetch=(resource,options={})=>{
   if(String(resource)==='/api/v1/workset/reviews'&&activePathReviewPanel&&options.body){
     const payload=JSON.parse(options.body),input=activePathReviewPanel.querySelector('.proposed-path');
+    const filenameInput=activePathReviewPanel.querySelector('.proposed-filename');
     const doc=state.documents.find(item=>String(item.file_id)===String(payload.file_id));
     if(doc?.similar_document_proposal?.status==='consensus_proposal')payload.similarity_evidence=doc.similar_document_proposal;
     if(activePathReviewPanel.dataset.aiProposalId)payload.ai_proposal_id=activePathReviewPanel.dataset.aiProposalId;
+    if(filenameInput&&payload.review_type!=='privacy_classification')payload.proposed_filename=filenameInput.value.trim();
     if(input&&payload.review_type!=='privacy_classification'){
       payload.proposed_target_path_original=input.dataset.originalValue||input.value;
       payload.target_path_suggestion=input.dataset.suggestion||'';
@@ -40,15 +42,17 @@ async function requestPathSuggestion(input){
 }
 async function refreshTargetPathPreview(panel){
   const category=panel.querySelector('.review-category').value,family=panel.querySelector('.review-family').value;
+  const filename=panel.querySelector('.proposed-filename')?.value.trim()||'';
+  const manual=panel.querySelector('.proposed-path').value.trim();
   if(!category||!family)return;
   try{
-    const response=await nativeFetch(`/api/v1/workset/${panel.dataset.fileId}/target-path-preview?category=${encodeURIComponent(category)}&family=${encodeURIComponent(family)}`,{cache:'no-store'});
+    const response=await nativeFetch(`/api/v1/workset/${panel.dataset.fileId}/target-path-preview?category=${encodeURIComponent(category)}&family=${encodeURIComponent(family)}&filename=${encodeURIComponent(filename)}&target_path=${encodeURIComponent(manual)}`,{cache:'no-store'});
     if(!response.ok)return;
     const data=await response.json(),card=panel.closest('.document-card'),target=card.querySelector('.target-proposal');
     if(target){target.querySelector('span').innerHTML=`<i class="source-badge">CORE-preview</i>${wsEsc(data.proposal_confidence)}`;target.querySelector('code').textContent=data.suggested_target_path}
     let note=panel.querySelector('.live-path-preview');if(!note){note=document.createElement('small');note.className='live-path-preview';panel.prepend(note)}
-    const manual=panel.querySelector('.proposed-path').value.trim();
-    note.textContent=manual?'Nieuw CORE-voorstel berekend; jouw handmatige doelpad blijft leidend.':'Doelpad live herberekend; wordt pas opgeslagen bij jouw beoordeling.';
+    note.classList.toggle('path-conflict',data.target_path_conflict);
+    note.textContent=data.target_path_conflict?'Let op: dit volledige doelpad bestaat al of is al geaccepteerd. Het blijft alleen een voorstel.':manual?'Nieuw CORE-voorstel berekend; jouw handmatige doelpad blijft leidend.':'Doelpad live herberekend; wordt pas opgeslagen bij jouw beoordeling.';
   }catch(error){}
 }
 document.addEventListener('change',event=>{
@@ -56,8 +60,8 @@ document.addEventListener('change',event=>{
   const panel=event.target.closest('.review-panel');setTimeout(()=>refreshTargetPathPreview(panel),0);
 });
 document.addEventListener('input',event=>{
-  if(!event.target.matches('.proposed-path'))return;
-  clearTimeout(pathSuggestionTimer);pathSuggestionTimer=setTimeout(()=>requestPathSuggestion(event.target),300);
+  if(event.target.matches('.proposed-path')){clearTimeout(pathSuggestionTimer);pathSuggestionTimer=setTimeout(()=>requestPathSuggestion(event.target),300);return}
+  if(event.target.matches('.proposed-filename')){clearTimeout(pathSuggestionTimer);pathSuggestionTimer=setTimeout(()=>refreshTargetPathPreview(event.target.closest('.review-panel')),300)}
 });
 document.addEventListener('click',event=>{
   const reviewButton=event.target.closest('[data-decision]');
@@ -132,6 +136,17 @@ async function confirmBulkReview(){
   }catch(error){message.textContent='Bulkbeoordeling is niet opgeslagen. Er zijn geen bestanden gewijzigd.';button.disabled=false}
 }
 document.addEventListener('workset:rendered',decorateBulkCards);
+function decorateFilenameProposals(){
+  document.querySelectorAll('.review-panel').forEach(panel=>{
+    const details=panel.querySelector('.new-proposal');if(!details||details.querySelector('.proposed-filename'))return;
+    const pathLabel=details.querySelector('.proposed-path')?.closest('label');
+    const doc=state.documents.find(item=>String(item.file_id)===String(panel.dataset.fileId));
+    const label=document.createElement('label');label.innerHTML=`Nieuwe bestandsnaam<input class="proposed-filename" maxlength="255" placeholder="${wsEsc(doc?.filename||'Nieuwe naam')}"><small>De huidige extensie blijft behouden.</small>`;
+    details.insertBefore(label,pathLabel||details.lastElementChild);
+    const summary=details.querySelector('summary');if(summary)summary.textContent='Nieuwe categorie, familie, bestandsnaam of doelpad voorstellen';
+  });
+}
+document.addEventListener('workset:rendered',decorateFilenameProposals);
 ws('bulkSelectAll').addEventListener('change',event=>{visibleBulkCheckboxes().forEach(box=>box.checked=event.target.checked);updateBulkControls()});
 ws('bulkReviewOpen').addEventListener('click',openBulkReview);ws('bulkReviewConfirm').addEventListener('click',confirmBulkReview);
 ws('worksetDocuments').addEventListener('change',event=>{if(event.target.closest('.bulk-select'))updateBulkControls()});

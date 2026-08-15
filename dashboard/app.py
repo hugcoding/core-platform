@@ -10,7 +10,7 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import psycopg2
 import redis
@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from core.organization.target_path import CONTRACT_VERSION, propose_target
 from core.organization.review_taxonomy import contextual_options, taxonomy
 from core.organization.path_normalization import normalize_target_path, suggest_known_target_path
+from core.organization.filename_normalization import normalize_proposed_filename, target_with_filename
 from core.organization.privacy_classification import RULE_VERSION as PRIVACY_RULE_VERSION, propose_privacy
 from core.organization.similar_documents import apply_similar_review_proposals
 from core.organization.trajectory_learning import build_trajectory_rules, matching_trajectory_rule
@@ -716,7 +717,8 @@ def workset_review_history(file_id: int):
                        proposed_target_path_raw, proposal_privacy_classification,
                        corrected_privacy_classification, privacy_rule_version, privacy_evidence,
                        target_path_input_kind, target_path_suggestion, target_path_suggestion_decision,
-                       batch_id
+                       batch_id, source_filename, proposed_filename_raw, proposed_filename,
+                       filename_normalization_reasons, target_path_conflict, target_path_conflict_details
                 FROM public.document_review_events
                 WHERE file_id = %s
                 ORDER BY created_at DESC, id DESC
@@ -760,6 +762,8 @@ def workset_target_path_suggestion(file_id: int, value: str = Query(..., min_len
 def workset_target_path_preview(
     file_id: int, category: str = Query(..., min_length=1, max_length=80),
     family: str = Query(..., min_length=1, max_length=80),
+    filename: Optional[str] = Query(None, max_length=255),
+    proposed_target_path: Optional[str] = Query(None, alias="target_path", max_length=500),
 ):
     """Recalculate a target proposal from unsaved portal selections."""
     valid_categories = {item["code"] for item in taxonomy()["categories"]}
@@ -779,9 +783,25 @@ def workset_target_path_preview(
             "accepted_document_family": family,
             "accepted_lifecycle": row.get("lifecycle"),
         })
+        filename_proposal = None
+        target_path = preview["suggested_target_path"]
+        conflict_details = {"active_file_ids": [], "accepted_review_event_ids": []}
+        if proposed_target_path and proposed_target_path.strip():
+            target_path = str(normalize_target_path(
+                proposed_target_path, filename=str(row["filename"]),
+            )["normalized"])
+        if filename and filename.strip():
+            filename_proposal = normalize_proposed_filename(filename, current_filename=str(row["filename"]))
+            target_path = target_with_filename(target_path, str(filename_proposal["normalized"]))
+        if (filename and filename.strip()) or (proposed_target_path and proposed_target_path.strip()):
+            with db_connect() as conflict_conn:
+                conflict_details = target_path_conflicts(conflict_conn, file_id, target_path)
         return {
             "category_code": category, "document_family_code": family,
-            "suggested_target_path": preview["suggested_target_path"],
+            "suggested_target_path": target_path,
+            "filename_proposal": filename_proposal,
+            "target_path_conflict": any(conflict_details.values()),
+            "target_path_conflict_details": conflict_details,
             "proposal_confidence": preview["proposal_confidence"],
             "proposal_reason_code": preview["proposal_reason_code"],
             "mode": "live_preview", "database_writes": False, "file_mutations": False,
@@ -790,6 +810,25 @@ def workset_target_path_preview(
         raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"target path preview unavailable: {type(exc).__name__}") from exc
+
+
+def target_path_conflicts(conn, file_id: int, target_path: str) -> dict[str, list[object]]:
+    """Read-only collision evidence from current files and accepted human paths."""
+    active = query_all(conn, """
+        SELECT id FROM public.files
+        WHERE id <> %s AND deleted_at IS NULL AND LOWER(path) = LOWER(%s)
+        ORDER BY id LIMIT 10
+    """, (file_id, target_path))
+    reviews = query_all(conn, """
+        SELECT id FROM public.document_review_events
+        WHERE file_id <> %s AND decision = 'accepted'
+          AND LOWER(COALESCE(proposed_target_path, proposal_target_path)) = LOWER(%s)
+        ORDER BY created_at DESC, id DESC LIMIT 10
+    """, (file_id, target_path))
+    return {
+        "active_file_ids": [int(item["id"]) for item in active],
+        "accepted_review_event_ids": [str(item["id"]) for item in reviews],
+    }
 
 
 @app.get("/api/v1/workset/reviews/export")
@@ -810,7 +849,8 @@ def export_workset_reviews(format: str = Query("csv", pattern="^(csv|json)$")):
                        e.proposed_target_path_raw, e.proposal_privacy_classification,
                        e.corrected_privacy_classification, e.privacy_rule_version, e.privacy_evidence,
                        e.target_path_input_kind, e.target_path_suggestion, e.target_path_suggestion_decision,
-                       e.batch_id
+                       e.batch_id, e.source_filename, e.proposed_filename_raw, e.proposed_filename,
+                       e.filename_normalization_reasons, e.target_path_conflict, e.target_path_conflict_details
                 FROM public.document_review_events e
                 JOIN public.files f ON f.id = e.file_id
                 ORDER BY e.created_at DESC, e.id DESC
@@ -1165,6 +1205,7 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
     ai_proposal_id = str(payload.get("ai_proposal_id") or "").strip() or None
     path_suggestion = str(payload.get("target_path_suggestion") or "").strip() or None
     path_suggestion_decision = str(payload.get("target_path_suggestion_decision") or "no_suggestion")
+    proposed_filename_raw = str(payload.get("proposed_filename") or "").strip() or None
     if path_suggestion_decision not in {"accepted", "dismissed", "new_path", "no_suggestion"}:
         raise HTTPException(status_code=422, detail="invalid target path suggestion decision")
     normalized_path = None
@@ -1195,6 +1236,16 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
             if not matches:
                 raise HTTPException(status_code=409, detail="file is no longer an active workset candidate")
             row = matches[0]
+            filename_proposal = None
+            if proposed_filename_raw:
+                if review_type != "target_path":
+                    raise HTTPException(status_code=422, detail="filename proposals require a target-path review")
+                try:
+                    filename_proposal = normalize_proposed_filename(
+                        proposed_filename_raw, current_filename=str(row["filename"]),
+                    )
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
             if ai_proposal_id:
                 try:
                     ai_proposal_id = str(uuid.UUID(ai_proposal_id))
@@ -1269,6 +1320,20 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
             proposal = enrich_workset_row(row).get("target_proposal")
             if not proposal:
                 raise HTTPException(status_code=409, detail="file is no longer an active workset candidate")
+            selected_proposal = propose_target({
+                **row, "accepted_category": category,
+                "accepted_document_family": family,
+                "accepted_lifecycle": row.get("lifecycle"),
+            })
+            if filename_proposal:
+                base_target = proposed_path or selected_proposal["suggested_target_path"]
+                proposed_path = target_with_filename(base_target, str(filename_proposal["normalized"]))
+                if not proposed_path_raw:
+                    proposed_path_raw = proposed_path
+            conflict_details = target_path_conflicts(conn, file_id, proposed_path) if filename_proposal and proposed_path else {
+                "active_file_ids": [], "accepted_review_event_ids": [],
+            }
+            has_target_conflict = any(conflict_details.values())
             latest = query_all(
                 conn,
                 "SELECT id FROM public.v_latest_document_review WHERE file_id = %s AND review_type = 'target_path'",
@@ -1287,8 +1352,9 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                         proposed_category_label, proposed_family_label, proposed_target_path,
                         proposed_target_path_raw, target_path_input_kind,
                         target_path_suggestion, target_path_suggestion_decision, proposal_evidence,
-                        ai_proposal_id
-                    ) VALUES (%s,%s,'workset_portal','target_path',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)
+                        ai_proposal_id, source_filename, proposed_filename_raw, proposed_filename,
+                        filename_normalization_reasons, target_path_conflict, target_path_conflict_details
+                    ) VALUES (%s,%s,'workset_portal','target_path',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s::jsonb,%s,%s::jsonb)
                     ON CONFLICT (idempotency_key) DO NOTHING
                     RETURNING id, created_at, file_id, decision
                 """, (
@@ -1302,6 +1368,12 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                     path_suggestion, path_suggestion_decision,
                     json.dumps(similarity_evidence, ensure_ascii=False),
                     ai_proposal_id,
+                    str(row["filename"]) if filename_proposal else None,
+                    proposed_filename_raw,
+                    str(filename_proposal["normalized"]) if filename_proposal else None,
+                    json.dumps(filename_proposal["reason_codes"] if filename_proposal else []),
+                    has_target_conflict if filename_proposal else None,
+                    json.dumps(conflict_details if filename_proposal else {}),
                 ))
                 created = cur.fetchone()
                 if not created:
@@ -1326,6 +1398,12 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
             "proposed_family_label": proposed_family,
             "proposed_target_path": proposed_path,
             "proposed_target_path_raw": proposed_path_raw,
+            "source_filename": str(row["filename"]) if filename_proposal else None,
+            "proposed_filename_raw": proposed_filename_raw,
+            "proposed_filename": filename_proposal["normalized"] if filename_proposal else None,
+            "filename_normalization_reasons": filename_proposal["reason_codes"] if filename_proposal else [],
+            "target_path_conflict": has_target_conflict if filename_proposal else False,
+            "target_path_conflict_details": conflict_details if filename_proposal else {},
             "target_path_input_kind": normalized_path["input_kind"] if normalized_path else None,
             "target_path_suggestion": path_suggestion,
             "target_path_suggestion_decision": path_suggestion_decision,
