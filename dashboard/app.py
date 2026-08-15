@@ -27,6 +27,7 @@ from core.organization.filename_normalization import normalize_proposed_filename
 from core.organization.privacy_classification import RULE_VERSION as PRIVACY_RULE_VERSION, propose_privacy
 from core.organization.similar_documents import apply_similar_review_proposals
 from core.organization.trajectory_learning import build_trajectory_rules, matching_trajectory_rule
+from core.organization.learning_context import build_learning_context_rules, matching_learning_context_rule
 from core.semantic.rag import GenerationRequest, OpenAICompatibleLocalProvider
 from core.semantic.workset_llm import (
     MAX_DOCUMENTS as LLM_MAX_DOCUMENTS, PROMPT_VERSION as LLM_PROMPT_VERSION,
@@ -392,14 +393,6 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
             "accepted_document_family": item["effective_document_family"],
             "accepted_lifecycle": row.get("lifecycle"),
         })
-        initial_options = contextual_options(row, proposal)
-        if proposal["category_code"] == "needs_review":
-            proposal = propose_target({
-                **row,
-                "accepted_category": initial_options["category_options"][0]["code"],
-                "accepted_document_family": item["effective_document_family"],
-                "accepted_lifecycle": row.get("lifecycle"),
-            })
         item["target_proposal"] = {
             key: proposal[key] for key in (
                 "contract_version", "contract_checksum", "zone_code", "zone_label",
@@ -538,6 +531,28 @@ def workset(
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"workset unavailable: {type(exc).__name__}") from exc
     enriched = apply_similar_review_proposals([enrich_workset_row(row) for row in rows])
+    learning_context_rules = build_learning_context_rules(trajectory_reviews)
+    for item in enriched:
+        rule = matching_learning_context_rule(item, learning_context_rules)
+        if not rule or item.get("workset_status") != "active":
+            continue
+        row = next(row for row in rows if int(row["file_id"]) == int(item["file_id"]))
+        proposal = propose_target({
+            **row,
+            "accepted_category": rule["category_code"],
+            "accepted_document_family": rule["family_code"],
+            "accepted_lifecycle": row.get("lifecycle"),
+        })
+        item["target_proposal"] = {key: proposal[key] for key in (
+            "contract_version", "contract_checksum", "zone_code", "zone_label",
+            "category_code", "category_label", "trajectory_code", "trajectory_label",
+            "document_family_code", "folder_label", "suggested_target_path",
+            "proposal_reason_code", "proposal_confidence",
+        )}
+        item["target_proposal"]["proposal_reason_code"] = "learned_human_course_context"
+        item["target_proposal"]["proposal_confidence"] = rule["confidence"]
+        item["learning_context_proposal"] = rule
+        item["review_options"] = contextual_options(row, proposal)
     for item in enriched:
         similar = item.get("similar_document_proposal") or {}
         if similar.get("status") != "consensus_proposal" or item.get("workset_status") != "active":

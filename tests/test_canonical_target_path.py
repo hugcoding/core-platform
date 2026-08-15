@@ -112,6 +112,18 @@ class CanonicalTargetPathTests(unittest.TestCase):
         self.assertEqual("supporting_dataset_requires_review", result["proposal_reason_code"])
         self.assertIn("/Te beoordelen/Leren & Ontwikkelen/Cursusdata/", result["suggested_target_path"])
 
+    def test_python_notebook_course_gets_learning_proposal(self):
+        result = propose_target({
+            "file_id": 18,
+            "filename": "Introductie Python voor data science.pdf",
+            "extension": "pdf",
+            "path": "/volume1/data/import/cloud/onedrive/current/Documenten/Introductie Python voor data science (NL)/notebooks/Introductie Python voor data science.pdf",
+        })
+        self.assertEqual("learning_development", result["category_code"])
+        self.assertEqual("course_material", result["document_family_code"])
+        self.assertEqual("medium", result["proposal_confidence"])
+        self.assertIn("/Leren & Ontwikkelen/Cursusmateriaal/", result["suggested_target_path"])
+
     def test_accepted_review_family_code_gets_canonical_dutch_label(self):
         result = propose_target({
             "file_id": 14, "filename": "Een integere Belastingdienst.pdf", "extension": "pdf",

@@ -93,6 +93,13 @@ def canonical_category(row: dict[str, Any]) -> tuple[str, str, str]:
         return accepted, "accepted_human_classification", "high"
     evidence = " ".join(str(row.get(key) or "") for key in
                         ("filename", "path", "accepted_document_family")).casefold()
+    normalized_path = str(row.get("path") or "").replace("\\", "/").casefold()
+    course_signals = (
+        ("notebook" in normalized_path and any(term in evidence for term in ("python", "data science", "jupyter")))
+        or ("introductie" in evidence and any(term in evidence for term in ("python", "data science", "cursus")))
+    )
+    if course_signals:
+        return "learning_development", "deterministic_course_context", "medium"
     for code, terms in KEYWORD_RULES:
         if any(term in evidence for term in terms):
             return code, "deterministic_keyword_rule", "medium"
@@ -122,6 +129,9 @@ def document_family(row: dict[str, Any]) -> tuple[str, str]:
     evidence = " " + _evidence(row).replace("-", " ") + " "
     filename_stem = PurePosixPath(str(row.get("filename") or "")).stem.casefold()
     filename_tokens = {token for token in re.split(r"[^a-z0-9]+", filename_stem) if token}
+    normalized_path = str(row.get("path") or "").replace("\\", "/").casefold()
+    if ("notebook" in normalized_path and any(term in evidence for term in ("python", "data science", "jupyter"))):
+        return "course_material", FAMILY_LABELS["course_material"]
     if "cv" in filename_tokens or "curriculum vitae" in evidence:
         return "resumes", FAMILY_LABELS["resumes"]
     for code, label, terms in FAMILY_RULES:
