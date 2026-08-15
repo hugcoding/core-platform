@@ -153,10 +153,17 @@ function decorateOriginalDocumentLinks(){
     if(!source||main.querySelector('.original-path-row'))return;
     const doc=state.documents.find(item=>item.path===source.getAttribute('title'));if(!doc)return;
     const row=document.createElement('div');row.className='original-path-row';
-    const visiblePath=doc.smb_path||doc.path;
-    row.innerHTML=`<a href="/api/v1/workset/${encodeURIComponent(doc.file_id)}/content" target="_blank" rel="noopener noreferrer" title="Origineel document openen">${wsEsc(visiblePath)}</a><button type="button" class="copy-original-path" data-path="${wsEsc(visiblePath)}" aria-label="Pad kopiëren" title="Pad kopiëren">⧉</button>`;
+    const visiblePath=doc.smb_path||doc.path,openUrl=documentOpenUrl(doc,visiblePath);
+    row.innerHTML=`<a href="${wsEsc(openUrl)}"${openUrl.startsWith('/api/')?' target="_blank" rel="noopener noreferrer"':''} title="Origineel document openen">${wsEsc(visiblePath)}</a><button type="button" class="copy-original-path" data-path="${wsEsc(visiblePath)}" aria-label="Pad kopiëren" title="Pad kopiëren">⧉</button>`;
     source.replaceWith(row);card.querySelector(':scope>.copy-path')?.remove();
   });
+}
+function documentOpenUrl(doc,smbPath){
+  const extension=String(doc.extension||'').toLowerCase();
+  const officeProtocol={doc:'ms-word',docx:'ms-word',xls:'ms-excel',xlsx:'ms-excel',ppt:'ms-powerpoint',pptx:'ms-powerpoint'}[extension];
+  if(!officeProtocol||!String(smbPath).startsWith('\\\\'))return`/api/v1/workset/${encodeURIComponent(doc.file_id)}/content`;
+  const fileUrl='file://'+String(smbPath).slice(2).split('\\').map(encodeURIComponent).join('/');
+  return`${officeProtocol}:ofe|u|${fileUrl}`;
 }
 document.addEventListener('workset:rendered',decorateOriginalDocumentLinks);
 document.addEventListener('click',async event=>{

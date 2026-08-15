@@ -38,6 +38,12 @@ browser of gekoppelde app overgedragen. Alleen bestaande databasebestanden onder
 `/volume1/data` zijn toegestaan. Naast de link staat uitsluitend een compact
 icoon om het SMB-pad te kopiëren.
 
+Microsoft Office-documenten gebruiken op Windows het geregistreerde Word-,
+Excel- of PowerPoint-protocol, zodat de desktopapp wordt geopend. PDF en veilige
+browserformaten openen inline. Als een Office-protocol niet beschikbaar is,
+levert de read-only CORE-route het bestand als download en nooit als ruwe
+binaire webpagina.
+
 CORE normaliseert menselijke doelpadvoorstellen vóór opslag. Meerdere `/`
 worden één separator; relatieve segmenten, control characters en paden buiten
 de beheerde roots worden geweigerd. De ruwe invoer blijft naast het
