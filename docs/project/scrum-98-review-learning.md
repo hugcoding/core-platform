@@ -308,3 +308,10 @@ Een relevant tegenvoorbeeld blokkeert het voorstel. Tijdelijke bronmappen zoals
 `uitzoeken`, `nieuw` en `algemeen` tellen niet als betekenisvolle doelmap. De
 uitkomst blijft uitsluitend een verklaarbaar voorstel met verwijzing naar de
 menselijke bronbeoordeling; CORE activeert geen regel en verplaatst geen bestand.
+
+Een bevestigde organisatiehiërarchie mag maximaal twee lagen bevatten. Wanneer
+bijvoorbeeld `Sollicitaties/Rijksoverheid/DUO` is geaccepteerd en `DUO` letterlijk
+in een nieuw document wordt herkend, stelt CORE dezelfde twee lagen voor. De
+bladterm `DUO` is het herkenningssignaal; `Rijksoverheid/DUO` blijft als één
+auditbare hiërarchie gekoppeld aan de menselijke bronbeoordeling. Ook dit begint
+na één voorbeeld met medium confidence en blijft uitsluitend een voorstel.
