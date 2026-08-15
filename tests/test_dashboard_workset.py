@@ -196,13 +196,17 @@ class DashboardWorksetTests(unittest.TestCase):
         ai = (ROOT / "dashboard" / "static" / "workset-ai.js").read_text(encoding="utf-8")
         similar = (ROOT / "dashboard" / "static" / "similar-documents.js").read_text(encoding="utf-8")
         trajectory = (ROOT / "dashboard" / "static" / "trajectory-learning.js").read_text(encoding="utf-8")
+        candidates = (ROOT / "dashboard" / "static" / "candidate-families.js").read_text(encoding="utf-8")
         self.assertIn("new CustomEvent('workset:rendered')", workset)
         self.assertIn("'workset:rendered',decorateBulkCards", workset)
         self.assertIn("'workset:rendered',updateAiButton", ai)
         self.assertIn("'workset:rendered',renderSimilarDocumentProposals", similar)
         self.assertIn("'workset:rendered',renderTrajectoryLearning", trajectory)
         self.assertIn("source_review_event_ids", trajectory)
-        self.assertNotIn("MutationObserver", workset + ai + similar + trajectory)
+        self.assertIn("'workset:rendered',renderCandidateFamilies", candidates)
+        self.assertIn("candidate.family_label", candidates)
+        self.assertIn("source_review_event_ids", candidates)
+        self.assertNotIn("MutationObserver", workset + ai + similar + trajectory + candidates)
 
     def test_original_path_is_clickable_with_compact_copy_icon(self):
         script = (ROOT / "dashboard" / "static" / "workset.js").read_text(encoding="utf-8")

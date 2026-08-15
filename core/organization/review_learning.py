@@ -10,6 +10,52 @@ from core.organization.path_normalization import normalize_target_path
 from core.organization.target_path import CATEGORY_LABELS, FAMILY_LABELS
 
 
+def _candidate_label(value: str) -> str:
+    return " ".join(str(value or "").casefold().split())
+
+
+def build_proposed_family_candidates(
+    rows: list[dict[str, Any]], minimum_support: int = 3,
+) -> list[dict[str, Any]]:
+    """Expose repeated free-text families as advisory candidates, never active rules."""
+    if minimum_support < 3:
+        raise ValueError("family candidates require at least three examples")
+    latest: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        if row.get("review_type") == "target_path":
+            latest[int(row["file_id"])] = row
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    labels: dict[tuple[str, str], str] = {}
+    for row in latest.values():
+        label = str(row.get("proposed_family_label") or "").strip()
+        category = str(row.get("corrected_category_code") or "")
+        if not label or not category:
+            continue
+        key = (category, _candidate_label(label))
+        labels.setdefault(key, label)
+        groups[key].append(row)
+    result = []
+    for (category, normalized), examples in groups.items():
+        accepted = [row for row in examples if row.get("decision") == "accepted"]
+        counterexamples = [row for row in examples if row.get("decision") != "accepted"]
+        if len(accepted) < minimum_support or counterexamples:
+            continue
+        result.append({
+            "candidate_type": "proposed_document_family",
+            "category_code": category,
+            "family_label": labels[(category, normalized)],
+            "normalized_label": normalized,
+            "support": len(accepted),
+            "agreement": 1.0,
+            "counterexample_count": 0,
+            "source_review_event_ids": sorted(str(row["id"]) for row in accepted)[:10],
+            "example_file_ids": sorted(int(row["file_id"]) for row in accepted)[:10],
+            "activation_status": "candidate_only",
+            "reason_codes": ["repeated_accepted_human_family_proposal"],
+        })
+    return sorted(result, key=lambda item: (-item["support"], item["family_label"].casefold()))
+
+
 def analyze_reviews(rows: list[dict[str, Any]], minimum_support: int = 3) -> list[dict[str, Any]]:
     if minimum_support < 2:
         raise ValueError("minimum support must be at least 2")

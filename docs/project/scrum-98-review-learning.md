@@ -279,3 +279,12 @@ onthouding met menselijke review. Historische Engelstalige redenen blijven voor
 lineage in de database staan, maar krijgen in het portaal een Nederlandse
 melding. Technische codes, modellen en promptversies blijven ongewijzigd
 zichtbaar.
+## Geleerde kandidaatfamilies
+
+Een vrije familie zoals `Hypotheek` wordt niet direct onderdeel van de vaste
+taxonomie. Wanneer minimaal drie actuele, geaccepteerde beoordelingen dezelfde
+familie binnen dezelfde categorie voorstellen en er geen relevant
+tegenvoorbeeld is, toont het portaal haar als kandidaatfamilie. Support en
+bronbeoordelingen blijven zichtbaar. Met **Gebruik Hypotheek** wordt de waarde
+opnieuw als expliciet menselijk familievoorstel ingevuld. De kandidaat wordt
+niet automatisch canoniek en activeert geen regel.

@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 from core.organization.target_path import CONTRACT_VERSION, propose_target
 from core.organization.review_taxonomy import contextual_options, taxonomy
+from core.organization.review_learning import build_proposed_family_candidates
 from core.organization.path_normalization import normalize_target_path, suggest_known_target_path
 from core.organization.filename_normalization import normalize_proposed_filename, target_with_filename
 from core.organization.privacy_classification import RULE_VERSION as PRIVACY_RULE_VERSION, propose_privacy
@@ -513,7 +514,8 @@ def workset(
             trajectory_reviews = query_all(conn, """
                 SELECT DISTINCT ON (e.file_id)
                        e.id, e.file_id, e.decision, e.proposed_target_path,
-                       e.created_at, f.filename, f.path
+                       e.created_at, e.review_type, e.proposed_family_label,
+                       e.corrected_category_code, f.filename, f.path
                 FROM public.document_review_events e
                 JOIN public.files f ON f.id = e.file_id
                 WHERE e.review_type = 'target_path'
@@ -552,6 +554,7 @@ def workset(
         item["target_proposal"]["proposal_confidence"] = "high"
         item["review_options"] = contextual_options(row, proposal)
     trajectory_rules = build_trajectory_rules(trajectory_reviews)
+    family_candidates = build_proposed_family_candidates(trajectory_reviews)
     for item in enriched:
         current = item.get("target_proposal") or {}
         if current.get("category_code") != "work_career":
@@ -578,6 +581,11 @@ def workset(
         item["target_proposal"]["proposal_confidence"] = "high"
         item["trajectory_learning_proposal"] = rule
         item["review_options"] = contextual_options(row, proposal)
+    for item in enriched:
+        options = item.get("review_options")
+        if not options:
+            continue
+        options["candidate_families"] = family_candidates
     review_summary = {
         "pending": sum(not item.get("latest_review_id") for item in enriched),
         "reviewed": sum(bool(item.get("latest_review_id")) for item in enriched),
