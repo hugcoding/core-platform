@@ -220,7 +220,12 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn("card.querySelector(':scope>.copy-path')?.remove()", script)
         self.assertIn(".original-path-row", css)
         self.assertIn('@app.get("/api/v1/workset/{file_id}/content")', source)
-        self.assertIn('content_disposition_type="inline"', source)
+        self.assertIn('"inline" if extension in inline_extensions else "attachment"', source)
+        self.assertIn("mimetypes.guess_type", source)
+        self.assertIn("ms-word", script)
+        self.assertIn("ms-excel", script)
+        self.assertIn("ms-powerpoint", script)
+        self.assertIn("documentOpenUrl(doc,visiblePath)", script)
         self.assertIn('"/volume1:/volume1:ro"', compose)
 
     def test_open_document_returns_not_found_for_unknown_file(self):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -160,8 +161,12 @@ def open_workset_document(file_id: int):
             raise HTTPException(status_code=403, detail="document is outside the managed data root")
         if not source.is_file():
             raise HTTPException(status_code=404, detail="document is unavailable on storage")
+        extension = source.suffix.casefold()
+        inline_extensions = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".txt"}
+        media_type = mimetypes.guess_type(str(source))[0] or "application/octet-stream"
         return FileResponse(
-            source, filename=str(row["filename"]), content_disposition_type="inline",
+            source, filename=str(row["filename"]), media_type=media_type,
+            content_disposition_type="inline" if extension in inline_extensions else "attachment",
             headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
         )
     except HTTPException:
