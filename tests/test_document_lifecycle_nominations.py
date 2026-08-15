@@ -20,6 +20,7 @@ class DocumentLifecycleNominationMigrationTests(unittest.TestCase):
 
     def test_safe_policy_disables_file_mutation_and_permanent_delete(self):
         sql = MIGRATION.read_text(encoding="utf-8")
+        self.assertIn("}'::jsonb)\n)\nINSERT INTO public.policy_versions", sql)
         self.assertIn('"direct_file_mutations": false', sql)
         self.assertIn('"automatic_archive_on_deletion_nomination": false', sql)
         self.assertIn('"permanent_delete_enabled": false', sql)
