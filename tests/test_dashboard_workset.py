@@ -195,11 +195,14 @@ class DashboardWorksetTests(unittest.TestCase):
         workset = (ROOT / "dashboard" / "static" / "workset.js").read_text(encoding="utf-8")
         ai = (ROOT / "dashboard" / "static" / "workset-ai.js").read_text(encoding="utf-8")
         similar = (ROOT / "dashboard" / "static" / "similar-documents.js").read_text(encoding="utf-8")
+        trajectory = (ROOT / "dashboard" / "static" / "trajectory-learning.js").read_text(encoding="utf-8")
         self.assertIn("new CustomEvent('workset:rendered')", workset)
         self.assertIn("'workset:rendered',decorateBulkCards", workset)
         self.assertIn("'workset:rendered',updateAiButton", ai)
         self.assertIn("'workset:rendered',renderSimilarDocumentProposals", similar)
-        self.assertNotIn("MutationObserver", workset + ai + similar)
+        self.assertIn("'workset:rendered',renderTrajectoryLearning", trajectory)
+        self.assertIn("source_review_event_ids", trajectory)
+        self.assertNotIn("MutationObserver", workset + ai + similar + trajectory)
 
     def test_context_sort_uses_review_time_for_reviewed_documents(self):
         order = self.dashboard.workset_order_by("context", "reviewed", "all", True)

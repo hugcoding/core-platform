@@ -15,6 +15,7 @@ from core.exports.csv_format import write_dict_rows
 from core.organization.review_learning import (
     analyze_privacy_reviews, analyze_proposal_quality, analyze_reviews, audit_review_paths,
 )
+from core.organization.trajectory_learning import build_trajectory_rules
 from core.organization.learning_context import build_llm_learning_context
 
 
@@ -28,7 +29,7 @@ COPY (
          e.proposal_privacy_classification, e.corrected_privacy_classification,
          e.proposal_confidence, e.proposal_reason_code, e.privacy_rule_version,
          e.privacy_evidence, e.target_path_input_kind, e.target_path_suggestion,
-         e.target_path_suggestion_decision, f.filename
+         e.target_path_suggestion_decision, f.filename, f.path
   FROM public.document_review_events e
   JOIN public.files f ON f.id = e.file_id
   WHERE e.channel = 'workset_portal'
@@ -59,6 +60,7 @@ def main(argv=None) -> int:
         privacy_candidates = analyze_privacy_reviews(rows, args.minimum_support)
         proposal_quality = analyze_proposal_quality(rows)
         path_audit = audit_review_paths(rows)
+        trajectory_candidates = build_trajectory_rules(rows, args.minimum_support)
     except (ValueError, subprocess.CalledProcessError, FileNotFoundError) as exc:
         print(f"Review-learning analysis failed: {exc}")
         return 1
@@ -73,10 +75,11 @@ def main(argv=None) -> int:
         "schema_version": "review-learning-candidates-v2",
         "generated_at": generated.isoformat(), "mode": "read_only",
         "minimum_support": args.minimum_support, "reviews_analyzed": len(rows),
-        "candidate_count": len(candidates) + len(privacy_candidates),
+        "candidate_count": len(candidates) + len(privacy_candidates) + len(trajectory_candidates),
         "classification_candidate_count": len(candidates),
         "privacy_candidate_count": len(privacy_candidates),
         "candidates": candidates, "privacy_candidates": privacy_candidates,
+        "trajectory_candidates": trajectory_candidates,
         "proposal_quality": proposal_quality,
         "path_systematics_audit": path_audit,
         "llm_learning_context": build_llm_learning_context(candidates),
@@ -105,6 +108,20 @@ def main(argv=None) -> int:
         "reason_codes": json.dumps(item["reason_codes"]),
     } for item in privacy_candidates]
     write_dict_rows(privacy_csv_path, privacy_csv_rows, privacy_fields)
+    trajectory_csv_path = output / f"review-learning-trajectory-candidates-{stamp}.csv"
+    trajectory_fields = [
+        "candidate_type", "trajectory_code", "trajectory_label", "match_term",
+        "support", "agreement", "counterexample_count", "counterexamples",
+        "example_file_ids", "source_review_event_ids", "reason_codes", "activation_status",
+    ]
+    trajectory_csv_rows = [{
+        **item,
+        "counterexamples": json.dumps(item["counterexamples"], ensure_ascii=False),
+        "example_file_ids": json.dumps(item["example_file_ids"]),
+        "source_review_event_ids": json.dumps(item["source_review_event_ids"]),
+        "reason_codes": json.dumps(item["reason_codes"]),
+    } for item in trajectory_candidates]
+    write_dict_rows(trajectory_csv_path, trajectory_csv_rows, trajectory_fields)
     proposal_csv_path = output / f"review-learning-proposal-quality-{stamp}.csv"
     proposal_fields = [
         "dimension", "reviewed_proposals", "judged_proposals", "accepted_unchanged",
@@ -128,6 +145,7 @@ def main(argv=None) -> int:
              f"- Minimum support: **{args.minimum_support}**",
              f"- Classificatiekandidaten: **{len(candidates)}**",
              f"- Privacykandidaten: **{len(privacy_candidates)}**",
+             f"- Traject-/werkgeverkandidaten: **{len(trajectory_candidates)}**",
              "- Geactiveerde regels: **0**", "- Bestandsmutaties: **geen**", "",
              "| Bronfamilie | Nieuwe categorie | Nieuwe familie | Support | Confidence | Conflicten |",
              "|---|---|---|---:|---|---:|"]
@@ -142,6 +160,14 @@ def main(argv=None) -> int:
             f"| {item['pattern_evidence']} | {item['source_privacy_classification']} | "
             f"{item['target_privacy_classification']} | {item['support']} | "
             f"{item['agreement']:.0%} | {item['counterexample_count']} | candidate_only |"
+        )
+    lines.extend(["", "## Traject- en werkgeverkandidaten", "",
+                  "| Traject | Herkenning | Support | Agreement | Tegenvoorbeelden | Status |",
+                  "|---|---|---:|---:|---:|---|"])
+    for item in trajectory_candidates:
+        lines.append(
+            f"| {item['trajectory_label']} | {item['match_term']} | {item['support']} | "
+            f"{item['agreement']:.0%} | {item['counterexample_count']} | proposal_only |"
         )
     lines.extend(["", "## Kwaliteit van CORE-voorstellen", "",
                   "| Onderdeel | Beoordeeld | Ongewijzigd akkoord | Gecorrigeerd | Afgewezen | Agreement | Tegenvoorbeelden |",
@@ -170,6 +196,7 @@ def main(argv=None) -> int:
     for latest, source in (("review-learning-candidates-latest.json", json_path),
                            ("review-learning-candidates-latest.md", md_path),
                            ("review-learning-privacy-candidates-latest.csv", privacy_csv_path),
+                           ("review-learning-trajectory-candidates-latest.csv", trajectory_csv_path),
                            ("review-learning-proposal-quality-latest.csv", proposal_csv_path),
                            ("review-learning-path-audit-latest.csv", path_audit_csv)):
         (output / latest).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
@@ -177,6 +204,7 @@ def main(argv=None) -> int:
     print(f"Report: {md_path.relative_to(ROOT)}")
     print(f"Details: {csv_path.relative_to(ROOT)}")
     print(f"Privacy details: {privacy_csv_path.relative_to(ROOT)}")
+    print(f"Trajectory details: {trajectory_csv_path.relative_to(ROOT)}")
     print(f"Proposal quality: {proposal_csv_path.relative_to(ROOT)}")
     print(f"Path audit: {path_audit_csv.relative_to(ROOT)}")
     print(f"JSON: {json_path.relative_to(ROOT)}")

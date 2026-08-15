@@ -23,6 +23,7 @@ from core.organization.review_taxonomy import contextual_options, taxonomy
 from core.organization.path_normalization import normalize_target_path, suggest_known_target_path
 from core.organization.privacy_classification import RULE_VERSION as PRIVACY_RULE_VERSION, propose_privacy
 from core.organization.similar_documents import apply_similar_review_proposals
+from core.organization.trajectory_learning import build_trajectory_rules, matching_trajectory_rule
 from core.semantic.rag import GenerationRequest, OpenAICompatibleLocalProvider
 from core.semantic.workset_llm import (
     MAX_DOCUMENTS as LLM_MAX_DOCUMENTS, PROMPT_VERSION as LLM_PROMPT_VERSION,
@@ -480,6 +481,15 @@ def workset(
                     COUNT(*) FILTER (WHERE nomination_type = 'deletion') AS deletion
                 FROM public.v_active_document_lifecycle_nominations
             """) if nomination_storage else {"archive": 0, "deletion": 0}
+            trajectory_reviews = query_all(conn, """
+                SELECT DISTINCT ON (e.file_id)
+                       e.id, e.file_id, e.decision, e.proposed_target_path,
+                       e.created_at, f.filename, f.path
+                FROM public.document_review_events e
+                JOIN public.files f ON f.id = e.file_id
+                WHERE e.review_type = 'target_path'
+                ORDER BY e.file_id, e.created_at DESC, e.id DESC
+            """) if review_storage else []
             rows = query_all(conn, WORKSET_SELECT.replace(
                 "FROM public.v_active_document_workset w",
                 review_select + privacy_select + ai_select + nomination_select
@@ -511,6 +521,33 @@ def workset(
         )}
         item["target_proposal"]["proposal_reason_code"] = "similar_human_review_consensus"
         item["target_proposal"]["proposal_confidence"] = "high"
+        item["review_options"] = contextual_options(row, proposal)
+    trajectory_rules = build_trajectory_rules(trajectory_reviews)
+    for item in enriched:
+        current = item.get("target_proposal") or {}
+        if current.get("category_code") != "work_career":
+            continue
+        rule = matching_trajectory_rule(item, trajectory_rules)
+        if not rule:
+            continue
+        row = next(row for row in rows if int(row["file_id"]) == int(item["file_id"]))
+        proposal = propose_target({
+            **row,
+            "accepted_category": item.get("effective_category") or current.get("category_code"),
+            "accepted_document_family": item.get("effective_document_family")
+                or current.get("document_family_code"),
+            "accepted_lifecycle": row.get("lifecycle"),
+            "accepted_trajectory_label": rule["trajectory_label"],
+        })
+        item["target_proposal"] = {key: proposal[key] for key in (
+            "contract_version", "contract_checksum", "zone_code", "zone_label",
+            "category_code", "category_label", "trajectory_code", "trajectory_label",
+            "document_family_code", "folder_label", "suggested_target_path",
+            "proposal_reason_code", "proposal_confidence",
+        )}
+        item["target_proposal"]["proposal_reason_code"] = "learned_human_trajectory_consensus"
+        item["target_proposal"]["proposal_confidence"] = "high"
+        item["trajectory_learning_proposal"] = rule
         item["review_options"] = contextual_options(row, proposal)
     review_summary = {
         "pending": sum(not item.get("latest_review_id") for item in enriched),

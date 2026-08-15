@@ -1,5 +1,20 @@
 # SCRUM-98 gecontroleerd leren uit portalbeoordelingen
 
+## Contextbewuste traject- en werkgevermappen
+
+Voor sollicitatiedocumenten kan CORE een werkgever- of trajectmap voorstellen op
+basis van eerder geaccepteerde menselijke doelpaden. `Sollicitaties` is daarbij
+de leidende canonieke laag. Tijdelijke bronmappen zoals `uitzoeken`, `nieuw`,
+`tijdelijk`, `algemeen` en `ongesorteerd` worden niet overgenomen. Ook generieke
+familielagen zoals `CV` en `Motivatiebrieven` worden niet als werkgever geleerd.
+
+Een kandidaatregel ontstaat pas na minimaal drie consistente menselijke
+voorbeelden en wordt geblokkeerd door een relevant tegenvoorbeeld. De herkenning
+gebruikt context uit bestandsnaam en bronpad, maar alleen binnen een herkenbare
+sollicitatiecontext. In het portaal blijven support, agreement en de bronreviews
+zichtbaar als lineage. De regel maakt uitsluitend een voorstel: er wordt geen
+bestand verplaatst en geen regel automatisch geactiveerd.
+
 CORE normaliseert menselijke doelpadvoorstellen vóór opslag. Meerdere `/`
 worden één separator; relatieve segmenten, control characters en paden buiten
 de beheerde roots worden geweigerd. De ruwe invoer blijft naast het
