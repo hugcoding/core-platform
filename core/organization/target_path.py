@@ -11,7 +11,7 @@ from typing import Any
 from core.organization.review_taxonomy import taxonomy
 
 
-CONTRACT_VERSION = "canonical-dutch-target-path-v4"
+CONTRACT_VERSION = "canonical-dutch-target-path-v5"
 TARGET_ROOT = "/volume1/data/Persoonlijk"
 ZONE_LABELS = {
     "active": "Actief", "archive": "Archief",
@@ -132,27 +132,40 @@ def document_family(row: dict[str, Any]) -> tuple[str, str]:
     return "general", "Algemeen"
 
 
-def application_trajectory(row: dict[str, Any]) -> tuple[str, str]:
+def application_trajectory_parts(row: dict[str, Any]) -> tuple[str, str, list[str]]:
+    learned_parts = row.get("accepted_trajectory_parts") or []
+    if learned_parts:
+        parts = [safe_component(str(part), fallback="") for part in learned_parts[:2]]
+        parts = [part for part in parts if part]
+        label = " / ".join(parts)
+        code = re.sub(r"[^a-z0-9]+", "_", label.casefold()).strip("_")
+        return code[:80] or "general_applications", label, parts
     learned_label = str(row.get("accepted_trajectory_label") or "").strip()
     if learned_label:
         code = re.sub(r"[^a-z0-9]+", "_", learned_label.casefold()).strip("_")
-        return code[:80] or "general_applications", safe_component(learned_label)
+        safe_label = safe_component(learned_label)
+        return code[:80] or "general_applications", safe_label, [safe_label]
     path = PurePosixPath(str(row.get("path") or "").replace("\\", "/"))
     directories = list(path.parts[:-1])
     marker = next((i for i, value in enumerate(directories)
                    if value.casefold() in {"cv & sollicitaties", "cv en sollicitaties"}), None)
     if marker is None:
-        return "general_work", "Algemeen werk"
+        return "general_work", "Algemeen werk", []
     context = [value for value in directories[marker + 1:]
                if value.casefold().strip() not in TEMPORARY_PATH_COMPONENTS]
     if context and context[0].casefold() in {"ai-chat_history", "ai chat history"}:
-        return "general_preparation", "Algemene voorbereiding"
+        return "general_preparation", "Algemene voorbereiding", []
     labels = [safe_component(value, fallback="") for value in context[:2] if value.strip()]
     if not labels:
-        return "general_applications", "Algemene sollicitaties"
+        return "general_applications", "Algemene sollicitaties", []
     label = " – ".join(labels)
     code = re.sub(r"[^a-z0-9]+", "_", label.casefold()).strip("_") or "general_applications"
-    return code[:80], label
+    return code[:80], label, [label]
+
+
+def application_trajectory(row: dict[str, Any]) -> tuple[str, str]:
+    code, label, _ = application_trajectory_parts(row)
+    return code, label
 
 
 def propose_target(row: dict[str, Any]) -> dict[str, Any]:
@@ -183,7 +196,7 @@ def propose_target(row: dict[str, Any]) -> dict[str, Any]:
     elif category != "needs_review":
         parts.append(CATEGORY_LABELS[category])
         if category == "work_career" and "sollicit" in _evidence(row):
-            trajectory_code, trajectory_label = application_trajectory(row)
+            trajectory_code, trajectory_label, trajectory_parts = application_trajectory_parts(row)
             parts.append("Sollicitaties")
             generic_trajectory = trajectory_code in {
                 "general_work", "general_preparation", "general_applications", "algemeen", "general"
@@ -191,7 +204,7 @@ def propose_target(row: dict[str, Any]) -> dict[str, Any]:
                 "algemeen", "algemeen werk", "algemene sollicitaties", "general"
             }
             if not generic_trajectory:
-                parts.append(trajectory_label)
+                parts.extend(trajectory_parts)
                 path_reductions.append("family_retained_as_metadata_within_trajectory")
             else:
                 path_reductions.append("generic_trajectory_omitted")

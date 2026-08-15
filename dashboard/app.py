@@ -575,6 +575,7 @@ def workset(
                 or current.get("document_family_code"),
             "accepted_lifecycle": row.get("lifecycle"),
             "accepted_trajectory_label": rule["trajectory_label"],
+            "accepted_trajectory_parts": rule["trajectory_parts"],
         })
         item["target_proposal"] = {key: proposal[key] for key in (
             "contract_version", "contract_checksum", "zone_code", "zone_label",

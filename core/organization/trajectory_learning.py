@@ -24,17 +24,26 @@ def normalized_term(value: str) -> str:
     return " ".join(token for token in re.split(r"[^a-z0-9]+", value.casefold()) if token)
 
 
-def trajectory_from_target(path: str, filename: str) -> str | None:
+def trajectory_parts_from_target(path: str, filename: str) -> list[str]:
     parts = list(PurePosixPath(path.replace("\\", "/")).parts)
     folded = [normalized_term(part) for part in parts]
     marker = next((index for index, part in enumerate(folded) if part in APPLICATION_MARKERS), None)
     if marker is None or marker + 1 >= len(parts):
-        return None
-    candidate = parts[marker + 1].strip()
-    if (normalized_term(candidate) in NON_TRAJECTORY_COMPONENTS
-            or candidate.casefold() == filename.casefold()):
-        return None
-    return candidate
+        return []
+    candidates = []
+    for candidate in parts[marker + 1:-1]:
+        candidate = candidate.strip()
+        if not candidate or normalized_term(candidate) in NON_TRAJECTORY_COMPONENTS:
+            continue
+        if candidate.casefold() == filename.casefold():
+            continue
+        candidates.append(candidate)
+    return candidates[:2]
+
+
+def trajectory_from_target(path: str, filename: str) -> str | None:
+    parts = trajectory_parts_from_target(path, filename)
+    return " / ".join(parts) if parts else None
 
 
 def contains_term(evidence: str, term: str) -> bool:
@@ -51,30 +60,41 @@ def build_trajectory_rules(
         latest[int(row["file_id"])] = row
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     labels: dict[str, str] = {}
+    hierarchy_labels: dict[str, list[str]] = {}
+    match_terms: dict[str, str] = {}
     trajectories: dict[int, str] = {}
     for file_id, row in latest.items():
         if row.get("decision") != "accepted" or not row.get("proposed_target_path"):
             continue
-        label = trajectory_from_target(
+        hierarchy = trajectory_parts_from_target(
             str(row["proposed_target_path"]), str(row.get("filename") or ""),
         )
-        if not label:
+        if not hierarchy:
             continue
-        term = normalized_term(label)
-        if not term:
+        hierarchy_key = " / ".join(normalized_term(part) for part in hierarchy)
+        if not hierarchy_key:
             continue
         evidence = normalized_term(f"{row.get('filename', '')} {row.get('path', '')}")
-        if not contains_term(evidence, term):
+        match_term = next(
+            (normalized_term(part) for part in reversed(hierarchy)
+             if contains_term(evidence, normalized_term(part))),
+            None,
+        )
+        if not match_term:
             continue
-        labels.setdefault(term, label)
-        trajectories[file_id] = term
-        groups[term].append(row)
+        labels.setdefault(hierarchy_key, " / ".join(hierarchy))
+        hierarchy_labels.setdefault(hierarchy_key, hierarchy)
+        match_terms.setdefault(hierarchy_key, match_term)
+        trajectories[file_id] = hierarchy_key
+        groups[hierarchy_key].append(row)
     candidates = []
-    for term, examples in groups.items():
+    for hierarchy_key, examples in groups.items():
+        term = match_terms[hierarchy_key]
         counterexamples = []
         for file_id, row in latest.items():
             evidence = normalized_term(f"{row.get('filename', '')} {row.get('path', '')}")
-            if contains_term(evidence, term) and trajectories.get(file_id) not in {None, term}:
+            if (contains_term(evidence, term)
+                    and trajectories.get(file_id) not in {None, hierarchy_key}):
                 counterexamples.append({
                     "file_id": file_id,
                     "target_trajectory": labels.get(trajectories[file_id], trajectories[file_id]),
@@ -86,8 +106,9 @@ def build_trajectory_rules(
         repeated = support >= MINIMUM_SUPPORT
         candidates.append({
             "candidate_type": "application_trajectory_rule",
-            "trajectory_code": re.sub(r"[^a-z0-9]+", "_", term).strip("_")[:80],
-            "trajectory_label": labels[term],
+            "trajectory_code": re.sub(r"[^a-z0-9]+", "_", hierarchy_key).strip("_")[:80],
+            "trajectory_label": labels[hierarchy_key],
+            "trajectory_parts": hierarchy_labels[hierarchy_key],
             "match_term": term,
             "support": support,
             "agreement": round(agreement, 4),

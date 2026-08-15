@@ -5,6 +5,7 @@ from core.organization.trajectory_learning import (
     build_trajectory_rules,
     matching_trajectory_rule,
     trajectory_from_target,
+    trajectory_parts_from_target,
 )
 
 
@@ -70,6 +71,33 @@ class TrajectoryLearningTests(unittest.TestCase):
             "/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Sollicitaties/Rijnland/Motivatiebrief.docx",
         )]
         self.assertEqual([], build_trajectory_rules(rows, minimum_support=1))
+
+    def test_one_duo_review_learns_rijksoverheid_duo_hierarchy(self):
+        rows = [review(
+            1,
+            "Motivatie Data engineer DUO.pdf",
+            "/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Sollicitaties/Rijksoverheid/DUO/Motivatie Data engineer DUO.pdf",
+        )]
+        rules = build_trajectory_rules(rows, minimum_support=1)
+        self.assertEqual(["Rijksoverheid", "DUO"], rules[0]["trajectory_parts"])
+        self.assertEqual("duo", rules[0]["match_term"])
+        self.assertEqual("medium", rules[0]["confidence"])
+        proposal = propose_target({
+            "filename": "CV Data engineer DUO.docx", "extension": "docx",
+            "path": "/volume1/data/Documenten/CV & Sollicitaties/uitzoeken/CV Data engineer DUO.docx",
+            "accepted_category": "work_career", "accepted_document_family": "resumes",
+            "accepted_lifecycle": "active", "accepted_trajectory_parts": rules[0]["trajectory_parts"],
+        })
+        self.assertIn("/Sollicitaties/Rijksoverheid/DUO/", proposal["suggested_target_path"])
+
+    def test_hierarchical_trajectory_display_is_auditable(self):
+        self.assertEqual(
+            ["Rijksoverheid", "DUO"],
+            trajectory_parts_from_target(
+                "/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Sollicitaties/Rijksoverheid/DUO/test.pdf",
+                "test.pdf",
+            ),
+        )
 
     def test_generic_family_layer_is_not_learned(self):
         self.assertIsNone(trajectory_from_target(
