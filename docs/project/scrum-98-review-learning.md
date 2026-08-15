@@ -294,3 +294,17 @@ tegenvoorbeeld is, toont het portaal haar als kandidaatfamilie. Support en
 bronbeoordelingen blijven zichtbaar. Met **Gebruik Hypotheek** wordt de waarde
 opnieuw als expliciet menselijk familievoorstel ingevuld. De kandidaat wordt
 niet automatisch canoniek en activeert geen regel.
+
+## Eenmalige herkenning van een sollicitatietraject
+
+Voor een duidelijk traject of werkgever hoeft CORE niet altijd drie dezelfde
+correcties af te wachten. Eén geaccepteerd menselijk doelpad, bijvoorbeeld
+`Sollicitaties/Rijnland`, mag meteen een voorstel met **medium confidence**
+opleveren wanneer `Rijnland` letterlijk als afzonderlijke term in de
+bestandsnaam of het bronpad van zowel het leervoorbeeld als het nieuwe document
+staat. Bij drie consistente beoordelingen wordt de confidence **high**.
+
+Een relevant tegenvoorbeeld blokkeert het voorstel. Tijdelijke bronmappen zoals
+`uitzoeken`, `nieuw` en `algemeen` tellen niet als betekenisvolle doelmap. De
+uitkomst blijft uitsluitend een verklaarbaar voorstel met verwijzing naar de
+menselijke bronbeoordeling; CORE activeert geen regel en verplaatst geen bestand.

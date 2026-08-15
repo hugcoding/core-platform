@@ -558,7 +558,7 @@ def workset(
         item["target_proposal"]["proposal_reason_code"] = "similar_human_review_consensus"
         item["target_proposal"]["proposal_confidence"] = "high"
         item["review_options"] = contextual_options(row, proposal)
-    trajectory_rules = build_trajectory_rules(trajectory_reviews)
+    trajectory_rules = build_trajectory_rules(trajectory_reviews, minimum_support=1)
     family_candidates = build_proposed_family_candidates(trajectory_reviews)
     for item in enriched:
         current = item.get("target_proposal") or {}
@@ -582,8 +582,11 @@ def workset(
             "document_family_code", "folder_label", "suggested_target_path",
             "proposal_reason_code", "proposal_confidence",
         )}
-        item["target_proposal"]["proposal_reason_code"] = "learned_human_trajectory_consensus"
-        item["target_proposal"]["proposal_confidence"] = "high"
+        item["target_proposal"]["proposal_reason_code"] = (
+            "learned_human_trajectory_consensus" if rule["support"] >= 3
+            else "learned_human_trajectory_context"
+        )
+        item["target_proposal"]["proposal_confidence"] = rule["confidence"]
         item["trajectory_learning_proposal"] = rule
         item["review_options"] = contextual_options(row, proposal)
     for item in enriched:

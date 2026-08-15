@@ -35,6 +35,7 @@ class TrajectoryLearningTests(unittest.TestCase):
         self.assertEqual(1, len(rules))
         self.assertEqual("Sogetti", rules[0]["trajectory_label"])
         self.assertEqual(3, rules[0]["support"])
+        self.assertEqual("high", rules[0]["confidence"])
         self.assertEqual("proposal_only", rules[0]["activation_status"])
         self.assertEqual(3, len(rules[0]["source_review_event_ids"]))
 
@@ -45,6 +46,30 @@ class TrajectoryLearningTests(unittest.TestCase):
         rows.append(review(4, "Sollicitatie-Sogetti-anders.pdf",
                            "/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Sollicitaties/Anders/4.pdf"))
         self.assertEqual([], build_trajectory_rules(rows))
+
+    def test_one_rijnland_review_creates_medium_contextual_proposal(self):
+        rows = [review(
+            1,
+            "Motivatiebrief-Rijnland.docx",
+            "/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Sollicitaties/Rijnland/Motivatiebrief.docx",
+        )]
+        rules = build_trajectory_rules(rows, minimum_support=1)
+        self.assertEqual(1, len(rules))
+        self.assertEqual("Rijnland", rules[0]["trajectory_label"])
+        self.assertEqual("medium", rules[0]["confidence"])
+        self.assertIn("exact_context_term_from_accepted_human_target_path", rules[0]["reason_codes"])
+        self.assertIsNotNone(matching_trajectory_rule({
+            "filename": "CV Rijnland.pdf",
+            "path": "/volume1/data/Documenten/CV & Sollicitaties/uitzoeken/CV Rijnland.pdf",
+        }, rules))
+
+    def test_one_review_without_matching_source_context_creates_no_rule(self):
+        rows = [review(
+            1,
+            "Motivatiebrief.docx",
+            "/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/Sollicitaties/Rijnland/Motivatiebrief.docx",
+        )]
+        self.assertEqual([], build_trajectory_rules(rows, minimum_support=1))
 
     def test_generic_family_layer_is_not_learned(self):
         self.assertIsNone(trajectory_from_target(
