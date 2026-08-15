@@ -9,6 +9,7 @@ WITH seed(configuration) AS (
       "automatic_archive_on_deletion_nomination": false,
       "permanent_delete_enabled": false
     }'::jsonb)
+)
 INSERT INTO public.policy_versions (
     id, policy_code, environment, contract_version, policy_version, status,
     configuration, configuration_checksum, effective_from, created_by,
