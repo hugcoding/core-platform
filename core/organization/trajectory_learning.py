@@ -44,8 +44,8 @@ def contains_term(evidence: str, term: str) -> bool:
 def build_trajectory_rules(
     rows: list[dict[str, Any]], minimum_support: int = MINIMUM_SUPPORT,
 ) -> list[dict[str, Any]]:
-    if minimum_support < 3:
-        raise ValueError("trajectory rules require at least three examples")
+    if minimum_support < 1:
+        raise ValueError("trajectory rules require at least one example")
     latest: dict[int, dict[str, Any]] = {}
     for row in rows:
         latest[int(row["file_id"])] = row
@@ -62,6 +62,9 @@ def build_trajectory_rules(
             continue
         term = normalized_term(label)
         if not term:
+            continue
+        evidence = normalized_term(f"{row.get('filename', '')} {row.get('path', '')}")
+        if not contains_term(evidence, term):
             continue
         labels.setdefault(term, label)
         trajectories[file_id] = term
@@ -80,6 +83,7 @@ def build_trajectory_rules(
         agreement = support / (support + len(counterexamples))
         if support < minimum_support or counterexamples:
             continue
+        repeated = support >= MINIMUM_SUPPORT
         candidates.append({
             "candidate_type": "application_trajectory_rule",
             "trajectory_code": re.sub(r"[^a-z0-9]+", "_", term).strip("_")[:80],
@@ -91,9 +95,11 @@ def build_trajectory_rules(
             "counterexamples": counterexamples[:5],
             "example_file_ids": sorted(int(item["file_id"]) for item in examples)[:10],
             "source_review_event_ids": sorted(str(item["id"]) for item in examples)[:10],
+            "confidence": "high" if repeated else "medium",
             "reason_codes": [
                 "canonical_applications_context",
-                "repeated_accepted_human_target_path",
+                ("repeated_accepted_human_target_path" if repeated
+                 else "exact_context_term_from_accepted_human_target_path"),
                 "temporary_source_layers_ignored",
             ],
             "activation_status": "proposal_only",
