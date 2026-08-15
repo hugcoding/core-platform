@@ -174,6 +174,18 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertFalse(result["file_mutations"])
         self.assertEqual("deletion", result["nomination_type"])
 
+    def test_nomination_ui_has_no_popup_and_keeps_card_visible(self):
+        script = (ROOT / "dashboard" / "static" / "workset.js").read_text(encoding="utf-8")
+        start = script.index("async function submitNomination")
+        end = script.index("async function copyText", start)
+        nomination = script[start:end]
+        self.assertNotIn("prompt(", nomination)
+        self.assertNotIn("loadWorkset(", nomination)
+        self.assertNotIn(".remove()", nomination)
+        self.assertIn(".review-note", nomination)
+        self.assertIn("panel.replaceWith(updated)", nomination)
+        self.assertIn('aria-pressed="${archive?', script)
+
     def test_stored_ai_proposal_keeps_file_identity_for_portal_refresh(self):
         row = {
             "file_id": 42,
