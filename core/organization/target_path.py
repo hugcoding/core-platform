@@ -57,6 +57,10 @@ FAMILY_LABELS.update({
 })
 FAMILY_LABELS.update({item["code"]: item["label"] for item in taxonomy()["families"]})
 SECRET_TERMS = ("wachtwoord", "password", "passwords", "credentials", "api key", "secret")
+TEMPORARY_PATH_COMPONENTS = {
+    "uitzoeken", "nieuw", "tijdelijk", "temp", "algemeen", "general",
+    "ongesorteerd", "inbox", "te beoordelen",
+}
 
 
 def contract_checksum() -> str:
@@ -129,13 +133,18 @@ def document_family(row: dict[str, Any]) -> tuple[str, str]:
 
 
 def application_trajectory(row: dict[str, Any]) -> tuple[str, str]:
+    learned_label = str(row.get("accepted_trajectory_label") or "").strip()
+    if learned_label:
+        code = re.sub(r"[^a-z0-9]+", "_", learned_label.casefold()).strip("_")
+        return code[:80] or "general_applications", safe_component(learned_label)
     path = PurePosixPath(str(row.get("path") or "").replace("\\", "/"))
     directories = list(path.parts[:-1])
     marker = next((i for i, value in enumerate(directories)
                    if value.casefold() in {"cv & sollicitaties", "cv en sollicitaties"}), None)
     if marker is None:
         return "general_work", "Algemeen werk"
-    context = directories[marker + 1:]
+    context = [value for value in directories[marker + 1:]
+               if value.casefold().strip() not in TEMPORARY_PATH_COMPONENTS]
     if context and context[0].casefold() in {"ai-chat_history", "ai chat history"}:
         return "general_preparation", "Algemene voorbereiding"
     labels = [safe_component(value, fallback="") for value in context[:2] if value.strip()]
