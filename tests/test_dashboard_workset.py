@@ -134,6 +134,30 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn("workset_status_unchanged", source)
         self.assertIn("archive_status_unchanged", source)
 
+    def test_target_path_references_are_cached_while_typing(self):
+        connection = mock.MagicMock()
+        connection.__enter__.return_value = connection
+        self.dashboard.invalidate_target_path_reference_cache()
+        self.dashboard._target_path_reference_cache["filenames"].clear()
+        with mock.patch.object(self.dashboard, "db_connect", return_value=connection) as connect, mock.patch.object(
+            self.dashboard, "query_one", return_value={"filename": "document.pdf"},
+        ), mock.patch.object(self.dashboard, "query_all", return_value=[{
+            "proposed_target_path": "/volume1/data/Persoonlijk/Actief/Wonen/document.pdf",
+            "proposal_target_path": None,
+        }]):
+            first = self.dashboard.target_path_reference_data(42)
+            second = self.dashboard.target_path_reference_data(42)
+        self.assertEqual(first, second)
+        self.assertEqual(1, connect.call_count)
+        self.dashboard.invalidate_target_path_reference_cache()
+        self.dashboard._target_path_reference_cache["filenames"].clear()
+
+    def test_path_suggestion_frontend_aborts_stale_requests(self):
+        script = (ROOT / "dashboard" / "static" / "workset.js").read_text(encoding="utf-8")
+        self.assertIn("pathSuggestionController.abort()", script)
+        self.assertIn("signal:pathSuggestionController.signal", script)
+        self.assertIn("sequence!==pathSuggestionSequence", script)
+
     def test_deletion_nomination_is_append_only_and_keeps_workset_active(self):
         connection = mock.MagicMock()
         connection.__enter__.return_value = connection
@@ -316,6 +340,8 @@ class DashboardWorksetTests(unittest.TestCase):
     def test_target_path_suggestion_is_advisory(self):
         connection = mock.MagicMock()
         connection.__enter__.return_value = connection
+        self.dashboard.invalidate_target_path_reference_cache()
+        self.dashboard._target_path_reference_cache["filenames"].clear()
         with mock.patch.object(self.dashboard, "db_connect", return_value=connection), mock.patch.object(
             self.dashboard, "query_one", return_value={"filename": "aangifte.pdf"},
         ), mock.patch.object(self.dashboard, "query_all", return_value=[{
