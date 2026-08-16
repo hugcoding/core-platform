@@ -1502,7 +1502,7 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                             decision, corrected_lifecycle, lifecycle_active_until,
                             review_notes, reviewer, supersedes_event_id
                         ) VALUES (%s,'document-lifecycle-review-v1','workset_portal','lifecycle',
-                                  %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                                  %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         ON CONFLICT (idempotency_key) DO NOTHING
                         RETURNING id, created_at, file_id, decision
                     """, (
