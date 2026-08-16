@@ -261,6 +261,12 @@ def overview():
                 columns = [item.name for item in cur.description]
                 recent_scans = [{key: iso(value) for key, value in zip(columns, row)} for row in cur.fetchall()]
                 latest_scan = recent_scans[0] if recent_scans else {}
+            if query_one(conn, "SELECT to_regclass('public.workset_ai_jobs') IS NOT NULL AS available")["available"]:
+                ai_counts = query_all(conn, """
+                    SELECT status, count(*) AS job_count FROM public.workset_ai_jobs GROUP BY status
+                """)
+                for item in ai_counts:
+                    metrics[f"ai_{item['status']}"] = int(item["job_count"])
         services.append({"name": "postgres", "state": "healthy", "detail": "database connected"})
     except Exception as exc:
         errors.append(f"database: {type(exc).__name__}")
@@ -274,6 +280,8 @@ def overview():
             heartbeat_service(client, "metadata_worker"),
             heartbeat_service(client, "watcher", intentionally_paused=True),
         ])
+        if llm_enabled():
+            services.append(heartbeat_service(client, "workset_ai_worker"))
         metrics.update(
             polling_queue=client.xlen("scan_stream"),
             realtime_queue=client.xlen("scan_stream_realtime"),
@@ -1101,6 +1109,167 @@ def relevant_review_examples(document: dict[str, Any], candidates: list[dict[str
 
 def public_ai_proposal(row: dict[str, Any]) -> dict[str, Any]:
     return {key: iso(value) for key, value in row.items() if key != "content_sha256"}
+
+
+def public_ai_job(row: dict[str, Any]) -> dict[str, Any]:
+    return {key: iso(value) for key, value in row.items() if key != "content_sha256"}
+
+
+@app.get("/api/v1/workset/ai-jobs")
+def workset_ai_jobs(status: str = Query("all", pattern="^(all|pending|running|ready|failed|abstained|cancelled)$")):
+    where, params = ("", ()) if status == "all" else (" WHERE j.status=%s", (status,))
+    try:
+        with db_connect() as conn:
+            rows = query_all(conn, """
+                SELECT j.*, f.filename, p.category_code, p.family_code, p.lifecycle,
+                       p.privacy_advice, p.confidence, p.reason, p.relation_kind,
+                       p.related_file_ids, p.created_at AS proposal_created_at,
+                       NOT EXISTS (
+                           SELECT 1 FROM public.document_review_events e
+                           WHERE e.ai_proposal_id=j.proposal_id AND e.decision='accepted'
+                       ) AS awaiting_human_review
+                FROM public.workset_ai_jobs j
+                JOIN public.files f ON f.id=j.file_id
+                LEFT JOIN public.workset_ai_proposals p ON p.id=j.proposal_id
+            """ + where + " ORDER BY j.priority DESC,j.requested_at,j.id LIMIT 200", params)
+            ready_ids = [int(row["file_id"]) for row in rows if row["status"] == "ready"]
+            candidates = query_all(
+                conn, WORKSET_SELECT + " WHERE w.file_id=ANY(%s)", (ready_ids,),
+            ) if ready_ids else []
+            candidates_by_id = {int(item["file_id"]): item for item in candidates}
+            for item in rows:
+                candidate = candidates_by_id.get(int(item["file_id"]))
+                if item["status"] == "ready" and candidate:
+                    target = propose_target({
+                        **candidate,
+                        "accepted_category": item["category_code"],
+                        "accepted_document_family": item["family_code"],
+                        "accepted_lifecycle": item["lifecycle"],
+                    })
+                    item["suggested_target_path"] = target["suggested_target_path"]
+                    item["suggested_filename"] = candidate["filename"]
+            summary_rows = query_all(conn, "SELECT * FROM public.v_workset_ai_job_summary")
+            ready_review = query_one(conn, """
+                SELECT count(*)::bigint AS count
+                FROM public.workset_ai_jobs j
+                WHERE j.status='ready' AND NOT EXISTS (
+                    SELECT 1 FROM public.document_review_events e
+                    WHERE e.ai_proposal_id=j.proposal_id AND e.decision='accepted'
+                )
+            """)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"AI queue unavailable: {type(exc).__name__}") from exc
+    summary = {item: 0 for item in ("pending", "running", "ready", "failed", "abstained", "cancelled")}
+    summary.update({str(row["status"]): int(row["job_count"]) for row in summary_rows})
+    summary["ready_for_review"] = int(ready_review["count"])
+    return {"summary": summary, "jobs": [public_ai_job(row) for row in rows]}
+
+
+@app.post("/api/v1/workset/ai-jobs")
+def create_workset_ai_job(payload: dict[str, Any] = Body(...)):
+    if not review_writes_enabled() or not llm_enabled():
+        raise HTTPException(status_code=403, detail="local workset AI is disabled")
+    try:
+        idempotency_key = str(uuid.UUID(str(payload["idempotency_key"])))
+        file_id = int(payload["file_id"])
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=422, detail="valid file ID and idempotency key required") from exc
+    model = os.getenv("CORE_LLM_MODEL", "qwen3.6:latest")
+    priority_by_status = {"active": 300, "needs_review": 200, "inactive": 100}
+    try:
+        with db_connect() as conn, conn.cursor() as cur:
+            rows = query_all(conn, WORKSET_SELECT + " WHERE w.file_id=%s", (file_id,))
+            if not rows:
+                raise HTTPException(status_code=409, detail="file is no longer a workset candidate")
+            row = rows[0]
+            status = str(row["workset_status"])
+            cur.execute("""
+                INSERT INTO public.workset_ai_jobs
+                  (idempotency_key,file_id,content_sha256,workset_status_snapshot,priority,
+                   model_id,prompt_version,requested_by)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (idempotency_key) DO NOTHING
+                RETURNING *
+            """, (idempotency_key, file_id, row["content_sha256"], status,
+                  priority_by_status[status], model, LLM_PROMPT_VERSION,
+                  os.getenv("CORE_REVIEWER", "hugo")))
+            job = cur.fetchone()
+            if not job:
+                cur.execute("SELECT * FROM public.workset_ai_jobs WHERE idempotency_key=%s", (idempotency_key,))
+                job = cur.fetchone()
+            if int(job["file_id"]) != file_id:
+                raise HTTPException(status_code=409, detail="idempotency key belongs to another request")
+    except psycopg2.errors.UniqueViolation as exc:
+        raise HTTPException(status_code=409, detail="an AI request for this document is already pending") from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"AI queue unavailable: {type(exc).__name__}") from exc
+    return {"status": "queued", "job": public_ai_job(dict(job)), "file_mutations": False}
+
+
+@app.post("/api/v1/workset/ai-jobs/{job_id}/accept")
+def accept_complete_ai_proposal(job_id: str, payload: dict[str, Any] = Body(...)):
+    if not review_writes_enabled():
+        raise HTTPException(status_code=403, detail="interactive reviews are disabled")
+    try:
+        job_uuid = str(uuid.UUID(job_id))
+        idempotency_key = uuid.UUID(str(payload["idempotency_key"]))
+    except (KeyError, ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=422, detail="valid job and idempotency key required") from exc
+    reviewer = os.getenv("CORE_REVIEWER", "hugo")
+    try:
+        with db_connect() as conn, conn.cursor() as cur:
+            cur.execute("""
+                SELECT j.*,p.category_code,p.family_code,p.lifecycle,p.privacy_advice,
+                       p.confidence,p.reason,p.id AS ai_proposal_id
+                FROM public.workset_ai_jobs j JOIN public.workset_ai_proposals p ON p.id=j.proposal_id
+                WHERE j.id=%s AND j.status='ready'
+            """, (job_uuid,))
+            ai = cur.fetchone()
+            if not ai:
+                raise HTTPException(status_code=409, detail="AI proposal is not ready")
+            rows = query_all(conn, WORKSET_SELECT + " WHERE w.file_id=%s", (ai["file_id"],))
+            if not rows or rows[0]["content_sha256"] != ai["content_sha256"]:
+                raise HTTPException(status_code=409, detail="AI proposal is stale")
+            row = rows[0]
+            target = propose_target({**row, "accepted_category": ai["category_code"],
+                "accepted_document_family": ai["family_code"], "accepted_lifecycle": ai["lifecycle"]})
+            event_ids = []
+            for review_type in ("target_path", "privacy_classification", "lifecycle"):
+                event_key = str(uuid.uuid5(idempotency_key, review_type))
+                cur.execute("""
+                    INSERT INTO public.document_review_events (
+                      idempotency_key,review_contract_version,channel,review_type,file_id,
+                      content_group_id,content_sha256,proposal_category_code,
+                      proposal_document_family_code,proposal_lifecycle,proposal_target_path,
+                      proposal_confidence,proposal_reason_code,decision,
+                      corrected_document_family_code,corrected_category_code,
+                      proposal_privacy_classification,corrected_privacy_classification,
+                      privacy_rule_version,corrected_lifecycle,reviewer,ai_proposal_id)
+                    VALUES (%s,'scrum-106-complete-ai-proposal-v1','workset_portal',%s,%s,%s,%s,
+                            %s,%s,%s,%s,%s,'human_accepted_complete_ai_proposal','accepted',
+                            %s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (idempotency_key) DO NOTHING RETURNING id
+                """, (event_key, review_type, row["file_id"], row["content_group_id"],
+                      row["content_sha256"], ai["category_code"], ai["family_code"],
+                      ai["lifecycle"], target["suggested_target_path"], ai["confidence"],
+                      ai["family_code"] if review_type == "target_path" else None,
+                      ai["category_code"] if review_type == "target_path" else None,
+                      ai["privacy_advice"] if review_type == "privacy_classification" else None,
+                      ai["privacy_advice"] if review_type == "privacy_classification" else None,
+                      "scrum-106-human-accepted-ai-v1" if review_type == "privacy_classification" else None,
+                      ai["lifecycle"] if review_type == "lifecycle" else None,
+                      reviewer, ai["ai_proposal_id"]))
+                created = cur.fetchone()
+                if created:
+                    event_ids.append(str(created["id"]))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"AI acceptance unavailable: {type(exc).__name__}") from exc
+    return {"status": "accepted", "job_id": job_uuid, "review_event_ids": event_ids,
+            "human_confirmation": True, "file_mutations": False, "model_updates": False}
 
 
 @app.post("/api/v1/workset/ai-runs")

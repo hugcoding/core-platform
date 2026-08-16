@@ -1,0 +1,78 @@
+import importlib
+import sys
+import types
+import unittest
+from pathlib import Path
+from unittest import mock
+
+
+ROOT = Path(__file__).parents[1]
+
+
+class WorksetAiQueueTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        redis_module = types.ModuleType("redis")
+        redis_module.Redis = mock.MagicMock
+        redis_module.ResponseError = RuntimeError
+        psycopg2_module = types.ModuleType("psycopg2")
+        psycopg2_module.connect = mock.MagicMock
+        extras_module = types.ModuleType("psycopg2.extras")
+        extras_module.RealDictCursor = object
+        psycopg2_module.extras = extras_module
+        with mock.patch.dict(sys.modules, {
+            "redis": redis_module, "psycopg2": psycopg2_module,
+            "psycopg2.extras": extras_module,
+        }):
+            cls.worker = importlib.import_module("workset_ai_worker")
+
+    def test_resource_gate_protects_cpu_memory_and_core_pipeline(self):
+        self.assertEqual("waiting_for_cpu", self.worker.resource_gate(
+            {"cpu_load_percent": 71, "available_memory_mib": 8000}, 0,
+        ))
+        self.assertEqual("waiting_for_memory", self.worker.resource_gate(
+            {"cpu_load_percent": 20, "available_memory_mib": 2000}, 0,
+        ))
+        self.assertEqual("core_pipeline_priority", self.worker.resource_gate(
+            {"cpu_load_percent": 20, "available_memory_mib": 8000}, 1001,
+        ))
+        self.assertIsNone(self.worker.resource_gate(
+            {"cpu_load_percent": 20, "available_memory_mib": 8000}, 0,
+        ))
+
+    def test_claim_query_prioritizes_active_before_review_and_inactive(self):
+        source = (ROOT / "workset_ai_worker.py").read_text(encoding="utf-8")
+        self.assertIn("ORDER BY priority DESC, requested_at, id", source)
+        self.assertIn("FOR UPDATE SKIP LOCKED", source)
+        self.assertIn("MAX_STREAM_LAG", source)
+        self.assertIn("workset_ai_worker:heartbeat", source)
+
+    def test_migration_has_persistent_queue_and_rollback(self):
+        migration = (ROOT / "database" / "migrations" / "20260816_add_async_workset_ai_jobs.sql").read_text()
+        rollback = (ROOT / "database" / "migrations" / "rollback" / "20260816_add_async_workset_ai_jobs.sql").read_text()
+        self.assertIn("CREATE TABLE IF NOT EXISTS public.workset_ai_jobs", migration)
+        self.assertIn("WHERE status IN ('pending', 'running')", migration)
+        self.assertIn("DROP TABLE IF EXISTS public.workset_ai_jobs", rollback)
+
+    def test_portal_uses_individual_jobs_bell_and_explicit_complete_acceptance(self):
+        script = (ROOT / "dashboard" / "static" / "workset-ai.js").read_text(encoding="utf-8")
+        app = (ROOT / "dashboard" / "app.py").read_text(encoding="utf-8")
+        self.assertIn("Vraag AI-voorstel aan", script)
+        self.assertIn("ai-bell", script)
+        self.assertIn("Neem volledig AI-voorstel over", script)
+        self.assertNotIn("file_ids:ids", script)
+        self.assertIn('@app.post("/api/v1/workset/ai-jobs")', app)
+        self.assertIn('@app.post("/api/v1/workset/ai-jobs/{job_id}/accept")', app)
+        self.assertIn("for review_type in (\"target_path\", \"privacy_classification\", \"lifecycle\")", app)
+        self.assertIn('"file_mutations": False', app)
+
+    def test_compose_worker_is_read_only_and_single_process(self):
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("workset_ai_worker:", compose)
+        self.assertIn("CORE_AI_MAX_CPU_PERCENT", compose)
+        self.assertIn('"/volume1:/volume1:ro"', compose)
+        self.assertIn("read_only: true", compose)
+
+
+if __name__ == "__main__":
+    unittest.main()

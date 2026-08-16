@@ -1,90 +1,17 @@
-// SCRUM-101: local AI on at most five explicitly selected visible documents.
-function aiReasonInDutch(reason){
-  const known={invalid_confidence_or_relation:'Confidence of documentrelatie was niet betrouwbaar.',reason_not_dutch:'De AI-toelichting voldeed niet aan de verplichte Nederlandse taal.',model_abstained:'De AI vond onvoldoende bewijs.',provider_response_not_valid_json:'De AI gaf geen geldig voorstel terug.',unknown_taxonomy_value:'Het voorstel paste niet binnen de CORE-taxonomie.'};
-  if(known[reason])return known[reason];
-  const english=(String(reason).toLowerCase().match(/\b(the|this|are|for|from|with|contains|because|and|human|aligns|related|current|offer)\b/g)||[]).length;
-  return english>=2?'Deze historische AI-toelichting was niet Nederlandstalig; de oorspronkelijke lineage blijft auditbaar bewaard.':reason;
-}
-function selectedAiDocuments(){
-  return visibleBulkCheckboxes().filter(box=>box.checked).map(box=>{
-    const panel=box.closest('.document-card').querySelector('.review-panel');
-    return Number(panel.dataset.fileId);
-  });
-}
-function aiFilterSnapshot(){return{
-  status:ws('worksetStatus').value,review_state:ws('worksetReview').value,
-  decision:ws('worksetDecision').value,extension:ws('worksetExtension').value,
-  family:ws('worksetFamily').value,sort:ws('worksetSort').value,search:ws('worksetSearch').value.trim()
-}}
-function renderStoredAiProposals(){
-  state.documents.forEach(doc=>{
-    if(!doc.ai_proposal)return;
-    const panel=document.querySelector(`.review-panel[data-file-id="${doc.file_id}"]`);
-    if(panel&&!panel.closest('.document-card').querySelector('.ai-info'))applyAiProposal(doc.ai_proposal);
-  });
-}
-function updateAiButton(){
-  const ids=selectedAiDocuments(),button=ws('worksetAiAnalyze');
-  button.hidden=!state.reviewEnabled;button.disabled=!ids.length||ids.length>5;
-  ws('worksetAiHint').textContent=ids.length>5?'Selecteer maximaal 5 documenten':
-    ids.length?`${ids.length} geselecteerd voor lokale AI`:'Selecteer 1–5 documenten';
-  renderStoredAiProposals();
-}
-function applyAiProposal(proposal){
-  const doc=state.documents.find(item=>Number(item.file_id)===Number(proposal.file_id));
-  const panel=document.querySelector(`.review-panel[data-file-id="${proposal.file_id}"]`);
-  if(!doc||!panel)return;
-  doc.ai_proposal=proposal;panel.dataset.aiProposalId=proposal.id||'';
-  if(proposal.status==='ready'){
-    const category=panel.querySelector('.review-category');category.value=proposal.category_code;
-    updatePanelCategory(panel);const family=panel.querySelector('.review-family');
-    if(![...family.options].some(option=>option.value===proposal.family_code)){
-      const known=state.taxonomy.families.find(item=>item.code===proposal.family_code);
-      family.insertAdjacentHTML('afterbegin',`<option value="${wsEsc(proposal.family_code)}">${wsEsc(known?.label||proposal.family_code)}</option>`);
-    }
-    family.value=proposal.family_code;refreshTargetPathPreview(panel);
-  }
-  const documentCard=panel.closest('.document-card'),top=documentCard.querySelector('.document-top');
-  let info=top.querySelector('.ai-info');
-  if(!info){info=document.createElement('span');info.className='ai-info';top.querySelector('.status-pill').before(info)}
-  const ready=proposal.status==='ready',category=state.taxonomy.categories.find(item=>item.code===proposal.category_code),
-    family=state.taxonomy.families.find(item=>item.code===proposal.family_code),
-    relations={none:'Geen documentrelatie',source_document:'Brondocument',exported_representation:'Geëxporteerde uitvoering',version:'Versie',related_document:'Verwant document'},
-    reason=aiReasonInDutch(proposal.reason);
-  info.className=`ai-info ${ready?'ready':'abstained'}`;
-  info.innerHTML=`<button type="button" class="ai-info-button" aria-expanded="false" aria-label="AI-informatie voor ${wsEsc(doc.filename)}">AI</button>
-    <section class="ai-info-popover" role="tooltip" hidden>
-      <strong>${ready?'AI-voorstel beschikbaar':'AI heeft zich onthouden'}</strong>
-      <dl><dt>Status</dt><dd>${wsEsc(proposal.status)}</dd>${ready?`<dt>Categorie</dt><dd>${wsEsc(category?.label||proposal.category_code)}</dd><dt>Familie</dt><dd>${wsEsc(family?.label||proposal.family_code)}</dd>`:''}<dt>Confidence</dt><dd>${wsEsc(proposal.confidence)}</dd><dt>Reden</dt><dd>${wsEsc(reason)}</dd>${ready?`<dt>Privacyadvies</dt><dd>${wsEsc(proposal.privacy_advice)}</dd><dt>Relatie</dt><dd>${wsEsc(relations[proposal.relation_kind]||proposal.relation_kind)}</dd>`:''}<dt>Model</dt><dd>${wsEsc(proposal.model_id)}</dd><dt>Prompt</dt><dd>${wsEsc(proposal.prompt_version)}</dd><dt>Analyse</dt><dd>${wsEsc(wsDt(proposal.created_at))}</dd></dl>
-      <small>AI-advies; niets is automatisch bevestigd.</small>
-    </section>`;
-}
-async function analyzeSelectedWithAi(){
-  const ids=selectedAiDocuments(),button=ws('worksetAiAnalyze'),hint=ws('worksetAiHint');
-  if(!ids.length||ids.length>5)return;button.disabled=true;hint.textContent='Lokale AI analyseert; dit kan even duren…';
-  try{
-    const response=await fetch('/api/v1/workset/ai-runs',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({idempotency_key:reviewId(),file_ids:ids,filter_snapshot:aiFilterSnapshot()})});
-    if(!response.ok){const error=await response.json().catch(()=>({}));throw Error(error.detail||`HTTP ${response.status}`)}const data=await response.json();
-    data.proposals.forEach(applyAiProposal);hint.textContent=`${data.proposals.length} AI-voorstellen klaar voor jouw beoordeling.`;
-  }catch(error){hint.textContent=`AI-analyse mislukt: ${error.message}`}
-  finally{button.disabled=false}
-}
-document.addEventListener('change',event=>{if(event.target.closest('.bulk-select'))updateAiButton()});
-document.addEventListener('click',event=>{
-  const button=event.target.closest('.ai-info-button');
-  document.querySelectorAll('.ai-info-button[aria-expanded="true"]').forEach(open=>{
-    if(open!==button){open.setAttribute('aria-expanded','false');open.nextElementSibling.hidden=true}
-  });
-  if(!button)return;
-  const popover=button.nextElementSibling,open=button.getAttribute('aria-expanded')!=='true';
-  button.setAttribute('aria-expanded',String(open));popover.hidden=!open;
-});
-document.addEventListener('keydown',event=>{
-  if(event.key!=='Escape')return;
-  document.querySelectorAll('.ai-info-button[aria-expanded="true"]').forEach(button=>{
-    button.setAttribute('aria-expanded','false');button.nextElementSibling.hidden=true;button.focus();
-  });
-});
-document.addEventListener('workset:rendered',updateAiButton);
-ws('worksetAiAnalyze').addEventListener('click',analyzeSelectedWithAi);
+// SCRUM-106: individual, asynchronous and human-controlled AI requests.
+const aiQueue={jobs:new Map(),summary:{},refreshTimer:null};
+function aiStatusLabel(status){return({pending:'Wachtend',running:'Bezig',ready:'Voorstel gereed',failed:'Mislukt',abstained:'Onvoldoende bewijs',cancelled:'Vervallen'})[status]||status}
+function aiReasonInDutch(reason){const known={waiting_for_cpu:'Wacht op lagere CPU-belasting',waiting_for_memory:'Wacht op voldoende vrij geheugen',core_pipeline_priority:'CORE-verwerking heeft voorrang',ai_worker_busy:'De lokale AI-worker is bezig',provider_unavailable:'De lokale AI-provider is niet bereikbaar'};return known[reason]||reason||''}
+async function refreshAiQueue(){try{const response=await fetch('/api/v1/workset/ai-jobs',{cache:'no-store'});if(!response.ok)throw Error(response.status);const data=await response.json();aiQueue.summary=data.summary;aiQueue.jobs=new Map(data.jobs.map(job=>[Number(job.file_id),job]));renderAiBell(data.jobs);decorateAiActions()}catch(error){const bell=document.querySelector('.ai-notification');if(bell)bell.title='AI-wachtrij niet beschikbaar'}}
+function ensureAiBell(){let bell=document.querySelector('.ai-notification');if(bell)return bell;bell=document.createElement('div');bell.className='ai-notification';bell.innerHTML=`<button type="button" class="ai-bell" aria-expanded="false" aria-label="AI-voorstellen"><span aria-hidden="true">&#128276;</span><b>0</b></button><section class="ai-ready-list" hidden><strong>AI-voorstellen gereed</strong><div></div></section>`;document.querySelector('.workset-page header').append(bell);bell.querySelector('.ai-bell').addEventListener('click',()=>{const list=bell.querySelector('.ai-ready-list'),open=list.hidden;list.hidden=!open;bell.querySelector('.ai-bell').setAttribute('aria-expanded',String(open))});bell.addEventListener('click',event=>{const item=event.target.closest('[data-ai-ready-file]');if(!item)return;ws('worksetSearch').value=item.dataset.filename;bell.querySelector('.ai-ready-list').hidden=true;loadWorkset(true)});return bell}
+function renderAiBell(jobs){const bell=ensureAiBell(),ready=jobs.filter(job=>job.status==='ready'&&job.awaiting_human_review);bell.querySelector('.ai-bell b').textContent=ready.length;bell.classList.toggle('has-ready',ready.length>0);bell.querySelector('.ai-ready-list div').innerHTML=ready.length?ready.map(job=>`<button type="button" data-ai-ready-file="${job.file_id}" data-filename="${wsEsc(job.filename)}"><span>${wsEsc(job.filename)}</span><small>${wsEsc(aiStatusLabel(job.status))}</small></button>`).join(''):'<p>Geen nieuwe voorstellen.</p>'}
+function aiInfo(proposal){if(!proposal)return'';return`<span class="ai-info"><button type="button" class="ai-info-button" aria-expanded="false" aria-label="AI-informatie">AI</button><span class="ai-info-popover" role="tooltip" hidden><strong>AI-analyse</strong><dl><dt>Status</dt><dd>${wsEsc(aiStatusLabel(proposal.status))}</dd><dt>Confidence</dt><dd>${wsEsc(proposal.confidence)}</dd><dt>Reden</dt><dd>${wsEsc(proposal.reason)}</dd><dt>Privacy</dt><dd>${wsEsc(proposal.privacy_advice)}</dd><dt>Model</dt><dd>${wsEsc(proposal.model_id)}</dd><dt>Prompt</dt><dd>${wsEsc(proposal.prompt_version)}</dd></dl><small>${wsEsc(proposal.created_at||proposal.proposal_created_at)}</small></span></span>`}
+function aiAction(job,doc){if(!job)return`<button type="button" class="request-ai" data-ai-file="${doc.file_id}">Vraag AI-voorstel aan</button><span class="ai-job-message"></span>`;const retry=['failed','cancelled','abstained'].includes(job.status)?`<button type="button" class="request-ai" data-ai-file="${doc.file_id}">Opnieuw aanvragen</button>`:'',accept=job.status==='ready'&&job.awaiting_human_review?`<button type="button" class="review-ai" data-ai-file="${doc.file_id}">Bekijk AI-voorstel</button>`:'';return`<span class="ai-job-status ${wsEsc(job.status)}">AI: ${wsEsc(aiStatusLabel(job.status))}${job.waiting_reason?` - ${wsEsc(aiReasonInDutch(job.waiting_reason))}`:''}</span>${aiInfo(job)}${accept}${retry}<span class="ai-job-message"></span>`}
+function decorateAiActions(){document.querySelectorAll('.document-card').forEach((card,index)=>{card.querySelector('.bulk-select')?.remove();const doc=state.documents[index];if(!doc)return;let actions=card.querySelector('.ai-document-actions');if(!actions){actions=document.createElement('div');actions.className='ai-document-actions';const lifecycle=card.querySelector('.lifecycle-review'),privacy=card.querySelector('.privacy-review');if(lifecycle)lifecycle.before(actions);else if(privacy)privacy.before(actions);else card.querySelector('.document-main').append(actions)}actions.dataset.fileId=doc.file_id;actions.innerHTML=aiAction(aiQueue.jobs.get(Number(doc.file_id)),doc)})}
+async function requestAi(fileId,actions){const message=actions.querySelector('.ai-job-message');message.textContent='Aanvraag toevoegen...';actions.querySelectorAll('button').forEach(button=>button.disabled=true);try{const response=await fetch('/api/v1/workset/ai-jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_id:Number(fileId),idempotency_key:reviewId()})});const data=await response.json();if(!response.ok)throw Error(data.detail||response.status);message.textContent='AI-aanvraag staat in de wachtrij';await refreshAiQueue()}catch(error){message.textContent=`Aanvraag mislukt: ${error.message}`;actions.querySelectorAll('button').forEach(button=>button.disabled=false)}}
+function ensureAiDialog(){let dialog=document.getElementById('aiProposalDialog');if(dialog)return dialog;dialog=document.createElement('dialog');dialog.id='aiProposalDialog';dialog.className='ai-proposal-dialog';dialog.innerHTML=`<form method="dialog"><header><div><p class="eyebrow">LOKAAL AI-ADVIES</p><h2>Volledig voorstel overnemen?</h2></div><button value="cancel" aria-label="Sluiten">x</button></header><p>Controleer de verschillen. Overnemen schrijft menselijke beoordelingen; bestanden veranderen niet.</p><dl class="ai-proposal-diff"></dl><p class="ai-accept-message" aria-live="polite"></p><footer><button value="cancel">Terug</button><button type="button" class="accept-complete-ai">Neem volledig AI-voorstel over</button></footer></form>`;document.body.append(dialog);return dialog}
+function reviewAi(fileId){const job=aiQueue.jobs.get(Number(fileId));if(!job||job.status!=='ready')return;const dialog=ensureAiDialog(),labels={low:'Laag',medium:'Middel',high:'Hoog',active:'Actief',archive:'Inactief / archief',needs_review:'Later beoordelen'},category=state.taxonomy.categories.find(item=>item.code===job.category_code)?.label||job.category_code,family=state.taxonomy.families.find(item=>item.code===job.family_code)?.label||job.family_code;dialog.dataset.jobId=job.id;dialog.querySelector('.ai-proposal-diff').innerHTML=`<dt>Document</dt><dd>${wsEsc(job.filename)}</dd><dt>Bestandsnaam</dt><dd>${wsEsc(job.suggested_filename||job.filename)} (ongewijzigd)</dd><dt>Doelpad</dt><dd>${wsEsc(job.suggested_target_path)}</dd><dt>Categorie</dt><dd>${wsEsc(category)}</dd><dt>Familie</dt><dd>${wsEsc(family)}</dd><dt>Privacy</dt><dd>${wsEsc(labels[job.privacy_advice]||job.privacy_advice)}</dd><dt>Lifecycle</dt><dd>${wsEsc(labels[job.lifecycle]||job.lifecycle)}</dd><dt>Confidence</dt><dd>${wsEsc(job.confidence)}</dd><dt>Reden</dt><dd>${wsEsc(job.reason)}</dd><dt>Model</dt><dd>${wsEsc(job.model_id)}</dd><dt>Prompt</dt><dd>${wsEsc(job.prompt_version)}</dd>`;dialog.querySelector('.ai-accept-message').textContent='';dialog.showModal()}
+async function acceptCompleteAi(dialog){const button=dialog.querySelector('.accept-complete-ai'),message=dialog.querySelector('.ai-accept-message');button.disabled=true;message.textContent='Menselijke beoordelingen opslaan...';try{const response=await fetch(`/api/v1/workset/ai-jobs/${dialog.dataset.jobId}/accept`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idempotency_key:reviewId()})});const data=await response.json();if(!response.ok)throw Error(data.detail||response.status);message.textContent='Volledig voorstel is als menselijk oordeel opgeslagen';setTimeout(()=>{dialog.close();refreshAiQueue();loadWorkset(true)},700)}catch(error){message.textContent=`Overnemen mislukt: ${error.message}`;button.disabled=false}}
+document.addEventListener('workset:rendered',()=>{decorateAiActions();refreshAiQueue()});
+document.addEventListener('click',event=>{const info=event.target.closest('.ai-info-button');if(info){const popover=info.nextElementSibling,open=popover.hidden;popover.hidden=!open;info.setAttribute('aria-expanded',String(open));return}const request=event.target.closest('.request-ai');if(request){requestAi(request.dataset.aiFile,request.closest('.ai-document-actions'));return}const review=event.target.closest('.review-ai');if(review){reviewAi(review.dataset.aiFile);return}if(event.target.closest('.accept-complete-ai'))acceptCompleteAi(event.target.closest('dialog'))});
+aiQueue.refreshTimer=setInterval(refreshAiQueue,15000);
