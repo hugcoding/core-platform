@@ -548,8 +548,10 @@ class DashboardWorksetTests(unittest.TestCase):
                 "corrected_lifecycle": "active", "active_months": 9,
             })
         sql = cursor.execute.call_args_list[0].args[0]
+        parameters = cursor.execute.call_args_list[0].args[1]
         self.assertIn("'lifecycle'", sql)
         self.assertIn("lifecycle_active_until", sql)
+        self.assertEqual(sql.count("%s"), len(parameters))
         self.assertNotIn("UPDATE", sql)
         self.assertEqual("active", result["corrected_lifecycle"])
         self.assertIsNotNone(result["lifecycle_active_until"])
