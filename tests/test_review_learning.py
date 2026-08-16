@@ -1,3 +1,4 @@
+import importlib.util
 import unittest
 from pathlib import Path
 from core.organization.learning_context import build_llm_learning_context
@@ -7,6 +8,24 @@ from core.organization.review_learning import (
 )
 
 class ReviewLearningTests(unittest.TestCase):
+    def test_category_repair_is_append_only_and_conservatively_scoped(self):
+        path = Path(__file__).parents[1] / "tools/runtime/review_category_repair.py"
+        spec = importlib.util.spec_from_file_location("review_category_repair", path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        self.assertEqual(
+            ("resumes", "motivation_letters", "vacancies", "interview_preparation"),
+            module.ELIGIBLE_FAMILIES,
+        )
+        sql = module.apply_query()
+        self.assertIn("ON CONFLICT (idempotency_key) DO NOTHING", sql)
+        self.assertIn("'supersedes_event_id', e.id", sql)
+        self.assertIn("'corrected_category_code', 'work_career'", sql)
+        self.assertNotIn("UPDATE public.document_review_events", sql)
+        self.assertNotIn("certificates", module.FAMILY_SQL)
+        self.assertNotIn("'general'", module.FAMILY_SQL)
+
     def test_runtime_wrapper_exposes_repository_to_python(self):
         wrapper = (Path(__file__).parents[1] / "tools/runtime/review-learning-analyze").read_text(
             encoding="utf-8"

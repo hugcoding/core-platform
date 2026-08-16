@@ -340,3 +340,14 @@ familielaag. CORE maakt dan geen map `Algemeen` aan en verzint geen familie zoal
 `Loopbaancoaching`. Een specifiekere familie wordt pas voorgesteld wanneer
 bestandskenmerken of consistente menselijke voorbeelden die keuze voldoende
 onderbouwen.
+
+## Append-only herstel van ontbrekende categorieën
+
+Oudere geaccepteerde portalbeoordelingen kunnen wel een eenduidige familie maar
+nog geen categorie bevatten. `core workset review-category-repair --dry-run`
+rapporteert uitsluitend de families CV, motivatiebrieven, vacatures en
+gespreksvoorbereiding zonder categorie. Met `--apply` wordt per document een
+nieuw event toegevoegd dat het vorige event via `supersedes_event_id` opvolgt en
+`Werk & Loopbaan` vastlegt. Bestaande events en bestanden blijven ongewijzigd.
+Certificaten, algemene documenten en andere contextafhankelijke families worden
+bewust uitgesloten.
