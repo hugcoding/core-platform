@@ -148,6 +148,7 @@ class DashboardWorksetTests(unittest.TestCase):
             first = self.dashboard.target_path_reference_data(42)
             second = self.dashboard.target_path_reference_data(42)
         self.assertEqual(first, second)
+        self.assertEqual(["/volume1/data/Persoonlijk/Actief/Wonen"], first[1])
         self.assertEqual(1, connect.call_count)
         self.dashboard.invalidate_target_path_reference_cache()
         self.dashboard._target_path_reference_cache["filenames"].clear()
