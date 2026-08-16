@@ -4,6 +4,21 @@ Deze eerste retentieslice maakt het mogelijk om tijdens de portalbeoordeling vas
 te leggen dat een document later voor archivering of verwijdering moet worden
 beoordeeld. Een nominatie is **geen bestandsactie**.
 
+## Menselijk lifecycleoordeel
+
+Het portaal ondersteunt daarnaast een afzonderlijk, append-only lifecycleoordeel
+voor documenten met iedere berekende status:
+
+- **Actief maken**, optioneel voor 1 tot en met 120 maanden;
+- **Inactief / archief**;
+- **Later beoordelen**.
+
+Het nieuwste menselijke oordeel bepaalt direct de effectieve status in het
+portaal. De oorspronkelijke door CORE berekende werksetstatus en alle eerdere
+oordelen blijven voor audit beschikbaar. Een verlopen actieve termijn valt terug
+op de berekende policy-uitkomst. Het oordeel verplaatst, archiveert of verwijdert
+geen bestand. Privacy kan bij iedere werksetstatus apart worden bevestigd.
+
 ## Drie onafhankelijke beslissingen
 
 CORE houdt afzonderlijk bij:

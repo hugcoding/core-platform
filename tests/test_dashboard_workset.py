@@ -101,7 +101,7 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn("filesystem_mtime", result["documents"][0]["reason_code"])
         self.assertEqual(r"\\192.168.68.105\data\import\document.docx", result["documents"][0]["smb_path"])
         params = query_all.call_args.args[2]
-        self.assertEqual(("active", "docx", "%document%", "%document%"), params)
+        self.assertEqual(("docx", "%document%", "%document%"), params)
 
     def test_source_limits_mutation_to_append_only_review_events(self):
         source = (ROOT / "dashboard" / "app.py").read_text(encoding="utf-8")
@@ -497,7 +497,7 @@ class DashboardWorksetTests(unittest.TestCase):
             "file_id": 1, "content_group_id": uuid.uuid4(), "content_sha256": "b" * 64,
             "filename": "paspoort.pdf", "extension": "pdf",
             "path": "/volume1/data/Documenten/Identiteit/paspoort.pdf",
-            "size_bytes": 905, "workset_status": "active", "sensitivity": None,
+            "size_bytes": 905, "workset_status": "inactive", "sensitivity": None,
         }
         with mock.patch.dict("os.environ", {"CORE_REVIEW_WRITES_ENABLED": "true"}), mock.patch.object(
             self.dashboard, "db_connect", return_value=connection,
@@ -520,6 +520,52 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertTrue(result["learning_evidence"])
         self.assertFalse(result["file_mutations"])
         self.assertFalse(result["model_updates"])
+
+    def test_lifecycle_review_can_activate_inactive_document_for_fixed_months(self):
+        connection = mock.MagicMock()
+        connection.__enter__.return_value = connection
+        cursor = connection.cursor.return_value.__enter__.return_value
+        review_id = uuid.uuid4()
+        cursor.fetchone.return_value = (
+            review_id, datetime(2026, 8, 16, tzinfo=timezone.utc), 7, "accepted",
+        )
+        row = {
+            "file_id": 7, "content_group_id": uuid.uuid4(), "content_sha256": "c" * 64,
+            "filename": "contract.pdf", "extension": "pdf",
+            "path": "/volume1/data/import/contract.pdf", "workset_status": "inactive",
+            "reason_code": "outside_activity_window", "activity_confidence": "medium",
+        }
+        with mock.patch.dict("os.environ", {"CORE_REVIEW_WRITES_ENABLED": "true"}), mock.patch.object(
+            self.dashboard, "db_connect", return_value=connection,
+        ), mock.patch.object(
+            self.dashboard, "query_one", return_value={"available": True},
+        ), mock.patch.object(
+            self.dashboard, "query_all", side_effect=[[row], []],
+        ):
+            result = self.dashboard.create_workset_review({
+                "file_id": 7, "idempotency_key": str(uuid.uuid4()),
+                "review_type": "lifecycle", "decision": "accepted",
+                "corrected_lifecycle": "active", "active_months": 9,
+            })
+        sql = cursor.execute.call_args_list[0].args[0]
+        self.assertIn("'lifecycle'", sql)
+        self.assertIn("lifecycle_active_until", sql)
+        self.assertNotIn("UPDATE", sql)
+        self.assertEqual("active", result["corrected_lifecycle"])
+        self.assertIsNotNone(result["lifecycle_active_until"])
+        self.assertTrue(result["workset_status_unchanged"])
+        self.assertFalse(result["file_mutations"])
+
+    def test_lifecycle_migration_is_reversible_and_portal_has_both_directions(self):
+        migration = (ROOT / "database" / "migrations" / "20260816_add_lifecycle_review_choice.sql").read_text()
+        rollback = (ROOT / "database" / "migrations" / "rollback" / "20260816_add_lifecycle_review_choice.sql").read_text()
+        script = (ROOT / "dashboard" / "static" / "workset.js").read_text(encoding="utf-8")
+        self.assertIn("corrected_lifecycle", migration)
+        self.assertIn("lifecycle_active_until", migration)
+        self.assertIn("DROP COLUMN IF EXISTS corrected_lifecycle", rollback)
+        self.assertIn("Actief maken", script)
+        self.assertIn("Inactief / archief", script)
+        self.assertIn("active_months", script)
 
 
 if __name__ == "__main__":

@@ -386,6 +386,7 @@ def workset_order_by(
 
 def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
     item = {key: iso(value) for key, value in row.items()}
+    item["calculated_workset_status"] = row.get("workset_status")
     item["smb_path"] = smb_path(str(row["path"]))
     item["classification_status"] = "accepted" if row.get("category") else "not_reviewed"
     item["migration_status"] = "virtual_only"
@@ -397,6 +398,29 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
     )
     item["privacy_source"] = (
         "human_review" if row.get("latest_privacy_classification") else "core_rule_proposal"
+    )
+    calculated_lifecycle = {
+        "active": "active", "inactive": "archive", "needs_review": "needs_review",
+    }.get(str(row.get("workset_status")), "needs_review")
+    item["calculated_lifecycle"] = calculated_lifecycle
+    item["current_lifecycle_decision"] = row.get("latest_corrected_lifecycle")
+    active_until = row.get("latest_lifecycle_active_until")
+    lifecycle_expired = bool(
+        row.get("latest_corrected_lifecycle") == "active"
+        and active_until and active_until <= datetime.now(timezone.utc)
+    )
+    effective_lifecycle = (
+        calculated_lifecycle if lifecycle_expired
+        else row.get("latest_corrected_lifecycle") or calculated_lifecycle
+    )
+    item["effective_lifecycle"] = effective_lifecycle
+    item["lifecycle_active_until"] = iso(active_until)
+    item["workset_status"] = {
+        "active": "active", "archive": "inactive", "needs_review": "needs_review",
+    }[effective_lifecycle]
+    item["lifecycle_source"] = (
+        "expired_human_review" if lifecycle_expired else
+        "human_review" if row.get("latest_corrected_lifecycle") else "core_workset_policy"
     )
     item["nominations"] = {
         "archive": ({
@@ -439,7 +463,7 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
         "accepted_portal_review" if reviewed_family else
         "accepted_classification" if row.get("document_family") else "core_proposal"
     )
-    if row.get("workset_status") == "active":
+    if item.get("workset_status") == "active":
         proposal = propose_target({
             **row,
             "accepted_category": item["effective_category"],
@@ -476,9 +500,6 @@ def workset(
 ):
     conditions: list[str] = []
     params: list[Any] = []
-    if status != "all":
-        conditions.append("w.workset_status = %s")
-        params.append(status)
     if extension != "all":
         conditions.append("w.extension = %s")
         params.append(extension)
@@ -526,6 +547,24 @@ def workset(
                 LEFT JOIN public.v_latest_document_review p
                   ON p.file_id = w.file_id AND p.review_type = 'privacy_classification'
             """ if privacy_storage else ""
+            lifecycle_storage = bool(query_one(conn, """
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'document_review_events'
+                      AND column_name = 'corrected_lifecycle'
+                ) AS available
+            """)["available"]) if review_storage else False
+            lifecycle_select = """
+                , l.id AS latest_lifecycle_review_id,
+                  l.decision AS latest_lifecycle_decision,
+                  l.corrected_lifecycle AS latest_corrected_lifecycle,
+                  l.lifecycle_active_until AS latest_lifecycle_active_until,
+                  l.created_at AS latest_lifecycle_review_at
+            """ if lifecycle_storage else ""
+            lifecycle_join = """
+                LEFT JOIN public.v_latest_document_review l
+                  ON l.file_id = w.file_id AND l.review_type = 'lifecycle'
+            """ if lifecycle_storage else ""
             ai_storage = bool(query_one(
                 conn, "SELECT to_regclass('public.v_latest_workset_ai_proposal') IS NOT NULL AS available"
             )["available"])
@@ -574,9 +613,9 @@ def workset(
             """) if review_storage else []
             rows = query_all(conn, WORKSET_SELECT.replace(
                 "FROM public.v_active_document_workset w",
-                review_select + privacy_select + ai_select + nomination_select
+                review_select + privacy_select + lifecycle_select + ai_select + nomination_select
                 + " FROM public.v_active_document_workset w"
-            ) + review_join + privacy_join + ai_join + nomination_join + where + workset_order_by(
+            ) + review_join + privacy_join + lifecycle_join + ai_join + nomination_join + where + workset_order_by(
                 sort, review_state, review_decision, review_storage,
             ),
                 tuple(params),
@@ -584,6 +623,14 @@ def workset(
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"workset unavailable: {type(exc).__name__}") from exc
     enriched = apply_similar_review_proposals([enrich_workset_row(row) for row in rows])
+    summary = {
+        "total": len(enriched),
+        "active": sum(item.get("workset_status") == "active" for item in enriched),
+        "inactive": sum(item.get("workset_status") == "inactive" for item in enriched),
+        "needs_review": sum(item.get("workset_status") == "needs_review" for item in enriched),
+    }
+    if status != "all":
+        enriched = [item for item in enriched if item.get("workset_status") == status]
     learning_context_rules = build_learning_context_rules(trajectory_reviews)
     for item in enriched:
         rule = matching_learning_context_rule(item, learning_context_rules)
@@ -707,6 +754,7 @@ def workset(
         "review_taxonomy": taxonomy(),
         "review_writes_enabled": review_writes_enabled(),
         "privacy_review_enabled": review_writes_enabled() and privacy_storage,
+        "lifecycle_review_enabled": review_writes_enabled() and lifecycle_storage,
         "nomination_writes_enabled": review_writes_enabled() and nomination_storage,
         "llm_enabled": llm_enabled() and ai_storage,
         "limit": limit,
@@ -1290,11 +1338,24 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
     if decision not in {"accepted", "rejected", "needs_review", "passed"}:
         raise HTTPException(status_code=422, detail="invalid review decision")
     review_type = str(payload.get("review_type") or "target_path")
-    if review_type not in {"target_path", "privacy_classification"}:
+    if review_type not in {"target_path", "privacy_classification", "lifecycle"}:
         raise HTTPException(status_code=422, detail="invalid review type")
     privacy_classification = str(payload.get("privacy_classification") or "") or None
     if review_type == "privacy_classification" and privacy_classification not in {"low", "medium", "high"}:
         raise HTTPException(status_code=422, detail="invalid privacy classification")
+    corrected_lifecycle = str(payload.get("corrected_lifecycle") or "") or None
+    if review_type == "lifecycle" and corrected_lifecycle not in {"active", "archive", "needs_review"}:
+        raise HTTPException(status_code=422, detail="invalid lifecycle decision")
+    active_months = payload.get("active_months")
+    if active_months in (None, ""):
+        active_months = None
+    else:
+        try:
+            active_months = int(active_months)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="active months must be a whole number") from exc
+        if corrected_lifecycle != "active" or not 1 <= active_months <= 120:
+            raise HTTPException(status_code=422, detail="active months must be 1 through 120 for an active decision")
     family = str(payload.get("corrected_document_family_code") or "") or None
     category = str(payload.get("corrected_category_code") or "") or None
     notes = str(payload.get("review_notes") or "") or None
@@ -1332,10 +1393,10 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
             if not query_one(conn, "SELECT to_regclass('public.document_review_events') IS NOT NULL AS available")["available"]:
                 raise HTTPException(status_code=503, detail="review storage migration is not applied")
             matches = query_all(
-                conn, WORKSET_SELECT + " WHERE w.file_id = %s AND w.workset_status = 'active'", (file_id,),
+                conn, WORKSET_SELECT + " WHERE w.file_id = %s", (file_id,),
             )
             if not matches:
-                raise HTTPException(status_code=409, detail="file is no longer an active workset candidate")
+                raise HTTPException(status_code=409, detail="file is no longer a workset candidate")
             row = matches[0]
             filename_proposal = None
             if proposed_filename_raw:
@@ -1417,6 +1478,54 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                     "proposal_privacy_classification": privacy["classification"],
                     "privacy_rule_version": privacy["rule_version"],
                     "learning_evidence": True, "file_mutations": False, "model_updates": False,
+                }
+            if review_type == "lifecycle":
+                calculated = {
+                    "active": "active", "inactive": "archive", "needs_review": "needs_review",
+                }.get(str(row.get("workset_status")), "needs_review")
+                active_until = (
+                    datetime.now(timezone.utc) + timedelta(days=30 * active_months)
+                    if active_months else None
+                )
+                latest = query_all(
+                    conn,
+                    "SELECT id FROM public.v_latest_document_review WHERE file_id = %s AND review_type = 'lifecycle'",
+                    (file_id,),
+                )
+                supersedes_event_id = latest[0]["id"] if latest else None
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO public.document_review_events (
+                            idempotency_key, review_contract_version, channel, review_type,
+                            file_id, content_group_id, content_sha256,
+                            proposal_lifecycle, proposal_confidence, proposal_reason_code,
+                            decision, corrected_lifecycle, lifecycle_active_until,
+                            review_notes, reviewer, supersedes_event_id
+                        ) VALUES (%s,'document-lifecycle-review-v1','workset_portal','lifecycle',
+                                  %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (idempotency_key) DO NOTHING
+                        RETURNING id, created_at, file_id, decision
+                    """, (
+                        idempotency_key, row["file_id"], row["content_group_id"],
+                        row["content_sha256"], calculated, row.get("activity_confidence") or "low",
+                        row.get("reason_code") or "manual_lifecycle_review", decision,
+                        corrected_lifecycle, active_until, notes,
+                        os.getenv("CORE_REVIEWER", "hugo"), supersedes_event_id,
+                    ))
+                    created = cur.fetchone()
+                    if not created:
+                        cur.execute(
+                            "SELECT id, created_at, file_id, decision FROM public.document_review_events WHERE idempotency_key = %s",
+                            (idempotency_key,),
+                        )
+                        created = cur.fetchone()
+                return {
+                    "status": "stored", "review_id": str(created[0]), "created_at": iso(created[1]),
+                    "review_type": review_type, "decision": decision,
+                    "corrected_lifecycle": corrected_lifecycle,
+                    "lifecycle_active_until": iso(active_until),
+                    "learning_evidence": True, "workset_status_unchanged": True,
+                    "file_mutations": False, "model_updates": False,
                 }
             proposal = enrich_workset_row(row).get("target_proposal")
             if not proposal:
