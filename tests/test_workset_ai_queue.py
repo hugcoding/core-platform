@@ -66,6 +66,13 @@ class WorksetAiQueueTests(unittest.TestCase):
         self.assertIn("for review_type in (\"target_path\", \"privacy_classification\", \"lifecycle\")", app)
         self.assertIn('"file_mutations": False', app)
 
+    def test_document_selection_remains_available_for_every_workset_status(self):
+        workset = (ROOT / "dashboard" / "static" / "workset.js").read_text(encoding="utf-8")
+        ai = (ROOT / "dashboard" / "static" / "workset-ai.js").read_text(encoding="utf-8")
+        self.assertIn('aria-label="Document selecteren"', workset)
+        self.assertNotIn("card.querySelector('.bulk-select')?.remove()", ai)
+        self.assertNotIn("file_ids:ids", ai)
+
     def test_compose_worker_is_read_only_and_single_process(self):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn("workset_ai_worker:", compose)
