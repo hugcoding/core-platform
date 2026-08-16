@@ -105,10 +105,9 @@ function updateBulkControls(){
 }
 function decorateBulkCards(){
   document.querySelectorAll('.document-card').forEach(card=>{
-    const panel=card.querySelector('.review-panel'),privacy=card.querySelector('.privacy-classification');
-    if(!panel||!privacy||card.querySelector('.bulk-select'))return;
+    if(card.querySelector('.bulk-select'))return;
     const label=document.createElement('label');label.className='bulk-select';
-    label.innerHTML='<input type="checkbox" aria-label="Voorstel selecteren"><span>Selecteer</span>';
+    label.innerHTML='<input type="checkbox" aria-label="Document selecteren"><span>Selecteer</span>';
     card.prepend(label);
   });
   updateBulkControls();

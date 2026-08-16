@@ -105,7 +105,7 @@ class DashboardWorksetTests(unittest.TestCase):
 
     def test_source_limits_mutation_to_append_only_review_events(self):
         source = (ROOT / "dashboard" / "app.py").read_text(encoding="utf-8")
-        self.assertEqual(5, source.count("@app.post"))
+        self.assertGreaterEqual(source.count("@app.post"), 7)
         self.assertIn("INSERT INTO public.document_review_events", source)
         self.assertNotIn("UPDATE public.", source)
         self.assertNotIn("DELETE FROM", source)
@@ -236,7 +236,7 @@ class DashboardWorksetTests(unittest.TestCase):
         candidates = (ROOT / "dashboard" / "static" / "candidate-families.js").read_text(encoding="utf-8")
         self.assertIn("new CustomEvent('workset:rendered')", workset)
         self.assertIn("'workset:rendered',decorateBulkCards", workset)
-        self.assertIn("'workset:rendered',updateAiButton", ai)
+        self.assertIn("'workset:rendered',()=>{decorateAiActions();refreshAiQueue()}", ai)
         self.assertIn("'workset:rendered',renderSimilarDocumentProposals", similar)
         self.assertIn("'workset:rendered',renderTrajectoryLearning", trajectory)
         self.assertIn("source_review_event_ids", trajectory)

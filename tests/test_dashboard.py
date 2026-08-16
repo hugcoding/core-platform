@@ -19,7 +19,7 @@ def test_dashboard_has_stable_routes_and_only_review_mutations():
     assert '@app.get("/api/v1/overview")' in source
     assert '@app.get("/coreworkset")' in source
     assert '@app.get("/api/v1/workset")' in source
-    assert source.count("@app.post") == 3
+    assert source.count("@app.post") == 7
     assert "INSERT INTO public.document_review_events" in source
     assert "INSERT INTO public.document_review_batches" in source
     assert "UPDATE public." not in source

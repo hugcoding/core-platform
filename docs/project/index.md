@@ -50,6 +50,10 @@ Statische documentdatums worden generiek en append-only opgeslagen, los van
 `metadata.created_at`. Bekijk [SCRUM-69 Datum-evidence en provenance](scrum-69-date-evidence.md)
 voor het uniforme Office/PDF-contract, de temporal-profileview en de backfillprocedure.
 
+Individuele lokale AI-aanvragen lopen asynchroon en resource-aware. Bekijk
+[SCRUM-106 Asynchrone AI-wachtrij](scrum-106-async-ai-queue.md) voor prioriteit,
+CPU/RAM-begrenzing, de alarmbel en expliciete menselijke overname.
+
 ## Projectworkflow
 
 Ontwikkel en commit vanuit de lokale workspace:
