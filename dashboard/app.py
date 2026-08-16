@@ -7,6 +7,7 @@ import mimetypes
 import os
 import re
 import shutil
+import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -41,6 +42,11 @@ EXPORT_DIR = Path(os.getenv("EXPORT_DIR", "/exports/migration-inventory"))
 HOST_PROC = Path(os.getenv("HOST_PROC", "/host/proc"))
 STORAGE_PATH = Path(os.getenv("STORAGE_PATH", "/volume1"))
 STARTED = time.monotonic()
+TARGET_PATH_REFERENCE_TTL_SECONDS = 30.0
+_target_path_reference_lock = threading.Lock()
+_target_path_reference_cache: dict[str, Any] = {
+    "expires_at": 0.0, "paths": None, "filenames": {},
+}
 
 app = FastAPI(title="CORE Pulse", version="0.1.0", docs_url=None, redoc_url=None)
 app.mount("/coredashboard/assets", StaticFiles(directory=APP_DIR / "static"), name="assets")
@@ -79,6 +85,50 @@ def iso(value: Any) -> Any:
             value = value.replace(tzinfo=timezone.utc)
         return value.isoformat()
     return value
+
+
+def invalidate_target_path_reference_cache() -> None:
+    """Make newly accepted human paths available to the next advisory request."""
+    with _target_path_reference_lock:
+        _target_path_reference_cache["expires_at"] = 0.0
+        _target_path_reference_cache["paths"] = None
+
+
+def target_path_reference_data(file_id: int) -> tuple[str, list[str]]:
+    """Reuse read-only path evidence while a user is typing in one review panel."""
+    now = time.monotonic()
+    with _target_path_reference_lock:
+        filename = _target_path_reference_cache["filenames"].get(file_id)
+        paths = _target_path_reference_cache["paths"]
+        if now >= float(_target_path_reference_cache["expires_at"]):
+            paths = None
+        if filename is not None and paths is not None:
+            return str(filename), list(paths)
+        # Keep concurrent stale browser requests from repeating the same database work.
+        with db_connect() as conn:
+            if filename is None:
+                file_row = query_one(conn, "SELECT filename FROM public.files WHERE id = %s", (file_id,))
+                filename = str(file_row["filename"])
+            if paths is None:
+                known = query_all(conn, """
+                    SELECT proposed_target_path, proposal_target_path
+                    FROM public.document_review_events
+                    WHERE decision = 'accepted'
+                      AND (proposed_target_path IS NOT NULL OR proposal_target_path IS NOT NULL)
+                    ORDER BY created_at DESC
+                    LIMIT 500
+                """)
+                paths = [
+                    str(path) for row in known
+                    for path in (row.get("proposed_target_path"), row.get("proposal_target_path")) if path
+                ]
+        filenames = _target_path_reference_cache["filenames"]
+        if len(filenames) >= 2048:
+            filenames.clear()
+        filenames[file_id] = filename
+        _target_path_reference_cache["paths"] = paths
+        _target_path_reference_cache["expires_at"] = now + TARGET_PATH_REFERENCE_TTL_SECONDS
+        return filename, list(paths)
 
 
 def heartbeat_service(client, name: str, *, intentionally_paused: bool = False) -> dict[str, Any]:
@@ -796,21 +846,8 @@ def workset_review_history(file_id: int):
 def workset_target_path_suggestion(file_id: int, value: str = Query(..., min_length=1, max_length=500)):
     """Offer a close confirmed path; never silently rewrite human input."""
     try:
-        with db_connect() as conn:
-            file_row = query_one(conn, "SELECT filename FROM public.files WHERE id = %s", (file_id,))
-            known = query_all(conn, """
-                SELECT proposed_target_path, proposal_target_path
-                FROM public.document_review_events
-                WHERE decision = 'accepted'
-                  AND (proposed_target_path IS NOT NULL OR proposal_target_path IS NOT NULL)
-                ORDER BY created_at DESC
-                LIMIT 500
-            """)
-        paths = [
-            str(path) for row in known
-            for path in (row.get("proposed_target_path"), row.get("proposal_target_path")) if path
-        ]
-        result = suggest_known_target_path(value, filename=str(file_row["filename"]), known_paths=paths)
+        filename, paths = target_path_reference_data(file_id)
+        result = suggest_known_target_path(value, filename=filename, known_paths=paths)
         return {**result, "mode": "advisory_only", "file_mutations": False}
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1224,6 +1261,7 @@ def create_bulk_workset_review(payload: dict[str, Any] = Body(...)):
                         item["privacy"], privacy_proposal["rule_version"],
                         privacy_proposal["evidence"], batch_id,
                     ))
+        invalidate_target_path_reference_cache()
         return {
             "status": "stored", "batch_id": str(batch_id), "created_at": iso(created_at),
             "document_count": len(prepared), "classification_reviews": len(prepared),
@@ -1450,6 +1488,7 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                 "accepted_document_family": family,
                 "accepted_lifecycle": row.get("lifecycle"),
             })
+        invalidate_target_path_reference_cache()
         return {
             "status": "stored", "review_id": str(created[0]), "created_at": iso(created[1]),
             "decision": decision, "corrected_document_family_code": family,

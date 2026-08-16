@@ -1,5 +1,5 @@
 // SCRUM-98 controlled path assistance. Suggestions are advisory until clicked.
-let activePathReviewPanel=null,pathSuggestionTimer=null;
+let activePathReviewPanel=null,pathSuggestionTimer=null,pathSuggestionController=null,pathSuggestionSequence=0;
 const nativeFetch=globalThis.fetch.bind(globalThis);
 globalThis.fetch=(resource,options={})=>{
   if(String(resource)==='/api/v1/workset/reviews'&&activePathReviewPanel&&options.body){
@@ -29,16 +29,23 @@ function pathSuggestionBox(input){
 }
 async function requestPathSuggestion(input){
   const panel=input.closest('.review-panel'),value=input.value.trim(),box=pathSuggestionBox(input);
+  const sequence=++pathSuggestionSequence;
+  if(pathSuggestionController)pathSuggestionController.abort();
+  pathSuggestionController=new AbortController();
   input.dataset.originalValue=value;input.dataset.suggestion='';input.dataset.suggestionDecision='no_suggestion';
   if(!value.startsWith('/')){box.hidden=true;return}
+  input.setAttribute('aria-busy','true');
   try{
-    const response=await nativeFetch(`/api/v1/workset/${panel.dataset.fileId}/target-path-suggestion?value=${encodeURIComponent(value)}`,{cache:'no-store'});
+    const response=await nativeFetch(`/api/v1/workset/${panel.dataset.fileId}/target-path-suggestion?value=${encodeURIComponent(value)}`,{cache:'no-store',signal:pathSuggestionController.signal});
+    if(sequence!==pathSuggestionSequence)return;
     if(!response.ok){box.hidden=true;return}
     const data=await response.json();
+    if(sequence!==pathSuggestionSequence)return;
     if(data.technical_normalization){input.value=data.suggestion;input.dataset.suggestion=data.suggestion;input.dataset.suggestionDecision='accepted';box.hidden=true;return}
     if(!data.requires_confirmation){box.hidden=true;return}
     input.dataset.suggestion=data.suggestion;box.querySelector('code').textContent=data.suggestion;box.hidden=false;
-  }catch(error){box.hidden=true}
+  }catch(error){if(error.name!=='AbortError'&&sequence===pathSuggestionSequence)box.hidden=true}
+  finally{if(sequence===pathSuggestionSequence)input.removeAttribute('aria-busy')}
 }
 async function refreshTargetPathPreview(panel){
   const category=panel.querySelector('.review-category').value,family=panel.querySelector('.review-family').value;
