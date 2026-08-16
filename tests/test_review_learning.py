@@ -20,6 +20,13 @@ class ReviewLearningTests(unittest.TestCase):
         self.assertIn("e.proposal_target_path, e.proposed_target_path", runtime)
         self.assertIn("e.target_path_suggestion_decision", runtime)
 
+    def test_runtime_trajectory_export_covers_current_rule_shape(self):
+        runtime = (Path(__file__).parents[1] / "tools/runtime/review_learning_analyze.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"trajectory_parts", "support", "agreement", "confidence"', runtime)
+        self.assertIn('"trajectory_parts": json.dumps(item["trajectory_parts"]', runtime)
+
     def test_repeated_human_corrections_become_inactive_candidate(self):
         rows = [{"file_id": i, "decision": "accepted", "proposal_document_family_code": "general",
                  "corrected_category_code": "home_living", "corrected_document_family_code": "vve_documents",

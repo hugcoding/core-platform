@@ -330,3 +330,13 @@ consistente beoordelingen verhogen de confidence naar high; een afwijkend
 menselijk categorieoordeel blokkeert de contextregel. De bronreviews blijven
 zichtbaar en er wordt geen algemene regel gemaakt dat ieder Python-document
 leermateriaal is.
+
+## Categorie zonder geforceerde familie
+
+Een specifieke documentfamilie is niet verplicht wanneer daarvoor onvoldoende
+bewijs of geen praktisch nut bestaat. `Werk & Loopbaan / Algemeen` betekent in
+dat geval bewust: het document hoort bij **Werk & Loopbaan**, zonder extra
+familielaag. CORE maakt dan geen map `Algemeen` aan en verzint geen familie zoals
+`Loopbaancoaching`. Een specifiekere familie wordt pas voorgesteld wanneer
+bestandskenmerken of consistente menselijke voorbeelden die keuze voldoende
+onderbouwen.

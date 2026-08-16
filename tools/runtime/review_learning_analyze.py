@@ -111,11 +111,13 @@ def main(argv=None) -> int:
     trajectory_csv_path = output / f"review-learning-trajectory-candidates-{stamp}.csv"
     trajectory_fields = [
         "candidate_type", "trajectory_code", "trajectory_label", "match_term",
-        "support", "agreement", "counterexample_count", "counterexamples",
+        "trajectory_parts", "support", "agreement", "confidence",
+        "counterexample_count", "counterexamples",
         "example_file_ids", "source_review_event_ids", "reason_codes", "activation_status",
     ]
     trajectory_csv_rows = [{
         **item,
+        "trajectory_parts": json.dumps(item["trajectory_parts"], ensure_ascii=False),
         "counterexamples": json.dumps(item["counterexamples"], ensure_ascii=False),
         "example_file_ids": json.dumps(item["example_file_ids"]),
         "source_review_event_ids": json.dumps(item["source_review_event_ids"]),
