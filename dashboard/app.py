@@ -11,7 +11,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Optional
 
 import psycopg2
@@ -118,10 +118,13 @@ def target_path_reference_data(file_id: int) -> tuple[str, list[str]]:
                     ORDER BY created_at DESC
                     LIMIT 500
                 """)
-                paths = [
-                    str(path) for row in known
+                # Matching is directory-based. Compare each confirmed directory once,
+                # rather than repeatedly comparing every reviewed file in that directory.
+                paths = sorted({
+                    str(PurePosixPath(str(path).replace("\\", "/")).parent)
+                    for row in known
                     for path in (row.get("proposed_target_path"), row.get("proposal_target_path")) if path
-                ]
+                })
         filenames = _target_path_reference_cache["filenames"]
         if len(filenames) >= 2048:
             filenames.clear()
