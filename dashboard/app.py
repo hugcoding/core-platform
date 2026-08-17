@@ -1226,9 +1226,14 @@ def create_workset_ai_job(payload: dict[str, Any] = Body(...)):
                   priority_by_status[status], model, LLM_PROMPT_VERSION,
                   os.getenv("CORE_REVIEWER", "hugo")))
             job = cur.fetchone()
+            if job:
+                job = dict(zip((column.name for column in cur.description), job))
             if not job:
                 cur.execute("SELECT * FROM public.workset_ai_jobs WHERE idempotency_key=%s", (idempotency_key,))
-                job = cur.fetchone()
+                stored = cur.fetchone()
+                job = dict(zip((column.name for column in cur.description), stored)) if stored else None
+            if not job:
+                raise HTTPException(status_code=503, detail="AI request could not be read after storage")
             if int(job["file_id"]) != file_id:
                 raise HTTPException(status_code=409, detail="idempotency key belongs to another request")
     except psycopg2.errors.UniqueViolation as exc:
@@ -1237,7 +1242,7 @@ def create_workset_ai_job(payload: dict[str, Any] = Body(...)):
         raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"AI queue unavailable: {type(exc).__name__}") from exc
-    return {"status": "queued", "job": public_ai_job(dict(job)), "file_mutations": False}
+    return {"status": "queued", "job": public_ai_job(job), "file_mutations": False}
 
 
 @app.post("/api/v1/workset/ai-jobs/{job_id}/accept")

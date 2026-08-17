@@ -88,6 +88,39 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn("Doelpad kon niet worden bijgewerkt.", script)
         self.assertIn("Doelpad wordt bijgewerkt...", script)
 
+    def test_ai_enqueue_converts_database_tuple_to_named_job(self):
+        connection = mock.MagicMock()
+        connection.__enter__.return_value = connection
+        cursor = connection.cursor.return_value.__enter__.return_value
+        job_id = uuid.uuid4()
+        cursor.description = [
+            types.SimpleNamespace(name="id"), types.SimpleNamespace(name="file_id"),
+            types.SimpleNamespace(name="content_sha256"), types.SimpleNamespace(name="status"),
+        ]
+        cursor.fetchone.return_value = (job_id, 42, "a" * 64, "pending")
+        row = {
+            "file_id": 42, "content_sha256": "a" * 64, "workset_status": "inactive",
+            "filename": "contract.pdf", "path": "/volume1/data/import/contract.pdf",
+        }
+        with mock.patch.dict("os.environ", {
+            "CORE_REVIEW_WRITES_ENABLED": "true", "CORE_LLM_ENABLED": "true",
+        }), mock.patch.object(
+            self.dashboard, "db_connect", return_value=connection,
+        ), mock.patch.object(
+            self.dashboard, "query_all", side_effect=[[row], [{
+                "corrected_lifecycle": "active", "lifecycle_active_until": None,
+            }]],
+        ):
+            result = self.dashboard.create_workset_ai_job({
+                "file_id": 42, "idempotency_key": str(uuid.uuid4()),
+            })
+        self.assertEqual("queued", result["status"])
+        self.assertEqual(42, result["job"]["file_id"])
+        self.assertNotIn("content_sha256", result["job"])
+        parameters = cursor.execute.call_args.args[1]
+        self.assertEqual("active", parameters[3])
+        self.assertEqual(300, parameters[4])
+
     def test_workset_response_is_read_only_and_exposes_reason(self):
         connection = mock.MagicMock()
         connection.__enter__.return_value = connection
