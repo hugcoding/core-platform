@@ -40,15 +40,34 @@ def db_connect():
 def host_resources(proc_root: Path = Path("/host/proc")) -> dict[str, float]:
     load_1m = float((proc_root / "loadavg").read_text().split()[0])
     cpu_count = max(1, sum(
-        line.startswith("processor") for line in (proc_root / "cpuinfo").read_text().splitlines()
+        line.startswith("processor")
+        for line in (proc_root / "cpuinfo").read_text().splitlines()
     ))
+
     memory = {}
     for line in (proc_root / "meminfo").read_text().splitlines():
         key, value = line.split(":", 1)
         memory[key] = int(value.strip().split()[0])
+
+    # Some Synology kernels do not expose MemAvailable.
+    # Fall back to memory that can reasonably be reclaimed.
+    if "MemAvailable" in memory:
+        available_memory_kib = memory["MemAvailable"]
+    else:
+        available_memory_kib = (
+            memory.get("MemFree", 0)
+            + memory.get("Buffers", 0)
+            + memory.get("Cached", 0)
+            + memory.get("SReclaimable", 0)
+        )
+        available_memory_kib = min(
+            available_memory_kib,
+            memory.get("MemTotal", available_memory_kib),
+        )
+
     return {
         "cpu_load_percent": round(load_1m / cpu_count * 100, 2),
-        "available_memory_mib": round(memory.get("MemAvailable", 0) / 1024, 1),
+        "available_memory_mib": round(available_memory_kib / 1024, 1),
     }
 
 
