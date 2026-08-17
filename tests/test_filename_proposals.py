@@ -54,7 +54,7 @@ class FilenamePortalTests(unittest.TestCase):
         row = {"file_id": 1, "filename": "oud.pdf", "extension": "pdf",
                "path": "/volume1/data/import/oud.pdf", "workset_status": "active", "lifecycle": None}
         with mock.patch.object(self.dashboard, "db_connect", return_value=connection), mock.patch.object(
-            self.dashboard, "query_all", side_effect=[[row], [{"id": 2}], []],
+            self.dashboard, "query_all", side_effect=[[row], [], [{"id": 2}], []],
         ):
             result = self.dashboard.workset_target_path_preview(
                 1, "finance", "tax_documents", "Aangifte 2025.docx",
@@ -69,7 +69,7 @@ class FilenamePortalTests(unittest.TestCase):
         row = {"file_id": 1, "filename": "oud.pdf", "extension": "pdf",
                "path": "/volume1/data/import/oud.pdf", "workset_status": "active", "lifecycle": None}
         with mock.patch.object(self.dashboard, "db_connect", return_value=connection), mock.patch.object(
-            self.dashboard, "query_all", side_effect=[[row], [], []],
+            self.dashboard, "query_all", side_effect=[[row], [], [], []],
         ):
             result = self.dashboard.workset_target_path_preview(
                 1, "finance", "tax_documents", "Nieuw", 
@@ -92,7 +92,7 @@ class FilenamePortalTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {"CORE_REVIEW_WRITES_ENABLED": "true"}), mock.patch.object(
             self.dashboard, "db_connect", return_value=connection,
         ), mock.patch.object(self.dashboard, "query_one", return_value={"available": True}), mock.patch.object(
-            self.dashboard, "query_all", side_effect=[[row], [], [], []],
+            self.dashboard, "query_all", side_effect=[[row], [], [], [], []],
         ):
             result = self.dashboard.create_workset_review({
                 "file_id": 1, "idempotency_key": str(uuid.uuid4()), "decision": "accepted",

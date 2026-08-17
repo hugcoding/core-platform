@@ -139,6 +139,9 @@ def process_job(job: dict[str, Any]) -> None:
                     finished_at=now(), updated_at=now() WHERE id=%s
             """, (job["id"],))
             return
+        # The queue stores the effective status, including a human lifecycle override.
+        # Do not replace it with the older calculated status from the workset view.
+        row["workset_status"] = job["workset_status_snapshot"]
         examples = relevant_examples(cur, row["filename"], row["file_id"])
 
     context = extract_bounded_context(str(row["path"]))
