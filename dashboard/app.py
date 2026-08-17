@@ -392,6 +392,48 @@ def workset_order_by(
     return " ORDER BY " + orders[effective]
 
 
+def resolve_effective_lifecycle(
+    calculated_workset_status: Any,
+    corrected_lifecycle: Any = None,
+    active_until: Any = None,
+    *,
+    now: Optional[datetime] = None,
+) -> dict[str, Any]:
+    """Resolve the portal lifecycle once, including expiring human overrides."""
+    calculated_lifecycle = {
+        "active": "active", "inactive": "archive", "needs_review": "needs_review",
+    }.get(str(calculated_workset_status), "needs_review")
+    current = now or datetime.now(timezone.utc)
+    lifecycle_expired = bool(
+        corrected_lifecycle == "active" and active_until and active_until <= current
+    )
+    effective_lifecycle = (
+        calculated_lifecycle if lifecycle_expired else corrected_lifecycle or calculated_lifecycle
+    )
+    return {
+        "calculated_lifecycle": calculated_lifecycle,
+        "effective_lifecycle": effective_lifecycle,
+        "workset_status": {
+            "active": "active", "archive": "inactive", "needs_review": "needs_review",
+        }[effective_lifecycle],
+        "lifecycle_expired": lifecycle_expired,
+    }
+
+
+def effective_lifecycle_for_file(conn: Any, row: dict[str, Any]) -> dict[str, Any]:
+    """Read latest human lifecycle evidence for endpoints using the compact base query."""
+    latest = query_all(conn, """
+        SELECT corrected_lifecycle, lifecycle_active_until
+        FROM public.v_latest_document_review
+        WHERE file_id = %s AND review_type = 'lifecycle'
+    """, (row["file_id"],))
+    review = latest[0] if latest else {}
+    return resolve_effective_lifecycle(
+        row.get("workset_status"), review.get("corrected_lifecycle"),
+        review.get("lifecycle_active_until"),
+    )
+
+
 def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
     item = {key: iso(value) for key, value in row.items()}
     item["calculated_workset_status"] = row.get("workset_status")
@@ -407,27 +449,18 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
     item["privacy_source"] = (
         "human_review" if row.get("latest_privacy_classification") else "core_rule_proposal"
     )
-    calculated_lifecycle = {
-        "active": "active", "inactive": "archive", "needs_review": "needs_review",
-    }.get(str(row.get("workset_status")), "needs_review")
-    item["calculated_lifecycle"] = calculated_lifecycle
+    lifecycle = resolve_effective_lifecycle(
+        row.get("workset_status"), row.get("latest_corrected_lifecycle"),
+        row.get("latest_lifecycle_active_until"),
+    )
+    item["calculated_lifecycle"] = lifecycle["calculated_lifecycle"]
     item["current_lifecycle_decision"] = row.get("latest_corrected_lifecycle")
     active_until = row.get("latest_lifecycle_active_until")
-    lifecycle_expired = bool(
-        row.get("latest_corrected_lifecycle") == "active"
-        and active_until and active_until <= datetime.now(timezone.utc)
-    )
-    effective_lifecycle = (
-        calculated_lifecycle if lifecycle_expired
-        else row.get("latest_corrected_lifecycle") or calculated_lifecycle
-    )
-    item["effective_lifecycle"] = effective_lifecycle
+    item["effective_lifecycle"] = lifecycle["effective_lifecycle"]
     item["lifecycle_active_until"] = iso(active_until)
-    item["workset_status"] = {
-        "active": "active", "archive": "inactive", "needs_review": "needs_review",
-    }[effective_lifecycle]
+    item["workset_status"] = lifecycle["workset_status"]
     item["lifecycle_source"] = (
-        "expired_human_review" if lifecycle_expired else
+        "expired_human_review" if lifecycle["lifecycle_expired"] else
         "human_review" if row.get("latest_corrected_lifecycle") else "core_workset_policy"
     )
     item["nominations"] = {
@@ -476,7 +509,7 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
             **row,
             "accepted_category": item["effective_category"],
             "accepted_document_family": item["effective_document_family"],
-            "accepted_lifecycle": row.get("lifecycle"),
+            "accepted_lifecycle": item["effective_lifecycle"],
         })
         item["target_proposal"] = {
             key: proposal[key] for key in (
@@ -649,7 +682,7 @@ def workset(
             **row,
             "accepted_category": rule["category_code"],
             "accepted_document_family": rule["family_code"],
-            "accepted_lifecycle": row.get("lifecycle"),
+            "accepted_lifecycle": item["effective_lifecycle"],
         })
         item["target_proposal"] = {key: proposal[key] for key in (
             "contract_version", "contract_checksum", "zone_code", "zone_label",
@@ -670,7 +703,7 @@ def workset(
             **row,
             "accepted_category": similar["proposed_category_code"],
             "accepted_document_family": similar["proposed_document_family_code"],
-            "accepted_lifecycle": row.get("lifecycle"),
+            "accepted_lifecycle": item["effective_lifecycle"],
         })
         item["target_proposal"] = {key: proposal[key] for key in (
             "contract_version", "contract_checksum", "zone_code", "zone_label",
@@ -696,7 +729,7 @@ def workset(
             "accepted_category": item.get("effective_category") or current.get("category_code"),
             "accepted_document_family": item.get("effective_document_family")
                 or current.get("document_family_code"),
-            "accepted_lifecycle": row.get("lifecycle"),
+            "accepted_lifecycle": item["effective_lifecycle"],
             "accepted_trajectory_label": rule["trajectory_label"],
             "accepted_trajectory_parts": rule["trajectory_parts"],
         })
@@ -928,16 +961,15 @@ def workset_target_path_preview(
         raise HTTPException(status_code=422, detail="invalid category or document family")
     try:
         with db_connect() as conn:
-            matches = query_all(
-                conn, WORKSET_SELECT + " WHERE w.file_id = %s AND w.workset_status = 'active'", (file_id,),
-            )
+            matches = query_all(conn, WORKSET_SELECT + " WHERE w.file_id = %s", (file_id,))
+            lifecycle = effective_lifecycle_for_file(conn, matches[0]) if matches else None
         if not matches:
-            raise HTTPException(status_code=409, detail="file is no longer an active workset candidate")
+            raise HTTPException(status_code=409, detail="file is no longer a workset candidate")
         row = matches[0]
         preview = propose_target({
             **row, "accepted_category": category,
             "accepted_document_family": family,
-            "accepted_lifecycle": row.get("lifecycle"),
+            "accepted_lifecycle": lifecycle["effective_lifecycle"],
         })
         filename_proposal = None
         target_path = preview["suggested_target_path"]
@@ -1182,7 +1214,7 @@ def create_workset_ai_job(payload: dict[str, Any] = Body(...)):
             if not rows:
                 raise HTTPException(status_code=409, detail="file is no longer a workset candidate")
             row = rows[0]
-            status = str(row["workset_status"])
+            status = effective_lifecycle_for_file(conn, row)["workset_status"]
             cur.execute("""
                 INSERT INTO public.workset_ai_jobs
                   (idempotency_key,file_id,content_sha256,workset_status_snapshot,priority,
@@ -1696,13 +1728,19 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                     "learning_evidence": True, "workset_status_unchanged": True,
                     "file_mutations": False, "model_updates": False,
                 }
-            proposal = enrich_workset_row(row).get("target_proposal")
+            effective_lifecycle = effective_lifecycle_for_file(conn, row)
+            proposal_row = {
+                **row,
+                "latest_corrected_lifecycle": effective_lifecycle["effective_lifecycle"],
+                "latest_lifecycle_active_until": None,
+            }
+            proposal = enrich_workset_row(proposal_row).get("target_proposal")
             if not proposal:
                 raise HTTPException(status_code=409, detail="file is no longer an active workset candidate")
             selected_proposal = propose_target({
                 **row, "accepted_category": category,
                 "accepted_document_family": family,
-                "accepted_lifecycle": row.get("lifecycle"),
+                "accepted_lifecycle": effective_lifecycle["effective_lifecycle"],
             })
             if filename_proposal:
                 base_target = proposed_path or selected_proposal["suggested_target_path"]
@@ -1767,7 +1805,7 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                 **row,
                 "accepted_category": category,
                 "accepted_document_family": family,
-                "accepted_lifecycle": row.get("lifecycle"),
+                "accepted_lifecycle": effective_lifecycle["effective_lifecycle"],
             })
         invalidate_target_path_reference_cache()
         return {

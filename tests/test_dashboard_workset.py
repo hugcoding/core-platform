@@ -59,6 +59,35 @@ class DashboardWorksetTests(unittest.TestCase):
         )
         self.assertEqual("", self.dashboard.smb_path("/volume1/private/document.docx"))
 
+    def test_human_lifecycle_override_drives_effective_workset_and_target_zone(self):
+        future = datetime(2027, 8, 1, tzinfo=timezone.utc)
+        resolved = self.dashboard.resolve_effective_lifecycle(
+            "inactive", "active", future,
+            now=datetime(2026, 8, 17, tzinfo=timezone.utc),
+        )
+        self.assertEqual("active", resolved["effective_lifecycle"])
+        self.assertEqual("active", resolved["workset_status"])
+
+        expired = self.dashboard.resolve_effective_lifecycle(
+            "inactive", "active", datetime(2026, 8, 1, tzinfo=timezone.utc),
+            now=datetime(2026, 8, 17, tzinfo=timezone.utc),
+        )
+        self.assertEqual("archive", expired["effective_lifecycle"])
+        self.assertEqual("inactive", expired["workset_status"])
+
+    def test_target_preview_accepts_human_activated_workset_candidates(self):
+        source = (ROOT / "dashboard" / "app.py").read_text(encoding="utf-8")
+        preview = source[source.index("def workset_target_path_preview"):source.index(
+            "def target_path_conflicts"
+        )]
+        self.assertNotIn("w.workset_status = 'active'", preview)
+        self.assertIn('lifecycle["effective_lifecycle"]', preview)
+
+    def test_failed_live_target_preview_is_visible_in_portal(self):
+        script = (ROOT / "dashboard" / "static" / "workset.js").read_text(encoding="utf-8")
+        self.assertIn("Doelpad kon niet worden bijgewerkt.", script)
+        self.assertIn("Doelpad wordt bijgewerkt...", script)
+
     def test_workset_response_is_read_only_and_exposes_reason(self):
         connection = mock.MagicMock()
         connection.__enter__.return_value = connection
@@ -465,7 +494,7 @@ class DashboardWorksetTests(unittest.TestCase):
         ), mock.patch.object(
             self.dashboard, "query_one", return_value={"available": True},
         ), mock.patch.object(
-            self.dashboard, "query_all", side_effect=[[row], []],
+            self.dashboard, "query_all", side_effect=[[row], [], []],
         ):
             result = self.dashboard.create_workset_review({
                 "file_id": 1, "idempotency_key": str(uuid.uuid4()),

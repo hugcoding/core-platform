@@ -46,6 +46,14 @@ class WorksetAiQueueTests(unittest.TestCase):
         self.assertIn("FOR UPDATE SKIP LOCKED", source)
         self.assertIn("MAX_STREAM_LAG", source)
         self.assertIn("workset_ai_worker:heartbeat", source)
+        self.assertIn('row["workset_status"] = job["workset_status_snapshot"]', source)
+
+    def test_enqueue_uses_effective_human_lifecycle_status(self):
+        source = (ROOT / "dashboard" / "app.py").read_text(encoding="utf-8")
+        enqueue = source[source.index("def create_workset_ai_job"):source.index(
+            '@app.post("/api/v1/workset/ai-jobs/{job_id}/accept")'
+        )]
+        self.assertIn('effective_lifecycle_for_file(conn, row)["workset_status"]', enqueue)
 
     def test_migration_has_persistent_queue_and_rollback(self):
         migration = (ROOT / "database" / "migrations" / "20260816_add_async_workset_ai_jobs.sql").read_text()

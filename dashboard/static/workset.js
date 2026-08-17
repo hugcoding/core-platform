@@ -52,15 +52,16 @@ async function refreshTargetPathPreview(panel){
   const filename=panel.querySelector('.proposed-filename')?.value.trim()||'';
   const manual=panel.querySelector('.proposed-path').value.trim();
   if(!category||!family)return;
+  let note=panel.querySelector('.live-path-preview');if(!note){note=document.createElement('small');note.className='live-path-preview';panel.prepend(note)}
+  note.textContent='Doelpad wordt bijgewerkt...';note.classList.remove('path-conflict');
   try{
     const response=await nativeFetch(`/api/v1/workset/${panel.dataset.fileId}/target-path-preview?category=${encodeURIComponent(category)}&family=${encodeURIComponent(family)}&filename=${encodeURIComponent(filename)}&target_path=${encodeURIComponent(manual)}`,{cache:'no-store'});
-    if(!response.ok)return;
+    if(!response.ok){note.textContent='Doelpad kon niet worden bijgewerkt.';return}
     const data=await response.json(),card=panel.closest('.document-card'),target=card.querySelector('.target-proposal');
     if(target){target.querySelector('span').innerHTML=`<i class="source-badge">CORE-preview</i>${wsEsc(data.proposal_confidence)}`;target.querySelector('code').textContent=data.suggested_target_path}
-    let note=panel.querySelector('.live-path-preview');if(!note){note=document.createElement('small');note.className='live-path-preview';panel.prepend(note)}
     note.classList.toggle('path-conflict',data.target_path_conflict);
     note.textContent=data.target_path_conflict?'Let op: dit volledige doelpad bestaat al of is al geaccepteerd. Het blijft alleen een voorstel.':manual?'Nieuw CORE-voorstel berekend; jouw handmatige doelpad blijft leidend.':'Doelpad live herberekend; wordt pas opgeslagen bij jouw beoordeling.';
-  }catch(error){}
+  }catch(error){note.textContent='Doelpad kon niet worden bijgewerkt.'}
 }
 document.addEventListener('change',event=>{
   if(!event.target.matches('.review-category,.review-family,.all-families'))return;
