@@ -267,8 +267,7 @@
       "code": "mortgage_documents",
       "label": "Hypotheekdocumenten",
       "categories": [
-        "home_living",
-        "finance"
+        "home_living"
       ],
       "keywords": [
         "hypotheek",

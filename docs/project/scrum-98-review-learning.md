@@ -295,6 +295,12 @@ bronbeoordelingen blijven zichtbaar. Met **Gebruik Hypotheek** wordt de waarde
 opnieuw als expliciet menselijk familievoorstel ingevuld. De kandidaat wordt
 niet automatisch canoniek en activeert geen regel.
 
+`Hypotheekdocumenten` is inmiddels wel onderdeel van de canonieke taxonomie.
+De inhoudelijke hoofdcategorie is `Wonen`; financiële kenmerken blijven aparte
+input voor privacy, retentie en eventuele analyse, maar plaatsen het document
+niet onder `Geldzaken`. Oudere menselijke beoordelingen onder `Geldzaken`
+blijven als append-only historie bestaan en worden niet stilzwijgend aangepast.
+
 ## Eenmalige herkenning van een sollicitatietraject
 
 Voor een duidelijk traject of werkgever hoeft CORE niet altijd drie dezelfde

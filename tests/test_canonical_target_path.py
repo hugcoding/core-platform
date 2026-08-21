@@ -124,6 +124,17 @@ class CanonicalTargetPathTests(unittest.TestCase):
         self.assertEqual("medium", result["proposal_confidence"])
         self.assertIn("/Leren & Ontwikkelen/Cursusmateriaal/", result["suggested_target_path"])
 
+    def test_mortgage_is_a_home_document_not_a_finance_folder(self):
+        result = propose_target({
+            "file_id": 19,
+            "filename": "Hypotheek ABN overzicht.pdf",
+            "extension": "pdf",
+            "path": "/volume1/data/import/Documenten/Hypotheek/Hypotheek ABN overzicht.pdf",
+        })
+        self.assertEqual("home_living", result["category_code"])
+        self.assertEqual("mortgage_documents", result["document_family_code"])
+        self.assertIn("/Wonen/Hypotheekdocumenten/", result["suggested_target_path"])
+
     def test_accepted_review_family_code_gets_canonical_dutch_label(self):
         result = propose_target({
             "file_id": 14, "filename": "Een integere Belastingdienst.pdf", "extension": "pdf",
