@@ -169,7 +169,8 @@ class DashboardWorksetTests(unittest.TestCase):
         source = (ROOT / "dashboard" / "app.py").read_text(encoding="utf-8")
         self.assertGreaterEqual(source.count("@app.post"), 7)
         self.assertIn("INSERT INTO public.document_review_events", source)
-        self.assertNotIn("UPDATE public.", source)
+        self.assertEqual(1, source.count("UPDATE public."))
+        self.assertIn("UPDATE public.workset_ai_jobs", source)
         self.assertNotIn("DELETE FROM", source)
         self.assertNotIn("shutil.move", source)
         self.assertIn('"model_updates": False', source)
@@ -217,9 +218,10 @@ class DashboardWorksetTests(unittest.TestCase):
 
     def test_path_suggestion_frontend_aborts_stale_requests(self):
         script = (ROOT / "dashboard" / "static" / "workset.js").read_text(encoding="utf-8")
+        compact = "".join(script.split())
         self.assertIn("pathSuggestionController.abort()", script)
-        self.assertIn("signal:pathSuggestionController.signal", script)
-        self.assertIn("sequence!==pathSuggestionSequence", script)
+        self.assertIn("signal:pathSuggestionController.signal", compact)
+        self.assertIn("sequence!==pathSuggestionSequence", compact)
 
     def test_deletion_nomination_is_append_only_and_keeps_workset_active(self):
         connection = mock.MagicMock()
@@ -271,7 +273,7 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertNotIn(".remove()", nomination)
         self.assertIn(".review-note", nomination)
         self.assertIn("panel.replaceWith(updated)", nomination)
-        self.assertIn('aria-pressed="${archive?', script)
+        self.assertIn('aria-pressed="${archive', script)
 
     def test_stored_ai_proposal_keeps_file_identity_for_portal_refresh(self):
         row = {
@@ -296,9 +298,11 @@ class DashboardWorksetTests(unittest.TestCase):
         similar = (ROOT / "dashboard" / "static" / "similar-documents.js").read_text(encoding="utf-8")
         trajectory = (ROOT / "dashboard" / "static" / "trajectory-learning.js").read_text(encoding="utf-8")
         candidates = (ROOT / "dashboard" / "static" / "candidate-families.js").read_text(encoding="utf-8")
-        self.assertIn("new CustomEvent('workset:rendered')", workset)
-        self.assertIn("'workset:rendered',decorateBulkCards", workset)
-        self.assertIn("'workset:rendered',()=>{decorateAiActions();refreshAiQueue()}", ai)
+        compact_workset = "".join(workset.split())
+        compact_ai = "".join(ai.split())
+        self.assertIn("newCustomEvent('workset:rendered')", compact_workset)
+        self.assertIn("'workset:rendered',decorateBulkCards", compact_workset)
+        self.assertIn("'workset:rendered',()=>{decorateAiActions();", compact_ai)
         self.assertIn("'workset:rendered',renderSimilarDocumentProposals", similar)
         self.assertIn("'workset:rendered',renderTrajectoryLearning", trajectory)
         self.assertIn("source_review_event_ids", trajectory)
@@ -315,8 +319,9 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn('/api/v1/workset/${encodeURIComponent(doc.file_id)}/content', script)
         self.assertIn('class="copy-original-path"', script)
         self.assertIn('aria-label="Pad kopiëren"', script)
-        self.assertIn("const visiblePath=doc.smb_path||doc.path", script)
-        self.assertIn("card.querySelector(':scope>.copy-path')?.remove()", script)
+        compact = "".join(script.split())
+        self.assertIn("constvisiblePath=doc.smb_path||doc.path", compact)
+        self.assertIn("card.querySelector(':scope>.copy-path')?.remove()", compact)
         self.assertIn(".original-path-row", css)
         self.assertIn('@app.get("/api/v1/workset/{file_id}/content")', source)
         self.assertIn('"inline" if extension in inline_extensions else "attachment"', source)
@@ -324,7 +329,7 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn("ms-word", script)
         self.assertIn("ms-excel", script)
         self.assertIn("ms-powerpoint", script)
-        self.assertIn("documentOpenUrl(doc,visiblePath)", script)
+        self.assertIn("documentOpenUrl(doc,visiblePath)", compact)
         self.assertIn('"/volume1:/volume1:ro"', compose)
 
     def test_open_document_returns_not_found_for_unknown_file(self):
@@ -358,18 +363,48 @@ class DashboardWorksetTests(unittest.TestCase):
         script = (ROOT / "dashboard" / "static" / "workset.js").read_text(encoding="utf-8")
         self.assertIn('id="worksetSort"', html)
         self.assertIn('value="context"', html)
-        self.assertIn("sort:ws('worksetSort').value", script)
+        self.assertIn("sort:ws('worksetSort').value", "".join(script.split()))
 
     def test_overview_uses_current_filtered_review_count(self):
         script = (ROOT / "dashboard" / "static" / "workset.js").read_text(encoding="utf-8")
-        self.assertIn("[label,state.filteredTotal,'review','huidige filters']", script)
-        self.assertIn("'Lifecycle beoordelen',state.worksetSummary.needs_review", script)
-        self.assertIn("review==='pending'?'Te beoordelen'", script)
+        compact = "".join(script.split())
+        self.assertIn("[label,state.filteredTotal,'review','huidigefilters']", compact)
+        self.assertIn("'Lifecyclebeoordelen',state.worksetSummary.needs_review", compact)
+        self.assertIn("review==='pending'?'Tebeoordelen'", compact)
 
     def test_deferred_and_not_applicable_reviews_have_distinct_labels(self):
         script = (ROOT / "dashboard" / "static" / "workset.js").read_text(encoding="utf-8")
-        self.assertIn("needs_review:'Uitgesteld'", script)
-        self.assertIn("passed:'Niet beoordelen'", script)
+        compact = "".join(script.split())
+        self.assertIn("needs_review:'Uitgesteld'", compact)
+        self.assertIn("passed:'Nietbeoordelen'", compact)
+
+    def test_persisted_high_privacy_evidence_is_hash_bound_and_blocks_external_llm(self):
+        source = (ROOT / "dashboard" / "app.py").read_text(encoding="utf-8")
+        self.assertIn("p.content_sha256 = w.content_sha256", source)
+        result = self.dashboard.effective_privacy_proposal({
+            "filename": "document.pdf", "path": "/volume1/data/document.pdf",
+            "content_privacy_classification": "high",
+            "content_privacy_confidence": "high",
+            "content_privacy_signals": ["personal_financial_data"],
+            "content_privacy_rule_version": "document-privacy-v4",
+        })
+        self.assertEqual("high", result["classification"])
+        self.assertEqual("high", result["confidence"])
+        self.assertEqual("persisted_content_privacy_evidence", result["reason_code"])
+        self.assertIn("personal_financial_data", result["evidence"])
+        self.assertFalse(result["external_llm_content_allowed"])
+
+    def test_human_privacy_review_remains_highest_authority(self):
+        result = self.dashboard.enrich_workset_row({
+            "file_id": 3362435, "filename": "document.pdf", "extension": "pdf",
+            "path": "/volume1/data/document.pdf", "workset_status": "inactive",
+            "content_privacy_classification": "high",
+            "content_privacy_confidence": "high",
+            "content_privacy_signals": ["personal_financial_data"],
+            "latest_privacy_classification": "medium",
+        })
+        self.assertEqual("medium", result["effective_privacy_classification"])
+        self.assertEqual("human_review", result["privacy_source"])
 
     def test_ai_lineage_uses_accessible_compact_info_control(self):
         script = (ROOT / "dashboard" / "static" / "workset-ai.js").read_text(encoding="utf-8")

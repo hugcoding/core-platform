@@ -67,7 +67,7 @@ class WorksetAiQueueTests(unittest.TestCase):
         app = (ROOT / "dashboard" / "app.py").read_text(encoding="utf-8")
         self.assertIn("Vraag AI-voorstel aan", script)
         self.assertIn("ai-bell", script)
-        self.assertIn("Neem volledig AI-voorstel over", script)
+        self.assertIn("Gebruik als beoordeling", script)
         self.assertNotIn("file_ids:ids", script)
         self.assertIn('@app.post("/api/v1/workset/ai-jobs")', app)
         self.assertIn('@app.post("/api/v1/workset/ai-jobs/{job_id}/accept")', app)

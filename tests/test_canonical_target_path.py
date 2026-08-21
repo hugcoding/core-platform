@@ -110,7 +110,7 @@ class CanonicalTargetPathTests(unittest.TestCase):
         self.assertEqual("needs_review", result["zone_code"])
         self.assertEqual("learning_development", result["category_code"])
         self.assertEqual("supporting_dataset_requires_review", result["proposal_reason_code"])
-        self.assertIn("/Te beoordelen/Leren & Ontwikkelen/Cursusdata/", result["suggested_target_path"])
+        self.assertIn("/Te beoordelen/Leren & Ontwikkelen/Cursusmateriaal/", result["suggested_target_path"])
 
     def test_python_notebook_course_gets_learning_proposal(self):
         result = propose_target({
