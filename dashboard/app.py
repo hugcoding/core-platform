@@ -1498,6 +1498,58 @@ def create_workset_ai_job(payload: dict[str, Any] = Body(...)):
         raise HTTPException(status_code=503, detail=f"AI queue unavailable: {type(exc).__name__}") from exc
     return {"status": "queued", "job": public_ai_job(job), "file_mutations": False}
 
+
+@app.get("/api/v1/workset/ocr-jobs")
+def workset_ocr_jobs():
+    try:
+        with db_connect() as conn:
+            rows = query_all(conn, """
+                SELECT j.*,f.filename
+                FROM public.workset_ocr_jobs j JOIN public.files f ON f.id=j.file_id
+                ORDER BY j.requested_at DESC,j.id DESC LIMIT 200
+            """)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"OCR queue unavailable: {type(exc).__name__}") from exc
+    return {"jobs": [{key: iso(value) for key, value in row.items()
+                       if key not in {"content_sha256", "artifact_path"}} for row in rows]}
+
+
+@app.post("/api/v1/workset/ocr-jobs")
+def create_workset_ocr_job(payload: dict[str, Any] = Body(...)):
+    if not review_writes_enabled():
+        raise HTTPException(status_code=403, detail="OCR requests are disabled")
+    try:
+        file_id = int(payload["file_id"])
+        idempotency_key = str(uuid.UUID(str(payload["idempotency_key"])))
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=422, detail="valid file ID and idempotency key required") from exc
+    try:
+        with db_connect() as conn, conn.cursor() as cur:
+            rows = query_all(conn, WORKSET_SELECT + " WHERE w.file_id=%s", (file_id,))
+            if not rows:
+                raise HTTPException(status_code=409, detail="file is no longer a workset candidate")
+            row = rows[0]
+            if str(row.get("extension") or "").casefold().lstrip(".") != "pdf":
+                raise HTTPException(status_code=409, detail="OCR MVP supports PDF only")
+            cur.execute("""
+                INSERT INTO public.workset_ocr_jobs
+                  (idempotency_key,file_id,content_sha256,priority,requested_by)
+                VALUES (%s,%s,%s,%s,%s)
+                RETURNING *
+            """, (idempotency_key,file_id,row["content_sha256"],
+                  300 if row["workset_status"] == "active" else 100,
+                  os.getenv("CORE_REVIEWER", "hugo")))
+            job = cur.fetchone()
+    except psycopg2.errors.UniqueViolation as exc:
+        raise HTTPException(status_code=409, detail="OCR is already pending for this content") from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"OCR queue unavailable: {type(exc).__name__}") from exc
+    return {"status": "queued", "job": {key: iso(value) for key, value in dict(job).items()
+                                           if key not in {"content_sha256", "artifact_path"}},
+            "file_mutations": False}
+
 @app.post("/api/v1/workset/ai-jobs/{job_id}/dismiss")
 def dismiss_workset_ai_job(
     job_id: str,

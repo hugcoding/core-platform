@@ -60,6 +60,26 @@ CORE start OCR niet automatisch. Na een gecontroleerde OCR-stap kan opnieuw een
 AI-voorstel worden aangevraagd. Een leeg Word- of Excel-document krijgt alleen
 `geen uitleesbare tekst`, omdat OCR daar normaal geen passende vervolgstap is.
 
+### OCR handmatig starten
+
+Bij een OCR-advies toont Workset de knop **OCR starten**. Deze maakt één
+persistente, individuele OCR-taak aan. De zelfstandige `workset_ocr_worker`
+verwerkt maximaal één PDF tegelijk met lokale Tesseract-herkenning (`nld+eng`).
+Actieve documenten krijgen voorrang en de gewone CORE-pipeline behoudt
+voorrang bij streamlag of weinig vrij geheugen.
+
+De bron-PDF wordt read-only geopend en nooit aangepast. Herkende tekst wordt
+gzip-gecomprimeerd opgeslagen onder `/volume1/docker/core-runtime/ocr`, genoemd naar de
+inhoudshash. De database bewaart status, engineversie, taal, tellingen, hashes
+en artifact-lineage, niet de tekst zelf. Na `OCR gereed` kan de gebruiker
+expliciet **Vraag AI na OCR** kiezen; de AI-worker leest dan het lokale artifact.
+
+Uitrol vereist migratie `20260821_add_workset_ocr_jobs.sql`, de afgeschermde
+artifactmap `/volume1/docker/core-runtime/ocr` buiten de documentscan en het bouwen van `dashboard`,
+`workset_ai_worker` en `workset_ocr_worker`. Standaard wacht OCR boven 60%
+genormaliseerde CPU-load, onder 2048 MiB beschikbaar geheugen of bij te hoge
+CORE-streamlag.
+
 ## Uitrol
 
 1. Migratie `20260816_add_async_workset_ai_jobs.sql` toepassen.

@@ -54,6 +54,31 @@ services:
     tmpfs: ["/tmp"]
     security_opt: ["no-new-privileges:true"]
 
+  workset_ocr_worker:
+    build: { context: ., dockerfile: Dockerfile.workset-ocr-worker }
+    restart: unless-stopped
+    depends_on: { redis: { condition: service_healthy } }
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - DB_NAME=${DB_NAME}
+      - REDIS_HOST=redis
+      - CORE_OCR_LANGUAGES=${CORE_OCR_LANGUAGES:-nld+eng}
+      - CORE_OCR_MAX_CPU_PERCENT=${CORE_OCR_MAX_CPU_PERCENT:-60}
+      - CORE_OCR_MIN_AVAILABLE_MIB=${CORE_OCR_MIN_AVAILABLE_MIB:-2048}
+      - CORE_OCR_MAX_STREAM_LAG=${CORE_OCR_MAX_STREAM_LAG:-1000}
+      - CORE_OCR_MAX_PAGES=${CORE_OCR_MAX_PAGES:-100}
+      - CORE_OCR_POLL_SECONDS=${CORE_OCR_POLL_SECONDS:-10}
+    volumes:
+      - "/proc:/host/proc:ro"
+      - "/volume1:/volume1:ro"
+      - "/volume1/docker/core-runtime/ocr:/volume1/docker/core-runtime/ocr"
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+
   classifier:
     profiles: ["tools"]
     build: { context: ., dockerfile: Dockerfile.classifier }

@@ -1,0 +1,6 @@
+FROM python:3.13-alpine
+WORKDIR /app
+RUN apk add --no-cache poppler-utils tesseract-ocr tesseract-ocr-data-nld tesseract-ocr-data-eng \
+    && pip install --no-cache-dir psycopg2-binary==2.9.10 redis==6.2.0
+COPY workset_ocr_worker.py ./workset_ocr_worker.py
+CMD ["python", "workset_ocr_worker.py"]
