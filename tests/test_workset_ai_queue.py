@@ -74,6 +74,14 @@ class WorksetAiQueueTests(unittest.TestCase):
         self.assertIn("for review_type in (\"target_path\", \"privacy_classification\", \"lifecycle\")", app)
         self.assertIn('"file_mutations": False', app)
 
+    def test_portal_explains_ocr_recommendation_without_automatic_ocr(self):
+        worker = (ROOT / "workset_ai_worker.py").read_text(encoding="utf-8")
+        script = (ROOT / "dashboard" / "static" / "workset-ai.js").read_text(encoding="utf-8")
+        self.assertIn('context["status"] != "ready"', worker)
+        self.assertIn("ocr_recommended_no_extractable_text", script)
+        self.assertIn("OCR aanbevolen", script)
+        self.assertNotIn("startOcr", script)
+
     def test_document_selection_remains_available_for_every_workset_status(self):
         workset = (ROOT / "dashboard" / "static" / "workset.js").read_text(encoding="utf-8")
         ai = (ROOT / "dashboard" / "static" / "workset-ai.js").read_text(encoding="utf-8")
