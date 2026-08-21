@@ -98,6 +98,21 @@
   </label>
 
 </section>
+    <details id="duplicateReviewSection" class="duplicate-review panel">
+      <summary><span>Exacte duplicaten</span><b id="duplicatePendingCount">laden…</b></summary>
+      <div class="duplicate-toolbar">
+        <p>Kies één leidende fysieke kopie. CORE verplaatst of verwijdert hier niets.</p>
+        <label>Weergave
+          <select id="duplicateReviewState">
+            <option value="pending" selected>Te beoordelen</option>
+            <option value="reviewed">Beoordeeld</option>
+            <option value="all">Alles</option>
+          </select>
+        </label>
+      </div>
+      <div id="duplicateReviewSummary" class="duplicate-summary"></div>
+      <section id="duplicateReviewGroups" class="duplicate-groups" aria-live="polite"></section>
+    </details>
     <nav class="review-exports" aria-label="Beoordelingen exporteren"><span>Handmatige beoordelingen</span><a
         href="/api/v1/workset/reviews/export?format=csv">CSV export</a><a
         href="/api/v1/workset/reviews/export?format=json">JSON export</a></nav>
@@ -144,6 +159,7 @@
   <script src="/coredashboard/assets/trajectory-learning.js"></script>
   <script src="/coredashboard/assets/candidate-families.js"></script>
   <script src="/coredashboard/assets/workset-ai.js"></script>
+  <script src="/coredashboard/assets/duplicate-review.js"></script>
 </body>
 
 </html>
