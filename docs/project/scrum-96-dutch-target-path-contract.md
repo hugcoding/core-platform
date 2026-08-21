@@ -31,6 +31,18 @@ waarvan de bovenste map nog niet overeenkomt met de actuele lifecycle. Correctie
 worden via het portal als nieuwe append-only beoordeling opgeslagen; de view is
 niet bedoeld om rechtstreeks te wijzigen.
 
+Een beheerder kan dezelfde correctie gecontroleerd in de database vastleggen:
+
+```bash
+core workset lifecycle-path-repair --dry-run
+core workset lifecycle-path-repair --apply
+```
+
+De dry-run rapporteert alle kandidaten. `--apply` schrijft per bestand maximaal
+één idempotent, append-only correctie-event. Historische events worden niet
+bijgewerkt en bestanden worden niet verplaatst. De uitvoer staat onder
+`project/exports/review-learning/`.
+
 Contract v2 verfijnt deze veilige basis met drie regels die uit de eerste
 50-documententoets voortkwamen:
 

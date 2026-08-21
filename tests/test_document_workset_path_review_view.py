@@ -17,6 +17,7 @@ class DocumentWorksetPathReviewViewTests(unittest.TestCase):
         self.assertIn("core_proposed_path", self.sql)
         self.assertIn("human_proposed_path", self.sql)
         self.assertIn("lifecycle_aligned_proposed_path", self.sql)
+        self.assertIn("a.content_group_id", self.sql)
 
     def test_archive_maps_to_inactive_without_writing_files(self):
         self.assertIn("WHEN 'archive' THEN 'Inactief'", self.sql)
@@ -33,6 +34,19 @@ class DocumentWorksetPathReviewViewTests(unittest.TestCase):
         rollback = (ROOT / "database" / "migrations" / "rollback" /
                     "20260821_add_document_workset_path_review_view.sql").read_text(encoding="utf-8")
         self.assertIn("DROP VIEW IF EXISTS public.v_document_workset_path_review", rollback)
+
+    def test_append_only_repair_has_dry_run_and_idempotent_apply(self):
+        runtime = (ROOT / "tools" / "runtime" / "lifecycle_path_repair.py").read_text(encoding="utf-8")
+        self.assertIn('mode.add_argument("--dry-run"', runtime)
+        self.assertIn('mode.add_argument("--apply"', runtime)
+        self.assertIn("ON CONFLICT (idempotency_key) DO NOTHING", runtime)
+        self.assertIn("lifecycle_zone_alignment_v1", runtime)
+        self.assertNotIn("UPDATE public.document_review_events", runtime)
+        self.assertNotIn("DELETE FROM", runtime)
+
+    def test_core_exposes_lifecycle_path_repair(self):
+        core = (ROOT / "tools" / "runtime" / "core").read_text(encoding="utf-8")
+        self.assertIn("lifecycle-path-repair --dry-run|--apply", core)
 
 
 if __name__ == "__main__":

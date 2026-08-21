@@ -97,6 +97,7 @@ WITH latest_lifecycle AS (
 )
 SELECT
     a.file_id,
+    a.content_group_id,
     a.filename,
     a.extension,
     a.path AS source_path,
