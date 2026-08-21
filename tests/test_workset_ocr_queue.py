@@ -67,6 +67,8 @@ class WorksetOcrQueueTests(unittest.TestCase):
         self.assertIn("OCR starten", script)
         self.assertIn("requestOcr", script)
         self.assertIn('"file_mutations": False', app)
+        self.assertIn("columns = [column.name for column in cur.description]", app)
+        self.assertIn("body?JSON.parse(body)", script)
 
     def test_ai_worker_reuses_ready_ocr_artifact(self):
         source = (ROOT / "workset_ai_worker.py").read_text(encoding="utf-8")
