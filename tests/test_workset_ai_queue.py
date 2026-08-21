@@ -74,6 +74,9 @@ class WorksetAiQueueTests(unittest.TestCase):
         self.assertIn('@app.post("/api/v1/workset/ai-jobs/{job_id}/accept")', app)
         self.assertIn("for review_type in (\"target_path\", \"privacy_classification\", \"lifecycle\")", app)
         self.assertIn('"file_mutations": False', app)
+        self.assertIn("latestAiJobsByFile", script)
+        self.assertIn("job.awaiting_human_review", script)
+        self.assertIn("notification_label:'OCR gereed'", script)
 
     def test_portal_explains_ocr_recommendation_without_automatic_ocr(self):
         worker = (ROOT / "workset_ai_worker.py").read_text(encoding="utf-8")

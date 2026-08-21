@@ -41,6 +41,12 @@ promptversie. Na bevestiging schrijft CORE afzonderlijke append-only events voor
 doelpad/classificatie, privacy en lifecycle. Het AI-resultaat zelf is geen
 menselijk akkoord.
 
+De alarmbel toont per document uitsluitend de nieuwste nog openstaande actie.
+Historische OCR-adviezen en oudere AI-runs blijven auditbaar opgeslagen, maar
+veroorzaken geen dubbele meldingen. Een overgenomen of genegeerd voorstel
+verdwijnt uit de bel. Een voltooid OCR-resultaat verschijnt als `OCR gereed`
+totdat een nieuwe AI-aanvraag is gedaan.
+
 De worker en portal wijzigen, verplaatsen, hernoemen of verwijderen geen bestand.
 
 ### Taxonomie blijft leidend
