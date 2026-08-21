@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import gzip
 import os
 import time
 from datetime import datetime, timezone
@@ -173,6 +174,34 @@ def existing_ocr_evidence(cur, file_id: int, content_sha256: str) -> dict[str, A
     return dict(evidence) if evidence else None
 
 
+def existing_ocr_artifact(cur, content_sha256: str) -> dict[str, Any] | None:
+    cur.execute("""
+        SELECT id,artifact_path,pages,characters,text_sha256,finished_at
+        FROM public.workset_ocr_jobs
+        WHERE content_sha256=%s AND status='ready'
+        ORDER BY finished_at DESC,id DESC LIMIT 1
+    """, (content_sha256,))
+    result = cur.fetchone()
+    return dict(result) if result else None
+
+
+def ocr_context(artifact: dict[str, Any]) -> dict[str, Any]:
+    path = Path(str(artifact["artifact_path"]))
+    allowed_root = Path("/volume1/docker/core-runtime/ocr")
+    if allowed_root not in path.parents or path.suffixes[-2:] != [".txt", ".gz"]:
+        raise ValueError("invalid_ocr_artifact_path")
+    with gzip.open(path, "rt", encoding="utf-8") as handle:
+        normalized = " ".join(handle.read().split())
+    if not normalized:
+        raise ValueError("empty_ocr_artifact")
+    return {
+        "status": "ready", "reason": "local_ocr_artifact",
+        "text": normalized[:12_000], "characters": min(len(normalized), 12_000),
+        "truncated": len(normalized) > 12_000, "pages": artifact.get("pages"),
+        "ocr_job_id": str(artifact["id"]), "text_sha256": artifact["text_sha256"],
+    }
+
+
 def process_job(job: dict[str, Any]) -> None:
     prompt = json.loads(PROMPT_PATH.read_text("utf-8"))
     provider = OpenAICompatibleLocalProvider(
@@ -200,8 +229,9 @@ def process_job(job: dict[str, Any]) -> None:
         ocr_evidence = existing_ocr_evidence(
             cur, int(row["file_id"]), str(row["content_sha256"]),
         )
+        ocr_artifact = existing_ocr_artifact(cur, str(row["content_sha256"]))
 
-    context = ({
+    context = (ocr_context(ocr_artifact) if ocr_artifact else {
         "status": "ocr_recommended",
         "reason": "ocr_required_from_existing_evidence",
         "text": "",
