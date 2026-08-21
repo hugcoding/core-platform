@@ -53,6 +53,15 @@ verlaagt een hoge confidence naar medium. Voorbeeld:
 Bij een dubbelzinnige ongeldige combinatie onthoudt CORE zich en vraagt het om
 menselijke beoordeling. Bestaande AI-runs blijven ongewijzigd voor audit.
 
+### Lifecyclepolicy blijft leidend
+
+De prompt bevat de actuele CORE-werksetstatus, activity reason-code, laatste
+kwalificerende activiteit en de gebruikte datumbron. De LLM mag inhoudelijke
+actualiteit signaleren, maar kan de configuration-driven werksetpolicy niet
+overschrijven. Bij een afwijkend lifecycleadvies bewaart CORE de eigen status,
+neemt het oorspronkelijke LLM-advies op in de reden en verlaagt high confidence
+naar medium. Een menselijke lifecyclebeoordeling blijft de hoogste autoriteit.
+
 ## OCR-advies bij onleesbare inhoud
 
 Voor de lokale AI wordt aangeroepen, probeert CORE eerst lokaal tekst uit het

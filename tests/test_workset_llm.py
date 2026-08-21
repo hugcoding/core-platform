@@ -3,7 +3,8 @@ import unittest
 from unittest import mock
 
 from core.semantic.workset_llm import (
-    MAX_DOCUMENTS, PROMPT_VERSION, build_prompt, extract_bounded_context, validate_proposal,
+    MAX_DOCUMENTS, PROMPT_VERSION, build_prompt, enforce_core_lifecycle,
+    extract_bounded_context, validate_proposal,
 )
 
 
@@ -24,6 +25,7 @@ class WorksetLlmTests(unittest.TestCase):
         self.assertIn("mortgage_documents=>home_living", user)
         self.assertIn("voorbeeld.pdf => category=work_career", user)
         self.assertIn("DOCUMENT_TEXT:\ninhoud", user)
+        self.assertIn("current_core_workset_status: unknown", user)
         self.assertEqual("scrum-101-workset-llm-v2", PROMPT_VERSION)
 
     @mock.patch("core.semantic.workset_llm.extract_document", return_value=(" tekst  met   spaties ", 1))
@@ -100,6 +102,24 @@ class WorksetLlmTests(unittest.TestCase):
         }), 10)
         self.assertEqual("abstained", proposal["status"])
         self.assertEqual("incompatible_category_and_family", proposal["reason"])
+
+    def test_core_inactive_policy_overrides_active_llm_lifecycle(self):
+        proposal = {
+            "status": "ready", "lifecycle": "active", "confidence": "high",
+            "reason": "Het document lijkt inhoudelijk nog actueel.",
+        }
+        guarded = enforce_core_lifecycle(proposal, "inactive")
+        self.assertEqual("archive", guarded["lifecycle"])
+        self.assertEqual("active", guarded["model_lifecycle_advice"])
+        self.assertEqual("medium", guarded["confidence"])
+        self.assertIn("CORE behield archive", guarded["reason"])
+
+    def test_matching_core_lifecycle_is_unchanged(self):
+        proposal = {
+            "status": "ready", "lifecycle": "active", "confidence": "high",
+            "reason": "Het document is actief.",
+        }
+        self.assertIs(proposal, enforce_core_lifecycle(proposal, "active"))
 
 
 if __name__ == "__main__":
