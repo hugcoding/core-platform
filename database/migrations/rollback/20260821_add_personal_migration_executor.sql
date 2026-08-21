@@ -1,0 +1,10 @@
+BEGIN;
+DROP VIEW IF EXISTS public.v_personal_migration_item_status;
+DROP TRIGGER IF EXISTS personal_migration_events_immutable ON public.personal_migration_events;
+DROP TRIGGER IF EXISTS personal_migration_plan_items_immutable ON public.personal_migration_plan_items;
+DROP TRIGGER IF EXISTS personal_migration_plans_immutable ON public.personal_migration_plans;
+DROP TABLE IF EXISTS public.personal_migration_events;
+DROP TABLE IF EXISTS public.personal_migration_plan_items;
+DROP TABLE IF EXISTS public.personal_migration_plans;
+DROP FUNCTION IF EXISTS public.reject_personal_migration_mutation();
+COMMIT;
