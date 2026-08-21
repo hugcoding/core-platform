@@ -17,6 +17,7 @@ MAX_TEXT_CHARACTERS = 12_000
 LIFECYCLES = {"active", "archive", "needs_review"}
 PRIVACY = {"low", "medium", "high"}
 RELATIONS = {"none", "source_document", "exported_representation", "version", "related_document"}
+OCR_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 
 
 def reason_is_dutch(reason: str) -> bool:
@@ -35,10 +36,18 @@ def reason_is_dutch(reason: str) -> bool:
 
 
 def extract_bounded_context(path: str) -> dict[str, Any]:
-    text, pages = extract_document(Path(path))
+    document_path = Path(path)
+    text, pages = extract_document(document_path)
     normalized = " ".join(text.split())
     if not normalized:
-        return {"status": "needs_review", "reason": "no_extractable_text", "text": "", "pages": pages}
+        ocr_recommended = document_path.suffix.casefold() in OCR_EXTENSIONS
+        return {
+            "status": "ocr_recommended" if ocr_recommended else "needs_review",
+            "reason": "ocr_recommended_no_extractable_text" if ocr_recommended else "no_extractable_text",
+            "text": "",
+            "pages": pages,
+            "ocr_recommended": ocr_recommended,
+        }
     truncated = len(normalized) > MAX_TEXT_CHARACTERS
     return {
         "status": "ready", "reason": "bounded_local_extraction", "pages": pages,

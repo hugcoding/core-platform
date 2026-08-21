@@ -1403,7 +1403,8 @@ def workset_ai_jobs(status: str = Query("all", pattern="^(all|pending|running|re
             rows = query_all(conn, """
                 SELECT j.*, f.filename, p.category_code, p.family_code, p.lifecycle,
                        p.privacy_advice, p.confidence, p.reason, p.relation_kind,
-                       p.related_file_ids, p.created_at AS proposal_created_at,
+                       p.related_file_ids, p.extraction_metadata,
+                       p.created_at AS proposal_created_at,
                        (
                         j.dismissed_at IS NULL
                         AND NOT EXISTS (

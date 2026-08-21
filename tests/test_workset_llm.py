@@ -31,6 +31,20 @@ class WorksetLlmTests(unittest.TestCase):
         self.assertEqual("tekst met spaties", context["text"])
         self.assertEqual("ready", context["status"])
 
+    @mock.patch("core.semantic.workset_llm.extract_document", return_value=("", 2))
+    def test_pdf_without_extractable_text_recommends_ocr(self, _extract):
+        context = extract_bounded_context("/volume1/scan.pdf")
+        self.assertEqual("ocr_recommended", context["status"])
+        self.assertEqual("ocr_recommended_no_extractable_text", context["reason"])
+        self.assertTrue(context["ocr_recommended"])
+
+    @mock.patch("core.semantic.workset_llm.extract_document", return_value=("", 0))
+    def test_empty_office_document_does_not_recommend_ocr(self, _extract):
+        context = extract_bounded_context("/volume1/leeg.docx")
+        self.assertEqual("needs_review", context["status"])
+        self.assertEqual("no_extractable_text", context["reason"])
+        self.assertFalse(context["ocr_recommended"])
+
     def test_valid_proposal_uses_canonical_codes(self):
         proposal = validate_proposal(json.dumps({
             "file_id": 4, "abstained": False, "category_code": "work_career",

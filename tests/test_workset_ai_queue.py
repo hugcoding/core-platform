@@ -2,6 +2,7 @@ import importlib
 import sys
 import types
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -73,6 +74,37 @@ class WorksetAiQueueTests(unittest.TestCase):
         self.assertIn('@app.post("/api/v1/workset/ai-jobs/{job_id}/accept")', app)
         self.assertIn("for review_type in (\"target_path\", \"privacy_classification\", \"lifecycle\")", app)
         self.assertIn('"file_mutations": False', app)
+
+    def test_portal_explains_ocr_recommendation_without_automatic_ocr(self):
+        worker = (ROOT / "workset_ai_worker.py").read_text(encoding="utf-8")
+        script = (ROOT / "dashboard" / "static" / "workset-ai.js").read_text(encoding="utf-8")
+        self.assertIn('context["status"] != "ready"', worker)
+        self.assertIn("ocr_recommended_no_extractable_text", script)
+        self.assertIn("OCR aanbevolen", script)
+        self.assertNotIn("startOcr", script)
+
+    def test_existing_needs_ocr_is_looked_up_by_content_hash(self):
+        cursor = mock.MagicMock()
+        cursor.fetchone.return_value = {
+            "run_id": "00000000-0000-0000-0000-000000000001",
+            "evidence_file_id": 42,
+            "status": "needs_ocr",
+            "pages": 3,
+            "updated_at": datetime(2026, 8, 21, tzinfo=timezone.utc),
+        }
+        evidence = self.worker.existing_ocr_evidence(cursor, 42, "abc")
+        query = cursor.execute.call_args.args[0]
+        self.assertIn("sd.content_sha256=%s", query)
+        self.assertIn("sd.status='needs_ocr'", query)
+        self.assertEqual(("abc", 42), cursor.execute.call_args.args[1])
+        self.assertEqual(3, evidence["pages"])
+
+    def test_api_exposes_extraction_lineage_for_ocr_advice(self):
+        app = (ROOT / "dashboard" / "app.py").read_text(encoding="utf-8")
+        script = (ROOT / "dashboard" / "static" / "workset-ai.js").read_text(encoding="utf-8")
+        self.assertIn("p.related_file_ids, p.extraction_metadata", app)
+        self.assertIn("ocr_required_from_existing_evidence", script)
+        self.assertIn("OCR vereist — reeds vastgesteld", script)
 
     def test_document_selection_remains_available_for_every_workset_status(self):
         workset = (ROOT / "dashboard" / "static" / "workset.js").read_text(encoding="utf-8")
