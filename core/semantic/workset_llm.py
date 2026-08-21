@@ -61,6 +61,10 @@ def build_prompt(document: dict[str, Any], context: dict[str, Any],
     contract = taxonomy()
     categories = ", ".join(item["code"] for item in contract["categories"])
     families = ", ".join(item["code"] for item in contract["families"])
+    family_categories = "; ".join(
+        f"{item['code']}=>{','.join(item['categories'])}"
+        for item in contract["families"]
+    )
     example_text = "\n".join(
         f"- {item['filename']} => category={item['category_code']}, family={item['family_code']}"
         for item in examples[:3]
@@ -73,6 +77,7 @@ current_core_category: {document.get('core_category') or 'unknown'}
 current_core_family: {document.get('core_family') or 'unknown'}
 allowed_categories: {categories}
 allowed_families: {families}
+allowed_family_category_combinations: {family_categories}
 
 HUMAN_CONFIRMED_EXAMPLES:
 {example_text}
@@ -101,8 +106,10 @@ def validate_proposal(content: str, file_id: int) -> dict[str, Any]:
         return abstention(file_id, "file_id_mismatch")
     if value.get("abstained") is True:
         return abstention(file_id, str(value.get("reason") or "model_abstained"))
-    categories = {item["code"] for item in taxonomy()["categories"]}
-    families = {item["code"] for item in taxonomy()["families"]}
+    contract = taxonomy()
+    categories = {item["code"] for item in contract["categories"]}
+    family_contracts = {item["code"]: item for item in contract["families"]}
+    families = set(family_contracts)
     category, family = value.get("category_code"), value.get("family_code")
     lifecycle, privacy = value.get("lifecycle"), value.get("privacy_advice")
     confidence = str(value.get("confidence") or "").casefold()
@@ -142,6 +149,17 @@ def validate_proposal(content: str, file_id: int) -> dict[str, Any]:
     reason, related = value.get("reason"), value.get("related_file_ids", [])
     if category not in categories or family not in families:
         return abstention(file_id, "unknown_taxonomy_value")
+    allowed_family_categories = family_contracts[family].get("categories", [])
+    category_adjustment = None
+    if category not in allowed_family_categories:
+        if len(allowed_family_categories) != 1:
+            return abstention(file_id, "incompatible_category_and_family")
+        original_category = category
+        category = allowed_family_categories[0]
+        category_adjustment = (
+            f"CORE corrigeerde categorie {original_category} naar {category} "
+            f"volgens het canonieke familiecontract."
+        )
     if lifecycle not in LIFECYCLES or privacy not in PRIVACY:
         return abstention(file_id, "invalid_lifecycle_or_privacy")
     if confidence not in {"low", "medium", "high"}:
@@ -152,6 +170,9 @@ def validate_proposal(content: str, file_id: int) -> dict[str, Any]:
         return abstention(file_id, "invalid_reason")
     if not reason_is_dutch(reason):
         return abstention(file_id, "reason_not_dutch")
+    if category_adjustment:
+        reason = f"{reason.strip()[:480]} {category_adjustment}"
+        confidence = "medium" if confidence == "high" else confidence
     if not isinstance(related, list) or len(related) > 5:
         return abstention(file_id, "invalid_related_files")
     try:

@@ -43,6 +43,16 @@ menselijk akkoord.
 
 De worker en portal wijzigen, verplaatsen, hernoemen of verwijderen geen bestand.
 
+### Taxonomie blijft leidend
+
+De lokale LLM krijgt de toegestane categorie-familiecombinaties mee. CORE
+valideert het antwoord daarna opnieuw. Als een familie precies één canonieke
+categorie heeft, corrigeert CORE een afwijkende LLM-categorie verklaarbaar en
+verlaagt een hoge confidence naar medium. Voorbeeld:
+`mortgage_documents` wordt altijd `home_living` (`Wonen`) en nooit `finance`.
+Bij een dubbelzinnige ongeldige combinatie onthoudt CORE zich en vraagt het om
+menselijke beoordeling. Bestaande AI-runs blijven ongewijzigd voor audit.
+
 ## OCR-advies bij onleesbare inhoud
 
 Voor de lokale AI wordt aangeroepen, probeert CORE eerst lokaal tekst uit het
