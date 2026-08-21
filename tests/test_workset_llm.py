@@ -21,6 +21,7 @@ class WorksetLlmTests(unittest.TestCase):
         )
         self.assertEqual("system", system)
         self.assertIn("allowed_categories", user)
+        self.assertIn("mortgage_documents=>home_living", user)
         self.assertIn("voorbeeld.pdf => category=work_career", user)
         self.assertIn("DOCUMENT_TEXT:\ninhoud", user)
         self.assertEqual("scrum-101-workset-llm-v2", PROMPT_VERSION)
@@ -74,6 +75,31 @@ class WorksetLlmTests(unittest.TestCase):
         }), 4)
         self.assertTrue(proposal["abstained"])
         self.assertEqual("reason_not_dutch", proposal["reason"])
+
+    def test_single_category_family_corrects_inconsistent_llm_category(self):
+        proposal = validate_proposal(json.dumps({
+            "file_id": 9, "abstained": False, "category_code": "finance",
+            "family_code": "mortgage_documents", "lifecycle": "active",
+            "privacy_advice": "high", "confidence": "high",
+            "relation_kind": "none", "related_file_ids": [],
+            "reason": "Het document bevat gegevens over een hypotheeklening.",
+        }), 9)
+        self.assertEqual("ready", proposal["status"])
+        self.assertEqual("home_living", proposal["category_code"])
+        self.assertEqual("mortgage_documents", proposal["family_code"])
+        self.assertEqual("medium", proposal["confidence"])
+        self.assertIn("CORE corrigeerde categorie finance naar home_living", proposal["reason"])
+
+    def test_multi_category_family_mismatch_abstains(self):
+        proposal = validate_proposal(json.dumps({
+            "file_id": 10, "abstained": False, "category_code": "finance",
+            "family_code": "reports_advice", "lifecycle": "active",
+            "privacy_advice": "medium", "confidence": "high",
+            "relation_kind": "none", "related_file_ids": [],
+            "reason": "Het document bevat een inhoudelijk rapport.",
+        }), 10)
+        self.assertEqual("abstained", proposal["status"])
+        self.assertEqual("incompatible_category_and_family", proposal["reason"])
 
 
 if __name__ == "__main__":
