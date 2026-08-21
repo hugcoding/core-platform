@@ -47,6 +47,7 @@ show_help() {
     printf '%s\n' "  core workset target-path-pilot [--limit 50] --dry-run"
     printf '%s\n' "  core workset review-learning-analyze [--minimum-support 3] --dry-run"
     printf '%s\n' "  core workset review-category-repair --dry-run|--apply"
+    printf '%s\n' "  core workset lifecycle-path-repair --dry-run|--apply"
     printf '%s\n' "  core policy seed --environment development|acceptance|production [--source POLICY_JSON] --dry-run|--apply"
     printf '%s\n' "  core metadata date-backfill [--source PATH] [--limit N] --dry-run|--apply"
     printf '%s\n' "  core metadata temporal-impact [--as-of TIMESTAMP] [--limit N] --dry-run"
@@ -237,9 +238,13 @@ case "$command_domain" in
                 shift 2
                 sh ./tools/runtime/review-category-repair "$@"
                 ;;
+            lifecycle-path-repair)
+                shift 2
+                sh ./tools/runtime/lifecycle-path-repair "$@"
+                ;;
             *)
                 echo "Unknown workset command."
-                echo "Use: core workset pilot ... | target-path-pilot ... | review-learning-analyze --dry-run | review-category-repair --dry-run|--apply"
+                echo "Use: core workset pilot ... | target-path-pilot ... | review-learning-analyze --dry-run | review-category-repair --dry-run|--apply | lifecycle-path-repair --dry-run|--apply"
                 exit 1
                 ;;
         esac
