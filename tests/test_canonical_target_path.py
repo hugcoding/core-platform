@@ -19,6 +19,34 @@ class CanonicalTargetPathTests(unittest.TestCase):
                          result["path_reduction_reason_codes"])
         self.assertFalse(result["file_mutations"])
 
+    def test_archived_lifecycle_gets_inactive_target_zone(self):
+        result = propose_target({
+            "file_id": 20,
+            "filename": "cv hugo 2019.docx",
+            "accepted_category": "work_career",
+            "accepted_document_family": "resumes",
+            "accepted_lifecycle": "archive",
+        })
+        self.assertEqual("inactive", result["zone_code"])
+        self.assertEqual(
+            "/volume1/data/Persoonlijk/Inactief/Werk & Loopbaan/CV/cv hugo 2019.docx",
+            result["suggested_target_path"],
+        )
+
+    def test_human_activation_gets_active_target_zone(self):
+        result = propose_target({
+            "file_id": 21,
+            "filename": "cv hugo 2019.docx",
+            "accepted_category": "work_career",
+            "accepted_document_family": "resumes",
+            "accepted_lifecycle": "active",
+        })
+        self.assertEqual("active", result["zone_code"])
+        self.assertEqual(
+            "/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/CV/cv hugo 2019.docx",
+            result["suggested_target_path"],
+        )
+
     def test_administration_is_never_a_top_level_category(self):
         result = propose_target({"file_id": 2, "filename": "onbekend.pdf",
                                  "accepted_category": "administration"})

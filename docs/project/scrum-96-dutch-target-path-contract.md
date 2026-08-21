@@ -17,6 +17,12 @@ of verwijdert geen bestanden en schrijft niets naar de database.
 - onvoldoende bewijs gaat naar `Te beoordelen` met `low` confidence;
 - een botsend doelpad wordt gerapporteerd en niet automatisch opgelost.
 
+De effectieve lifecycle bepaalt altijd de bovenste doelmap. Een inactief
+document krijgt een voorstel onder `Persoonlijk/Inactief`; pas na een expliciet
+menselijk oordeel `Actief maken` wordt de live preview opnieuw opgebouwd onder
+`Persoonlijk/Actief`. De historische lifecyclewaarde `inactive` en de huidige
+canonieke waarde `archive` worden daarbij gelijk behandeld.
+
 Contract v2 verfijnt deze veilige basis met drie regels die uit de eerste
 50-documententoets voortkwamen:
 
