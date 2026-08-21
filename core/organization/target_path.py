@@ -11,7 +11,7 @@ from typing import Any
 from core.organization.review_taxonomy import taxonomy
 
 
-CONTRACT_VERSION = "canonical-dutch-target-path-v5"
+CONTRACT_VERSION = "canonical-dutch-target-path-v6"
 TARGET_ROOT = "/volume1/data/Persoonlijk"
 ZONE_LABELS = {
     "active": "Actief",
@@ -212,7 +212,9 @@ def propose_target(row: dict[str, Any]) -> dict[str, Any]:
     else:
         zone = "active" if category != "needs_review" else "needs_review"
     accepted_lifecycle = str(row.get("accepted_lifecycle") or "")
-    if accepted_lifecycle == "inactive" and category != "needs_review":
+    # The portal uses the canonical lifecycle value ``archive`` while older
+    # reports used ``inactive``. Both describe the inactive target zone.
+    if accepted_lifecycle in {"archive", "inactive"} and category != "needs_review":
         zone = "inactive"
     elif accepted_lifecycle in {"archive_candidate", "needs_review"}:
         zone, reason, confidence = "needs_review", "accepted_lifecycle_conflicts_with_active_workset", "high"
