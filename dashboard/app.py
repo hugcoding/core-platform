@@ -1539,14 +1539,15 @@ def create_workset_ocr_job(payload: dict[str, Any] = Body(...)):
             """, (idempotency_key,file_id,row["content_sha256"],
                   300 if row["workset_status"] == "active" else 100,
                   os.getenv("CORE_REVIEWER", "hugo")))
-            job = cur.fetchone()
+            columns = [column.name for column in cur.description]
+            job = dict(zip(columns, cur.fetchone()))
     except psycopg2.errors.UniqueViolation as exc:
         raise HTTPException(status_code=409, detail="OCR is already pending for this content") from exc
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"OCR queue unavailable: {type(exc).__name__}") from exc
-    return {"status": "queued", "job": {key: iso(value) for key, value in dict(job).items()
+    return {"status": "queued", "job": {key: iso(value) for key, value in job.items()
                                            if key not in {"content_sha256", "artifact_path"}},
             "file_mutations": False}
 
