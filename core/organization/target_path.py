@@ -37,8 +37,8 @@ CATEGORY_ALIASES = {
 }
 KEYWORD_RULES = (
     ("work_career", ("sollicit", "vacature", "curriculum vitae", "cv", "werkgever", "arbeidscontract")),
-    ("finance", ("belasting", "factuur", "bank", "salaris", "hypotheek", "inkomen")),
-    ("home_living", ("woning", "vve", "huur", "energie", "riolering")),
+    ("home_living", ("woning", "hypotheek", "vve", "huur", "energie", "riolering")),
+    ("finance", ("belasting", "factuur", "bank", "salaris", "inkomen")),
     ("health", ("gezondheid", "medisch", "huisarts", "ziekenhuis", "zorgverzekering")),
     ("learning_development", ("opleiding", "studie", "cursus", "certificaat", "diploma")),
     ("legal", ("juridisch", "rechtbank", "bezwaar", "beroep", "advocaat")),

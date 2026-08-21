@@ -35,6 +35,18 @@ class ReviewTaxonomyTests(unittest.TestCase):
         self.assertTrue(options)
         self.assertTrue(all(item["reason_codes"] == ["alternative"] for item in options))
 
+    def test_mortgage_documents_are_canonically_ranked_under_home(self):
+        options = category_options(
+            {"filename": "Hypotheek ABN overzicht.pdf", "path": "/Documenten/Hypotheek/"},
+            {"category_code": "needs_review"},
+        )
+        self.assertEqual("home_living", options[0]["code"])
+        mortgage = next(
+            item for item in taxonomy()["families"]
+            if item["code"] == "mortgage_documents"
+        )
+        self.assertEqual(["home_living"], mortgage["categories"])
+
 
 if __name__ == "__main__":
     unittest.main()

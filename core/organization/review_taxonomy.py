@@ -24,8 +24,8 @@ def family_label(code: str) -> str:
 
 CATEGORY_SIGNALS = {
     "work_career": ("/werk/", "sollicit", "vacature", "cv & sollicitaties", "contractvoorstel", "werkgever"),
-    "home_living": ("/wonen/", "/vve ", "/vve/", "woning", "eksterlaan", "riolering", "onderhoud"),
-    "finance": ("/geldzaken/", "belasting", "factuur", "bank", "hypotheek", "toeslag", "salaris"),
+    "home_living": ("/wonen/", "/vve ", "/vve/", "woning", "hypotheek", "eksterlaan", "riolering", "onderhoud"),
+    "finance": ("/geldzaken/", "belasting", "factuur", "bank", "toeslag", "salaris"),
     "health": ("/gezondheid/", "medisch", "huisarts", "ziekenhuis", "zorg"),
     "family_relationships": ("/gezin", "familie", "relatie"),
     "learning_development": ("/studie/", "/opleiding/", "cursus", "certificaat", "diploma"),
