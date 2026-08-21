@@ -32,6 +32,11 @@ class PersonalMigrationExecutorTests(unittest.TestCase):
         self.assertIn("duplicate_review_required", runtime)
         self.assertIn("qualifies_for_activation", runtime)
 
+    def test_candidate_query_uses_current_content_group_hash_column(self):
+        runtime = (ROOT / "tools/runtime/personal_migration_executor.py").read_text()
+        self.assertIn("g.content_sha256 = v.content_sha256", runtime)
+        self.assertNotIn("g.hash_content", runtime)
+
     def test_core_cli_exposes_full_migration_lifecycle(self):
         cli = (ROOT / "tools/runtime/core").read_text()
         for command in ("migrate plan", "migrate approve", "migrate execute", "migrate reconcile", "migrate rollback"):

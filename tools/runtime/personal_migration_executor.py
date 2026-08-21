@@ -55,7 +55,7 @@ SELECT v.file_id, v.content_group_id, v.content_sha256, v.source_path,
 FROM public.v_document_workset_path_review v
 JOIN public.files f ON f.id = v.file_id AND f.deleted_at IS NULL
 JOIN public.content_groups g ON g.id = v.content_group_id
- AND g.golden_file_id = v.file_id AND g.hash_content = v.content_sha256
+ AND g.golden_file_id = v.file_id AND g.content_sha256 = v.content_sha256
 WHERE v.effective_lifecycle IN ('active', 'archive')
   AND v.lifecycle_reviewed_at IS NOT NULL
   AND EXISTS (
