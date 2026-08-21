@@ -16,7 +16,7 @@ import redis
 
 from core.semantic.rag import GenerationRequest, OpenAICompatibleLocalProvider
 from core.semantic.workset_llm import (
-    PROMPT_VERSION, SCHEMA_VERSION, abstention, build_prompt,
+    PROMPT_VERSION, SCHEMA_VERSION, abstention, build_prompt, enforce_core_lifecycle,
     extract_bounded_context, validate_proposal,
 )
 
@@ -252,6 +252,7 @@ def process_job(job: dict[str, Any]) -> None:
         )
         generated = provider.generate(GenerationRequest(MODEL, system, user))
         proposal = validate_proposal(generated["content"], int(row["file_id"]))
+        proposal = enforce_core_lifecycle(proposal, str(row["workset_status"]))
         usage.update({key: int(generated.get("usage", {}).get(key) or 0) for key in usage})
 
     run_status = "completed" if proposal["status"] == "ready" else "completed_with_errors"

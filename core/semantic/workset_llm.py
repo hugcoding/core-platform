@@ -75,6 +75,10 @@ filename: {document['filename']}
 source_path: {document['path']}
 current_core_category: {document.get('core_category') or 'unknown'}
 current_core_family: {document.get('core_family') or 'unknown'}
+current_core_workset_status: {document.get('workset_status') or 'unknown'}
+core_activity_reason: {document.get('reason_code') or 'unknown'}
+last_qualifying_activity_at: {document.get('last_qualifying_activity_at') or 'unknown'}
+activity_basis_source: {document.get('activity_basis_source') or 'unknown'}
 allowed_categories: {categories}
 allowed_families: {families}
 allowed_family_category_combinations: {family_categories}
@@ -94,6 +98,32 @@ def abstention(file_id: int, reason: str) -> dict[str, Any]:
         "category_code": None, "family_code": None, "lifecycle": "needs_review",
         "privacy_advice": None, "confidence": "low", "relation_kind": "none",
         "related_file_ids": [], "reason": reason,
+    }
+
+
+def enforce_core_lifecycle(proposal: dict[str, Any], workset_status: str) -> dict[str, Any]:
+    """Keep deterministic workset policy authoritative over LLM lifecycle advice."""
+    if proposal.get("status") != "ready":
+        return proposal
+    expected = {
+        "active": "active",
+        "inactive": "archive",
+        "needs_review": "needs_review",
+    }.get(workset_status)
+    if expected is None or proposal.get("lifecycle") == expected:
+        return proposal
+    model_advice = str(proposal.get("lifecycle") or "unknown")
+    reason = str(proposal.get("reason") or "").strip()[:430]
+    return {
+        **proposal,
+        "lifecycle": expected,
+        "confidence": "medium" if proposal.get("confidence") == "high" else proposal.get("confidence"),
+        "reason": (
+            f"{reason} De LLM adviseerde lifecycle {model_advice}; CORE behield {expected} "
+            f"volgens de actuele werksetpolicy ({workset_status})."
+        ).strip(),
+        "model_lifecycle_advice": model_advice,
+        "lifecycle_guard": "core_workset_policy_authoritative",
     }
 
 
