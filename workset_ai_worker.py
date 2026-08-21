@@ -81,13 +81,24 @@ def stream_lag(client: redis.Redis) -> int:
     return total
 
 
-def resource_gate(resources: dict[str, float], lag: int) -> str | None:
-    if resources["cpu_load_percent"] > CPU_LIMIT_PERCENT:
+def resource_gate(
+    resources: dict[str, float],
+    lag: int,
+    job: dict[str, Any] | None = None,
+) -> str | None:
+    # Een expliciet aangevraagde AI-job mag gewone CPU-druk passeren.
+    # Zonder pending job blijft de normale CPU-beveiliging actief.
+    if job is None and resources["cpu_load_percent"] > CPU_LIMIT_PERCENT:
         return "waiting_for_cpu"
+
+    # Geheugen blijft altijd een harde veiligheidsgrens.
     if resources["available_memory_mib"] < MIN_AVAILABLE_MIB:
         return "waiting_for_memory"
+
+    # De primaire CORE-pipeline houdt altijd voorrang.
     if lag > MAX_STREAM_LAG:
         return "core_pipeline_priority"
+
     return None
 
 
@@ -117,7 +128,17 @@ def claim_job() -> dict[str, Any] | None:
             WHERE id=%s
         """, (job["id"],))
         return dict(job)
-
+    
+def peek_job() -> dict[str, Any] | None:
+    with db_connect() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT * FROM public.workset_ai_jobs
+            WHERE status='pending'
+            ORDER BY priority DESC, requested_at, id
+            LIMIT 1
+        """)
+        job = cur.fetchone()
+        return dict(job) if job else None
 
 def relevant_examples(cur, filename: str, file_id: int) -> list[dict[str, Any]]:
     cur.execute("""
@@ -235,7 +256,8 @@ def main() -> int:
     while True:
         try:
             resources = host_resources()
-            reason = resource_gate(resources, stream_lag(client))
+            pending_job = peek_job()
+            reason = resource_gate(resources, stream_lag(client), pending_job)
             client.set("workset_ai_worker:heartbeat", datetime.now(timezone.utc).isoformat(), ex=90)
             client.hset("workset_ai_worker:resources", mapping={
                 **resources, "gate_reason": reason or "ready",

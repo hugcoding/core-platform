@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Optional
+from collections import Counter
 
 import psycopg2
 import redis
@@ -21,8 +22,12 @@ from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from core.organization.target_path import CONTRACT_VERSION, propose_target
-from core.organization.review_taxonomy import contextual_options, taxonomy
-from core.organization.review_learning import build_proposed_family_candidates
+from core.organization.review_taxonomy import (
+    contextual_options,
+    taxonomy,
+    taxonomy_fallback_proposal,
+)
+from core.organization.review_learning import (build_proposed_family_candidates,build_learned_family_preferences,)
 from core.organization.path_normalization import normalize_target_path, suggest_known_target_path
 from core.organization.filename_normalization import normalize_proposed_filename, target_with_filename
 from core.organization.privacy_classification import RULE_VERSION as PRIVACY_RULE_VERSION, propose_privacy
@@ -42,6 +47,7 @@ EXPORT_DIR = Path(os.getenv("EXPORT_DIR", "/exports/migration-inventory"))
 HOST_PROC = Path(os.getenv("HOST_PROC", "/host/proc"))
 STORAGE_PATH = Path(os.getenv("STORAGE_PATH", "/volume1"))
 STARTED = time.monotonic()
+CLASSIFIABLE_WORKSET_STATUSES = {"active", "inactive"}
 TARGET_PATH_REFERENCE_TTL_SECONDS = 30.0
 _target_path_reference_lock = threading.Lock()
 _target_path_reference_cache: dict[str, Any] = {
@@ -318,56 +324,172 @@ def llm_enabled() -> bool:
     return os.getenv("CORE_LLM_ENABLED", "false").casefold() == "true"
 
 
-def validated_similarity_evidence(conn, raw: Any, category: str | None,
-                                  family: str | None) -> dict[str, Any]:
+def validated_similarity_evidence(
+    conn,
+    raw: Any,
+    category: str | None,
+    family: str | None,
+) -> dict[str, Any]:
     if not raw:
         return {}
+
     if not isinstance(raw, dict) or raw.get("status") != "consensus_proposal":
-        raise HTTPException(status_code=422, detail="invalid similar-document evidence")
+        raise HTTPException(
+            status_code=422,
+            detail="invalid similar-document evidence",
+        )
+
     try:
-        review_ids = [str(uuid.UUID(value)) for value in raw["source_review_event_ids"]]
-        related_ids = [int(value) for value in raw.get("related_file_ids", [])]
+        review_ids = [
+            str(uuid.UUID(value))
+            for value in raw["source_review_event_ids"]
+        ]
+        related_ids = [
+            int(value)
+            for value in raw.get("related_file_ids", [])
+        ]
         score = float(raw["score"])
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
-        raise HTTPException(status_code=422, detail="invalid similar-document evidence") from exc
-    if not 1 <= len(review_ids) <= 10 or len(related_ids) > 10 or not 0.0 <= score <= 1.0:
-        raise HTTPException(status_code=422, detail="invalid similar-document evidence bounds")
-    sources = query_all(conn, """
-        SELECT id, file_id, corrected_category_code, corrected_document_family_code
-        FROM public.document_review_events
-        WHERE id = ANY(%s::uuid[]) AND review_type = 'target_path' AND decision = 'accepted'
-    """, (review_ids,))
-    if len(sources) != len(set(review_ids)) or any(
-        str(source["corrected_category_code"]) != category
-        or str(source["corrected_document_family_code"]) != family
-        for source in sources
+        raise HTTPException(
+            status_code=422,
+            detail="invalid similar-document evidence",
+        ) from exc
+
+    if (
+        not 1 <= len(review_ids) <= 10
+        or len(related_ids) > 10
+        or not 0.0 <= score <= 1.0
     ):
-        raise HTTPException(status_code=409, detail="similar-document source review changed")
+        raise HTTPException(
+            status_code=422,
+            detail="invalid similar-document evidence bounds",
+        )
+
+    sources = query_all(
+        conn,
+        """
+        SELECT
+            id,
+            file_id,
+            corrected_category_code,
+            corrected_document_family_code
+        FROM public.document_review_events
+        WHERE id = ANY(%s::uuid[])
+          AND review_type = 'target_path'
+          AND decision = 'accepted'
+        """,
+        (review_ids,),
+    )
+
+    if len(sources) != len(set(review_ids)):
+        raise HTTPException(
+            status_code=409,
+            detail="similar-document source review changed",
+        )
+
+    judgment_counts = Counter(
+        (
+            str(source["corrected_category_code"]),
+            str(source["corrected_document_family_code"]),
+        )
+        for source in sources
+    )
+
+    most_common = judgment_counts.most_common()
+
+    if not most_common:
+        raise HTTPException(
+            status_code=409,
+            detail="similar-document source review changed",
+        )
+
+    (winning_category, winning_family), support_count = most_common[0]
+
+    second_count = (
+        most_common[1][1]
+        if len(most_common) > 1
+        else 0
+    )
+
+    if support_count <= second_count:
+        raise HTTPException(
+            status_code=409,
+            detail="similar-document reviews no longer have a clear majority",
+        )
+
+    if winning_category != category or winning_family != family:
+        raise HTTPException(
+            status_code=409,
+            detail="similar-document majority changed",
+        )
+
+    total = len(sources)
+
     return {
         "rule_version": str(raw.get("rule_version") or "")[:80],
-        "normalized_identity": str(raw.get("normalized_identity") or "")[:200],
+        "normalized_identity": str(
+            raw.get("normalized_identity") or ""
+        )[:200],
         "match_kind": "normalized_filename_cross_format",
         "score": score,
         "related_file_ids": sorted(set(related_ids)),
         "source_review_event_ids": sorted(set(review_ids)),
         "proposed_category_code": category,
         "proposed_document_family_code": family,
+        "support_count": support_count,
+        "review_count": total,
+        "support_ratio": round(support_count / total, 2),
+        "conflicting_human_judgments": len(judgment_counts) > 1,
     }
 
 
 WORKSET_SELECT = """
     SELECT
-        w.file_id, w.content_group_id, w.content_sha256, w.filename, w.extension, w.path,
-        w.size_bytes, w.workset_status, w.reason_code,
-        w.last_qualifying_activity_at, w.activity_basis_source,
-        w.activity_confidence, w.filesystem_modified_at,
-        w.policy_version, w.policy_checksum,
-        c.category, c.document_family, c.lifecycle,
-        c.suggested_path, c.sensitivity, c.confidence AS classification_confidence
+        w.file_id,
+        w.content_group_id,
+        w.content_sha256,
+        w.filename,
+        w.extension,
+        w.path,
+        w.size_bytes,
+        w.workset_status,
+        w.reason_code,
+        w.last_qualifying_activity_at,
+        w.activity_basis_source,
+        w.activity_confidence,
+        w.filesystem_modified_at,
+        w.policy_version,
+        w.policy_checksum,
+        c.category,
+        c.document_family,
+        c.lifecycle,
+        c.suggested_path,
+        c.sensitivity,
+        c.confidence AS classification_confidence,
+        pe.classification AS content_privacy_classification,
+        pe.confidence AS content_privacy_confidence,
+        pe.signals AS content_privacy_signals,
+        pe.rule_version AS content_privacy_rule_version,
+        pe.extractor_version AS content_privacy_extractor_version,
+        pe.created_at AS content_privacy_created_at
     FROM public.v_active_document_workset w
-    LEFT JOIN public.v_current_file_classification c ON c.file_id = w.file_id
+    LEFT JOIN public.v_current_file_classification c
+        ON c.file_id = w.file_id
+    LEFT JOIN LATERAL (
+        SELECT
+            p.classification,
+            p.confidence,
+            p.signals,
+            p.rule_version,
+            p.extractor_version,
+            p.created_at
+        FROM public.file_privacy_evidence p
+        WHERE p.file_id = w.file_id
+          AND p.content_sha256 = w.content_sha256
+        ORDER BY p.created_at DESC, p.id DESC
+        LIMIT 1
+    ) pe ON TRUE
 """
-
 
 def workset_order_by(
     sort: str, review_state: str, review_decision: str, review_storage: bool,
@@ -433,6 +555,38 @@ def effective_lifecycle_for_file(conn: Any, row: dict[str, Any]) -> dict[str, An
         review.get("lifecycle_active_until"),
     )
 
+def effective_privacy_proposal(row: dict[str, Any]) -> dict[str, Any]:
+    """Combine metadata privacy rules with persisted deterministic content evidence."""
+    proposal = propose_privacy(row)
+
+    content_privacy = str(
+        row.get("content_privacy_classification") or ""
+    ).casefold()
+
+    if content_privacy != "high":
+        return proposal
+
+    content_confidence = str(
+        row.get("content_privacy_confidence") or ""
+    ).casefold()
+
+    content_signals = list(
+        row.get("content_privacy_signals") or []
+    )
+
+    return {
+        **proposal,
+        "classification": "high",
+        "confidence": content_confidence or "high",
+        "reason_code": "persisted_content_privacy_evidence",
+        "rule_version": str(
+            row.get("content_privacy_rule_version")
+            or PRIVACY_RULE_VERSION
+        ),
+        "evidence": content_signals,
+        "requires_human_review": True,
+        "external_llm_content_allowed": False,
+    }
 
 def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
     item = {key: iso(value) for key, value in row.items()}
@@ -440,14 +594,25 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
     item["smb_path"] = smb_path(str(row["path"]))
     item["classification_status"] = "accepted" if row.get("category") else "not_reviewed"
     item["migration_status"] = "virtual_only"
-    privacy_proposal = propose_privacy(row)
+    privacy_proposal = effective_privacy_proposal(row)
+
     item["privacy_proposal"] = privacy_proposal
-    item["current_privacy_classification"] = row.get("latest_privacy_classification")
-    item["effective_privacy_classification"] = (
-        row.get("latest_privacy_classification") or privacy_proposal["classification"]
+
+    item["current_privacy_classification"] = row.get(
+        "latest_privacy_classification"
     )
+
+    item["effective_privacy_classification"] = (
+        row.get("latest_privacy_classification")
+        or privacy_proposal["classification"]
+    )
+
     item["privacy_source"] = (
-        "human_review" if row.get("latest_privacy_classification") else "core_rule_proposal"
+        "human_review"
+        if row.get("latest_privacy_classification")
+        else "content_privacy_evidence"
+        if privacy_proposal["reason_code"] == "persisted_content_privacy_evidence"
+        else "core_rule_proposal"
     )
     lifecycle = resolve_effective_lifecycle(
         row.get("workset_status"), row.get("latest_corrected_lifecycle"),
@@ -504,25 +669,53 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
         "accepted_portal_review" if reviewed_family else
         "accepted_classification" if row.get("document_family") else "core_proposal"
     )
-    if item.get("workset_status") == "active":
+    if item.get("workset_status") in CLASSIFIABLE_WORKSET_STATUSES:
         proposal = propose_target({
             **row,
             "accepted_category": item["effective_category"],
             "accepted_document_family": item["effective_document_family"],
             "accepted_lifecycle": item["effective_lifecycle"],
         })
+
+        fallback = taxonomy_fallback_proposal(row, proposal)
+
+        if fallback:
+            proposal = propose_target({
+                **row,
+                "accepted_category": fallback["category_code"],
+                "accepted_document_family": fallback["document_family_code"],
+                "accepted_lifecycle": item["effective_lifecycle"],
+            })
+
+            proposal["proposal_reason_code"] = fallback["reason_code"]
+            proposal["proposal_confidence"] = fallback["confidence"]
+
+            item["taxonomy_fallback_proposal"] = fallback
+
         item["target_proposal"] = {
             key: proposal[key] for key in (
-                "contract_version", "contract_checksum", "zone_code", "zone_label",
-                "category_code", "category_label", "trajectory_code", "trajectory_label",
-                "document_family_code", "folder_label", "suggested_target_path",
-                "proposal_reason_code", "proposal_confidence",
+                "contract_version",
+                "contract_checksum",
+                "zone_code",
+                "zone_label",
+                "category_code",
+                "category_label",
+                "trajectory_code",
+                "trajectory_label",
+                "document_family_code",
+                "folder_label",
+                "suggested_target_path",
+                "proposal_reason_code",
+                "proposal_confidence",
             )
         }
+
         item["review_options"] = contextual_options(row, proposal)
+
     else:
         item["target_proposal"] = None
         item["review_options"] = None
+
     return item
 
 
@@ -643,14 +836,31 @@ def workset(
                 FROM public.v_active_document_lifecycle_nominations
             """) if nomination_storage else {"archive": 0, "deletion": 0}
             trajectory_reviews = query_all(conn, """
-                SELECT DISTINCT ON (e.file_id)
-                       e.id, e.file_id, e.decision, e.proposed_target_path,
-                       e.created_at, e.review_type, e.proposed_family_label,
-                       e.corrected_category_code, f.filename, f.path
-                FROM public.document_review_events e
-                JOIN public.files f ON f.id = e.file_id
-                WHERE e.review_type = 'target_path'
-                ORDER BY e.file_id, e.created_at DESC, e.id DESC
+    SELECT DISTINCT ON (e.file_id)
+           e.id, e.file_id, e.decision, e.proposed_target_path,
+           e.created_at, e.review_type, e.proposed_family_label,
+           e.corrected_category_code,
+           e.corrected_document_family_code,
+           f.filename, f.path
+    FROM public.document_review_events e
+    JOIN public.files f ON f.id = e.file_id
+    WHERE e.review_type = 'target_path'
+    ORDER BY e.file_id, e.created_at DESC, e.id DESC
+""") if review_storage else []
+            accepted_similarity_reviews = query_all(conn, """
+                SELECT
+                    r.id AS latest_review_id,
+                    r.file_id,
+                    r.decision AS latest_review_decision,
+                    r.corrected_category_code AS latest_review_category,
+                    r.corrected_document_family_code AS latest_review_family,
+                    f.filename
+                FROM public.v_latest_document_review r
+                JOIN public.files f ON f.id = r.file_id
+                WHERE r.review_type = 'target_path'
+                AND r.decision = 'accepted'
+                AND r.corrected_category_code IS NOT NULL
+                AND r.corrected_document_family_code IS NOT NULL
             """) if review_storage else []
             rows = query_all(conn, WORKSET_SELECT.replace(
                 "FROM public.v_active_document_workset w",
@@ -662,8 +872,37 @@ def workset(
                 tuple(params),
             )
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"workset unavailable: {type(exc).__name__}") from exc
-    enriched = apply_similar_review_proposals([enrich_workset_row(row) for row in rows])
+        raise HTTPException(
+            status_code=503,
+            detail=f"workset unavailable: {type(exc).__name__}: {exc}"
+        ) from exc
+    enriched = [enrich_workset_row(row) for row in rows]
+
+    visible_ids = {int(item["file_id"]) for item in enriched}
+
+    similarity_evidence = [
+        {
+            "file_id": row["file_id"],
+            "filename": row["filename"],
+            "extension": Path(str(row["filename"])).suffix.lstrip(".").casefold(),
+            "latest_review_id": row["latest_review_id"],
+            "latest_review_decision": row["latest_review_decision"],
+            "latest_review_category": row["latest_review_category"],
+            "latest_review_family": row["latest_review_family"],
+        }
+        for row in accepted_similarity_reviews
+        if int(row["file_id"]) not in visible_ids
+    ]
+
+    similarity_result = apply_similar_review_proposals(
+        enriched + similarity_evidence
+    )
+
+    enriched = [
+        item
+        for item in similarity_result
+        if int(item["file_id"]) in visible_ids
+    ]
     summary = {
         "total": len(enriched),
         "active": sum(item.get("workset_status") == "active" for item in enriched),
@@ -675,7 +914,7 @@ def workset(
     learning_context_rules = build_learning_context_rules(trajectory_reviews)
     for item in enriched:
         rule = matching_learning_context_rule(item, learning_context_rules)
-        if not rule or item.get("workset_status") != "active":
+        if not rule or item.get("workset_status") not in CLASSIFIABLE_WORKSET_STATUSES:
             continue
         row = next(row for row in rows if int(row["file_id"]) == int(item["file_id"]))
         proposal = propose_target({
@@ -696,7 +935,10 @@ def workset(
         item["review_options"] = contextual_options(row, proposal)
     for item in enriched:
         similar = item.get("similar_document_proposal") or {}
-        if similar.get("status") != "consensus_proposal" or item.get("workset_status") != "active":
+        if (
+            similar.get("status") != "consensus_proposal"
+            or item.get("workset_status") not in {"active", "inactive"}
+        ):
             continue
         row = next(row for row in rows if int(row["file_id"]) == int(item["file_id"]))
         proposal = propose_target({
@@ -716,6 +958,7 @@ def workset(
         item["review_options"] = contextual_options(row, proposal)
     trajectory_rules = build_trajectory_rules(trajectory_reviews, minimum_support=1)
     family_candidates = build_proposed_family_candidates(trajectory_reviews)
+    learned_families = build_learned_family_preferences(trajectory_reviews)
     for item in enriched:
         current = item.get("target_proposal") or {}
         if current.get("category_code") != "work_career":
@@ -751,6 +994,7 @@ def workset(
         if not options:
             continue
         options["candidate_families"] = family_candidates
+        options["learned_families"] = learned_families
     review_summary = {
         "pending": sum(not item.get("latest_review_id") for item in enriched),
         "reviewed": sum(bool(item.get("latest_review_id")) for item in enriched),
@@ -861,7 +1105,7 @@ def create_document_lifecycle_nomination(payload: dict[str, Any] = Body(...)):
                 previous["review_at"] if action == "withdrawn"
                 else datetime.now(timezone.utc) + timedelta(days=days)
             )
-            privacy = propose_privacy(row)["classification"]
+            privacy = effective_privacy_proposal(row)["classification"]
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO public.document_lifecycle_nomination_events (
@@ -1077,12 +1321,16 @@ def prepare_bulk_review(conn, payload: dict[str, Any]) -> list[dict[str, Any]]:
         raise HTTPException(status_code=422, detail="every bulk item requires a valid file_id") from exc
     if len(set(file_ids)) != len(file_ids):
         raise HTTPException(status_code=422, detail="duplicate files are not allowed in a bulk review")
-    rows = query_all(
-        conn, WORKSET_SELECT + " WHERE w.file_id = ANY(%s) AND w.workset_status = 'active'", (file_ids,),
+    rows = query_all(conn,
+        WORKSET_SELECT + """
+            WHERE w.file_id = ANY(%s)
+            AND w.workset_status IN ('active', 'inactive')
+        """,
+        (file_ids,),
     )
     by_id = {int(row["file_id"]): row for row in rows}
     if set(by_id) != set(file_ids):
-        raise HTTPException(status_code=409, detail="one or more files are no longer active workset candidates")
+        raise HTTPException(status_code=409, detail="one or more files are no longer classifiable workset candidates")
     valid_categories = {item["code"] for item in taxonomy()["categories"]}
     valid_families = {item["code"] for item in taxonomy()["families"]}
     prepared = []
@@ -1108,7 +1356,7 @@ def prepare_bulk_review(conn, payload: dict[str, Any]) -> list[dict[str, Any]]:
         normalized = normalize_target_path(
             manual_path or proposal["suggested_target_path"], filename=str(row["filename"]),
         )
-        privacy_proposal = propose_privacy(row)
+        privacy_proposal = effective_privacy_proposal(row)
         prepared.append({
             "row": row, "file_id": file_id, "filename": str(row["filename"]),
             "category": category, "family": family, "privacy": privacy,
@@ -1156,10 +1404,15 @@ def workset_ai_jobs(status: str = Query("all", pattern="^(all|pending|running|re
                 SELECT j.*, f.filename, p.category_code, p.family_code, p.lifecycle,
                        p.privacy_advice, p.confidence, p.reason, p.relation_kind,
                        p.related_file_ids, p.created_at AS proposal_created_at,
-                       NOT EXISTS (
-                           SELECT 1 FROM public.document_review_events e
-                           WHERE e.ai_proposal_id=j.proposal_id AND e.decision='accepted'
-                       ) AS awaiting_human_review
+                       (
+                        j.dismissed_at IS NULL
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM public.document_review_events e
+                            WHERE e.ai_proposal_id=j.proposal_id
+                            AND e.decision='accepted'
+                        )
+                    ) AS awaiting_human_review
                 FROM public.workset_ai_jobs j
                 JOIN public.files f ON f.id=j.file_id
                 LEFT JOIN public.workset_ai_proposals p ON p.id=j.proposal_id
@@ -1244,6 +1497,67 @@ def create_workset_ai_job(payload: dict[str, Any] = Body(...)):
         raise HTTPException(status_code=503, detail=f"AI queue unavailable: {type(exc).__name__}") from exc
     return {"status": "queued", "job": public_ai_job(job), "file_mutations": False}
 
+@app.post("/api/v1/workset/ai-jobs/{job_id}/dismiss")
+def dismiss_workset_ai_job(
+    job_id: str,
+    payload: dict[str, Any] = Body(...),
+):
+    try:
+        job_uuid = str(uuid.UUID(job_id))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="valid AI job ID required",
+        ) from exc
+
+    reviewer = str(
+        payload.get("dismissed_by")
+        or os.getenv("CORE_REVIEWER", "hugo")
+    ).strip()[:200]
+
+    try:
+        with db_connect() as conn, conn.cursor() as cur:
+            cur.execute("""
+                UPDATE public.workset_ai_jobs
+                SET dismissed_at = now(),
+                    dismissed_by = %s,
+                    updated_at = now()
+                WHERE id = %s
+                  AND status = 'ready'
+                RETURNING id, file_id, dismissed_at, dismissed_by
+            """, (reviewer, job_uuid))
+
+            dismissed = cur.fetchone()
+
+            if not dismissed:
+                raise HTTPException(
+                    status_code=409,
+                    detail="AI proposal is not ready or no longer available",
+                )
+
+            dismissed = dict(
+                zip(
+                    (column.name for column in cur.description),
+                    dismissed,
+                )
+            )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"AI dismiss unavailable: {type(exc).__name__}: {exc}",
+        ) from exc
+
+    return {
+        "status": "dismissed",
+        "job_id": str(dismissed["id"]),
+        "file_id": int(dismissed["file_id"]),
+        "dismissed_at": iso(dismissed["dismissed_at"]),
+        "dismissed_by": dismissed["dismissed_by"],
+        "proposal_preserved": True,
+    }
 
 @app.post("/api/v1/workset/ai-jobs/{job_id}/accept")
 def accept_complete_ai_proposal(job_id: str, payload: dict[str, Any] = Body(...)):
@@ -1264,8 +1578,15 @@ def accept_complete_ai_proposal(job_id: str, payload: dict[str, Any] = Body(...)
                 WHERE j.id=%s AND j.status='ready'
             """, (job_uuid,))
             ai = cur.fetchone()
+
+            if ai:
+                ai = dict(zip((column.name for column in cur.description), ai))
+
             if not ai:
-                raise HTTPException(status_code=409, detail="AI proposal is not ready")
+                raise HTTPException(
+                    status_code=409,
+                    detail="AI proposal is not ready",
+                )
             rows = query_all(conn, WORKSET_SELECT + " WHERE w.file_id=%s", (ai["file_id"],))
             if not rows or rows[0]["content_sha256"] != ai["content_sha256"]:
                 raise HTTPException(status_code=409, detail="AI proposal is stale")
@@ -1300,11 +1621,15 @@ def accept_complete_ai_proposal(job_id: str, payload: dict[str, Any] = Body(...)
                       reviewer, ai["ai_proposal_id"]))
                 created = cur.fetchone()
                 if created:
+                    created = dict(zip((column.name for column in cur.description), created))
                     event_ids.append(str(created["id"]))
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"AI acceptance unavailable: {type(exc).__name__}") from exc
+        raise HTTPException(
+            status_code=503,
+            detail=f"AI acceptance unavailable: {type(exc).__name__}: {exc}"
+        ) from exc
     return {"status": "accepted", "job_id": job_uuid, "review_event_ids": event_ids,
             "human_confirmation": True, "file_mutations": False, "model_updates": False}
 
@@ -1343,9 +1668,16 @@ def create_workset_ai_run(payload: dict[str, Any] = Body(...)):
                         "created_at": iso(existing[0]["created_at"]),
                         "proposals": [public_ai_proposal(item) for item in proposals],
                         "file_mutations": False, "model_updates": False}
-            rows = query_all(conn, WORKSET_SELECT + " WHERE w.file_id=ANY(%s) AND w.workset_status='active'", (file_ids,))
+            rows = query_all(
+                conn,
+                WORKSET_SELECT + """
+                    WHERE w.file_id=ANY(%s)
+                    AND w.workset_status IN ('active', 'inactive')
+                """,
+                (file_ids,),
+            )
             if {int(row["file_id"]) for row in rows} != set(file_ids):
-                raise HTTPException(status_code=409, detail="one or more files are no longer active candidates")
+                raise HTTPException(status_code=409, detail="one or more files are no longer classifiable workset candidates")
             examples = query_all(conn, """
                 SELECT e.id AS review_id,e.file_id,f.filename,e.corrected_category_code AS category_code,
                        e.corrected_document_family_code AS family_code,e.created_at
@@ -1582,10 +1914,17 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
         raise HTTPException(status_code=422, detail="invalid document family code")
     valid_categories = {item["code"] for item in taxonomy()["categories"]}
     valid_families = {item["code"] for item in taxonomy()["families"]}
-    if review_type == "target_path" and category not in valid_categories:
-        raise HTTPException(status_code=422, detail="invalid category code")
-    if review_type == "target_path" and family not in valid_families:
-        raise HTTPException(status_code=422, detail="invalid document family code")
+    if review_type == "target_path":
+        if decision == "accepted":
+            if category not in valid_categories:
+                raise HTTPException(status_code=422, detail="invalid category code")
+            if family not in valid_families:
+                raise HTTPException(status_code=422, detail="invalid document family code")
+        else:
+            if category is not None and category not in valid_categories:
+                raise HTTPException(status_code=422, detail="invalid category code")
+            if family is not None and family not in valid_families:
+                raise HTTPException(status_code=422, detail="invalid document family code")
     if notes and len(notes) > 2000:
         raise HTTPException(status_code=422, detail="review note exceeds 2000 characters")
     if proposed_category and len(proposed_category) > 120:
@@ -1642,7 +1981,7 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
             if path_suggestion_decision == "accepted" and proposed_path != path_suggestion:
                 raise HTTPException(status_code=422, detail="accepted suggestion must equal proposed target path")
             if review_type == "privacy_classification":
-                privacy = propose_privacy(row)
+                privacy = effective_privacy_proposal(row)
                 latest = query_all(
                     conn,
                     "SELECT id FROM public.v_latest_document_review WHERE file_id = %s AND review_type = 'privacy_classification'",

@@ -19,10 +19,11 @@ def test_dashboard_has_stable_routes_and_only_review_mutations():
     assert '@app.get("/api/v1/overview")' in source
     assert '@app.get("/coreworkset")' in source
     assert '@app.get("/api/v1/workset")' in source
-    assert source.count("@app.post") == 7
+    assert source.count("@app.post") >= 8
     assert "INSERT INTO public.document_review_events" in source
     assert "INSERT INTO public.document_review_batches" in source
-    assert "UPDATE public." not in source
+    assert source.count("UPDATE public.") == 1
+    assert "UPDATE public.workset_ai_jobs" in source
     assert "DELETE FROM" not in source
 
 
@@ -50,7 +51,8 @@ def test_workset_portal_is_parameterized_review_only_and_mobile():
     assert '"database_writes": False' in backend
     assert '"file_mutations": False' in backend
     assert "INSERT INTO public.document_review_events" in backend
-    assert "UPDATE public." not in backend
+    assert backend.count("UPDATE public.") == 1
+    assert "UPDATE public.workset_ai_jobs" in backend
     assert "DELETE FROM" not in backend
     assert "fetch(`/api/v1/workset?" in frontend
     assert 'id="worksetFamily"' in page

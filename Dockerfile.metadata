@@ -1,8 +1,16 @@
 FROM nas-base:v1
+
 RUN pip3 install --break-system-packages --no-cache-dir pypdf cryptography
+
 WORKDIR /app
+
 COPY metadata_worker.py .
+
 COPY core/integrity ./core/integrity
 COPY core/metadata ./core/metadata
+COPY core/organization ./core/organization
+COPY core/semantic ./core/semantic
+
 COPY tools/runtime/date_evidence_backfill.py ./date_evidence_backfill.py
+
 CMD ["python3", "metadata_worker.py"]

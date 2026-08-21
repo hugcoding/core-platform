@@ -13,6 +13,58 @@ from core.organization.target_path import CATEGORY_LABELS, FAMILY_LABELS
 def _candidate_label(value: str) -> str:
     return " ".join(str(value or "").casefold().split())
 
+def build_learned_family_preferences(
+    rows: list[dict[str, Any]],
+    minimum_support: int = 2,
+) -> list[dict[str, Any]]:
+    """Rank existing families from repeated accepted human choices."""
+    latest: dict[int, dict[str, Any]] = {}
+
+    for row in rows:
+        if row.get("review_type") != "target_path":
+            continue
+
+        try:
+            latest[int(row["file_id"])] = row
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    counts: Counter[tuple[str, str]] = Counter()
+
+    for row in latest.values():
+        if row.get("decision") != "accepted":
+            continue
+
+        category = str(row.get("corrected_category_code") or "")
+        family = str(row.get("corrected_document_family_code") or "")
+
+        if not category or not family:
+            continue
+
+        counts[(category, family)] += 1
+
+    result = []
+
+    for (category, family), support in counts.items():
+        if support < minimum_support:
+            continue
+
+        result.append({
+            "category_code": category,
+            "family_code": family,
+            "family_label": FAMILY_LABELS.get(family, family),
+            "support": support,
+            "reason_codes": ["repeated_accepted_human_family_choice"],
+        })
+
+    return sorted(
+        result,
+        key=lambda item: (
+            item["category_code"],
+            -item["support"],
+            item["family_label"].casefold(),
+        ),
+    )
 
 def build_proposed_family_candidates(
     rows: list[dict[str, Any]], minimum_support: int = 3,

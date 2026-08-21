@@ -21,6 +21,16 @@ from core.metadata.date_evidence import (
     extract_date_evidence,
     idempotency_key as date_evidence_idempotency_key,
 )
+from pathlib import Path
+
+from core.organization.privacy_classification import (
+    RULE_VERSION as PRIVACY_RULE_VERSION,
+    propose_privacy,
+)
+from core.semantic.extraction import (
+    EXTRACTOR_VERSION,
+    extract_document,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("metadata-worker")
@@ -515,6 +525,84 @@ def persist_date_evidence(cur, *, file_id, path, extension, content_sha256, size
         inserted += rowcount if rowcount and rowcount > 0 else 0
     return inserted
 
+def persist_privacy_evidence(
+    cur,
+    *,
+    file_id,
+    path,
+    extension,
+    content_sha256,
+    size_bytes,
+):
+    """Persist deterministic privacy signals without storing sensitive values."""
+    if extension not in {"pdf", "docx"}:
+        return
+
+    if not content_sha256 or size_bytes <= 0:
+        return
+
+    cur.execute("""
+        SELECT 1
+        FROM public.file_privacy_evidence
+        WHERE file_id = %s
+          AND content_sha256 = %s
+          AND rule_version = %s
+        LIMIT 1
+    """, (
+        file_id,
+        content_sha256,
+        PRIVACY_RULE_VERSION,
+    ))
+
+    if cur.fetchone():
+        return
+
+    try:
+        text, _pages = extract_document(Path(path))
+    except Exception as exc:
+        logger.warning(
+            "Privacy extraction skipped for %s: %s",
+            path,
+            exc,
+        )
+        return
+
+    normalized = " ".join(str(text or "").split())
+
+    if not normalized:
+        return
+
+    proposal = propose_privacy({
+        "filename": os.path.basename(path),
+        "path": path,
+        "extracted_text": normalized,
+    })
+
+    cur.execute("""
+        INSERT INTO public.file_privacy_evidence (
+            file_id,
+            content_sha256,
+            classification,
+            confidence,
+            signals,
+            rule_version,
+            extractor_version
+        )
+        VALUES (%s,%s,%s,%s,%s,%s,%s)
+        ON CONFLICT (
+            file_id,
+            content_sha256,
+            rule_version
+        ) DO NOTHING
+    """, (
+        file_id,
+        content_sha256,
+        proposal["classification"],
+        proposal["confidence"],
+        proposal["evidence"],
+        proposal["rule_version"],
+        EXTRACTOR_VERSION,
+    ))
 
 def process_event(cur, data):
     event = str(data.get("event", "")).lower()
@@ -760,6 +848,15 @@ def process_event(cur, data):
     """, (file_id, width, height))
 
     persist_date_evidence(
+        cur,
+        file_id=file_id,
+        path=path,
+        extension=extension,
+        content_sha256=content_sha256,
+        size_bytes=size_bytes,
+    )
+
+    persist_privacy_evidence(
         cur,
         file_id=file_id,
         path=path,
