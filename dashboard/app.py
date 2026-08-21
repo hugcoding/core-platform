@@ -1146,6 +1146,209 @@ def create_document_lifecycle_nomination(payload: dict[str, Any] = Body(...)):
         raise HTTPException(status_code=503, detail=f"nomination unavailable: {type(exc).__name__}") from exc
 
 
+@app.get("/api/v1/workset/duplicates")
+def exact_duplicate_reviews(
+    review_state: str = Query("pending", pattern="^(pending|reviewed|all)$"),
+    limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    """Expose exact-content groups as review units without mutating storage."""
+    state_filter = {
+        "pending": " AND (g.latest_review_id IS NULL OR g.latest_review_action = 'withdrawn')",
+        "reviewed": " AND g.latest_review_action = 'selected_leader'",
+        "all": "",
+    }[review_state]
+    try:
+        with db_connect() as conn:
+            available = query_one(conn, """
+                SELECT to_regclass('public.v_exact_duplicate_review_groups') IS NOT NULL AS available
+            """)["available"]
+            if not available:
+                raise HTTPException(status_code=503, detail="duplicate review migration is not applied")
+            summary = query_one(conn, """
+                SELECT count(*) AS total,
+                       count(*) FILTER (WHERE latest_review_id IS NULL OR latest_review_action = 'withdrawn') AS pending,
+                       count(*) FILTER (WHERE latest_review_action = 'selected_leader') AS reviewed,
+                       coalesce(sum(potential_savings_bytes), 0) AS potential_savings_bytes
+                FROM public.v_exact_duplicate_review_groups
+            """)
+            groups = query_all(conn, """
+                SELECT g.*, r.review_notes, r.reviewer, r.policy_version,
+                       r.redundant_file_ids, r.golden_file_id_snapshot
+                FROM public.v_exact_duplicate_review_groups g
+                LEFT JOIN public.v_latest_exact_duplicate_review r ON r.id = g.latest_review_id
+                WHERE true
+            """ + state_filter + """
+                ORDER BY g.reviewed_at DESC NULLS LAST, g.potential_savings_bytes DESC,
+                         g.content_group_id
+                LIMIT %s OFFSET %s
+            """, (limit, offset))
+            group_ids = [str(group["content_group_id"]) for group in groups]
+            members = query_all(conn, """
+                SELECT gm.content_group_id, f.id AS file_id, f.filename, f.path,
+                       f.size_bytes, f.content_sha256, f.deleted_at,
+                       (f.id = cg.golden_file_id) AS is_current_golden,
+                       w.workset_status, w.last_qualifying_activity_at,
+                       privacy.corrected_privacy_classification AS privacy_classification
+                FROM public.content_group_members gm
+                JOIN public.content_groups cg ON cg.id = gm.content_group_id
+                JOIN public.files f ON f.id = gm.file_id
+                LEFT JOIN public.v_active_document_workset w ON w.file_id = f.id
+                LEFT JOIN public.v_latest_document_review privacy
+                  ON privacy.file_id = f.id AND privacy.review_type = 'privacy_classification'
+                WHERE gm.content_group_id = ANY(%s::uuid[])
+                ORDER BY gm.content_group_id, (f.id = cg.golden_file_id) DESC,
+                         lower(f.path), f.id
+            """, (group_ids,)) if group_ids else []
+            handoffs = query_all(conn, """
+                SELECT review_event_id, redundant_file_id, eligible_for_executor, handoff_reason,
+                       quarantine_path
+                FROM public.v_exact_duplicate_review_handoff
+                WHERE content_group_id = ANY(%s::uuid[])
+            """, (group_ids,)) if group_ids else []
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"duplicate review unavailable: {type(exc).__name__}: {exc}") from exc
+
+    members_by_group: dict[str, list[dict[str, Any]]] = {}
+    for member in members:
+        key = str(member.pop("content_group_id"))
+        member["file_id"] = int(member["file_id"])
+        member["smb_path"] = smb_path(str(member["path"]))
+        members_by_group.setdefault(key, []).append({k: iso(v) for k, v in member.items()})
+    handoffs_by_review: dict[str, list[dict[str, Any]]] = {}
+    for handoff in handoffs:
+        key = str(handoff.pop("review_event_id"))
+        handoffs_by_review.setdefault(key, []).append({k: iso(v) for k, v in handoff.items()})
+    output = []
+    for group in groups:
+        group_id = str(group["content_group_id"])
+        review_id = str(group["latest_review_id"]) if group.get("latest_review_id") else None
+        output.append({
+            **{key: iso(value) for key, value in group.items()},
+            "content_group_id": group_id,
+            "golden_file_id": int(group["golden_file_id"]),
+            "selected_file_id": int(group["selected_file_id"]) if group.get("selected_file_id") else None,
+            "members": members_by_group.get(group_id, []),
+            "handoff": handoffs_by_review.get(review_id or "", []),
+        })
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "review_state": review_state,
+        "summary": {key: int(value) for key, value in summary.items()},
+        "groups": output,
+        "review_writes_enabled": review_writes_enabled(),
+        "safety": {"file_mutations": False, "golden_record_updates": False,
+                   "automatic_deletions": False},
+    }
+
+
+@app.post("/api/v1/workset/duplicate-reviews")
+def create_exact_duplicate_review(payload: dict[str, Any] = Body(...)):
+    """Append one human leader choice and revalidated handoff evidence."""
+    if not review_writes_enabled():
+        raise HTTPException(status_code=403, detail="interactive reviews are disabled")
+    try:
+        group_id = str(uuid.UUID(str(payload["content_group_id"])))
+        idempotency_key = str(uuid.UUID(str(payload["idempotency_key"])))
+        selected_file_id = int(payload["selected_file_id"])
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=422, detail="valid group, selected file and idempotency key required") from exc
+    action = str(payload.get("action") or "selected_leader")
+    notes = str(payload.get("review_notes") or "").strip()
+    if action not in {"selected_leader", "withdrawn"} or len(notes) > 2000:
+        raise HTTPException(status_code=422, detail="invalid duplicate review action or notes")
+    environment = os.getenv("CORE_ENVIRONMENT", "acceptance")
+    try:
+        with db_connect() as conn:
+            group_rows = query_all(conn, """
+                SELECT id, content_sha256, size_bytes, golden_file_id
+                FROM public.content_groups WHERE id = %s FOR SHARE
+            """, (group_id,))
+            if not group_rows:
+                raise HTTPException(status_code=404, detail="content group not found")
+            group = group_rows[0]
+            members = query_all(conn, """
+                SELECT f.id, f.path, f.filename, f.content_sha256, f.size_bytes, f.deleted_at
+                FROM public.content_group_members gm
+                JOIN public.files f ON f.id = gm.file_id
+                WHERE gm.content_group_id = %s AND f.deleted_at IS NULL
+                ORDER BY f.id FOR SHARE OF f
+            """, (group_id,))
+            member_ids = [int(member["id"]) for member in members]
+            if len(members) < 2 or selected_file_id not in member_ids:
+                raise HTTPException(status_code=409, detail="duplicate membership changed")
+            if any(
+                member["content_sha256"] != group["content_sha256"]
+                or int(member["size_bytes"]) != int(group["size_bytes"])
+                for member in members
+            ):
+                raise HTTPException(status_code=409, detail="duplicate evidence changed")
+            previous_rows = query_all(conn, """
+                SELECT * FROM public.v_latest_exact_duplicate_review WHERE content_group_id = %s
+            """, (group_id,))
+            previous = previous_rows[0] if previous_rows else None
+            if action == "withdrawn" and (not previous or previous["action"] != "selected_leader"):
+                raise HTTPException(status_code=409, detail="there is no active duplicate review to withdraw")
+            if action == "withdrawn":
+                selected_file_id = int(previous["selected_file_id"])
+            redundant_ids = sorted(file_id for file_id in member_ids if file_id != selected_file_id)
+            policies = query_all(conn, """
+                SELECT id, policy_code, policy_version, configuration
+                FROM public.v_current_policies
+                WHERE policy_code = 'document_retention' AND environment = %s
+            """, (environment,))
+            if not policies:
+                raise HTTPException(status_code=409, detail="no active document retention policy is available")
+            policy = policies[0]
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO public.exact_duplicate_review_events (
+                        idempotency_key, content_group_id, content_sha256, size_bytes,
+                        action, selected_file_id, golden_file_id_snapshot, redundant_file_ids,
+                        review_notes, policy_id, policy_code, policy_version, policy_snapshot,
+                        reviewer, supersedes_event_id
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s::bigint[],%s,%s,%s,%s,%s::jsonb,%s,%s)
+                    ON CONFLICT (idempotency_key) DO NOTHING
+                    RETURNING id, created_at, content_group_id, selected_file_id, action
+                """, (
+                    idempotency_key, group_id, group["content_sha256"], group["size_bytes"],
+                    action, selected_file_id, group["golden_file_id"], redundant_ids, notes,
+                    policy["id"], policy["policy_code"], policy["policy_version"],
+                    json.dumps(policy["configuration"], ensure_ascii=False),
+                    os.getenv("CORE_REVIEWER", "hugo"), previous["id"] if previous else None,
+                ))
+                created = cur.fetchone()
+                if not created:
+                    cur.execute("""
+                        SELECT id, created_at, content_group_id, selected_file_id, action
+                        FROM public.exact_duplicate_review_events WHERE idempotency_key = %s
+                    """, (idempotency_key,))
+                    created = cur.fetchone()
+                if str(created[2]) != group_id or int(created[3]) != selected_file_id or created[4] != action:
+                    raise HTTPException(status_code=409, detail="idempotency key belongs to another duplicate review")
+            handoff = query_all(conn, """
+                SELECT redundant_file_id, quarantine_path, intended_lifecycle,
+                       nomination_reason, eligible_for_executor, handoff_reason
+                FROM public.v_exact_duplicate_review_handoff WHERE review_event_id = %s
+                ORDER BY redundant_file_id
+            """, (created[0],))
+        return {
+            "status": "stored", "review_event_id": str(created[0]),
+            "created_at": iso(created[1]), "content_group_id": group_id,
+            "selected_file_id": selected_file_id, "action": action,
+            "selected_is_current_golden": selected_file_id == int(group["golden_file_id"]),
+            "handoff": [{key: iso(value) for key, value in row.items()} for row in handoff],
+            "file_mutations": False, "golden_record_updated": False,
+            "retention_events_created": False,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"duplicate review unavailable: {type(exc).__name__}: {exc}") from exc
+
+
 @app.get("/api/v1/workset/{file_id}/reviews")
 def workset_review_history(file_id: int):
     try:
