@@ -46,7 +46,12 @@ De worker en portal wijzigen, verplaatsen, hernoemen of verwijderen geen bestand
 ## OCR-advies bij onleesbare inhoud
 
 Voor de lokale AI wordt aangeroepen, probeert CORE eerst lokaal tekst uit het
-document te halen. Als een PDF of afbeelding geen herkenbare tekst oplevert,
+document te halen. CORE raadpleegt daarvoor eerst bestaande `needs_ocr`-evidence
+die bij exact dezelfde inhoudshash hoort. Als die evidence actueel is, wordt het
+document niet opnieuw geopend en verschijnt `OCR vereist — reeds vastgesteld`,
+inclusief lineage naar de eerdere semantic run.
+
+Als nog geen evidence bestaat en een PDF of afbeelding geen herkenbare tekst oplevert,
 wordt de AI-aanvraag controleerbaar afgerond met `OCR aanbevolen` en reason-code
 `ocr_recommended_no_extractable_text`. Dit resultaat verschijnt zowel op de
 documentkaart als in de alarmbel.

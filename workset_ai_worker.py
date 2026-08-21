@@ -159,6 +159,20 @@ def relevant_examples(cur, filename: str, file_id: int) -> list[dict[str, Any]]:
     return rows[:3]
 
 
+def existing_ocr_evidence(cur, file_id: int, content_sha256: str) -> dict[str, Any] | None:
+    """Return current content-bound OCR evidence before opening the document again."""
+    cur.execute("""
+        SELECT sd.run_id, sd.file_id AS evidence_file_id, sd.status,
+               sd.pages, sd.updated_at
+        FROM public.semantic_documents sd
+        WHERE sd.content_sha256=%s AND sd.status='needs_ocr'
+        ORDER BY (sd.file_id=%s) DESC, sd.updated_at DESC, sd.run_id DESC
+        LIMIT 1
+    """, (content_sha256, file_id))
+    evidence = cur.fetchone()
+    return dict(evidence) if evidence else None
+
+
 def process_job(job: dict[str, Any]) -> None:
     prompt = json.loads(PROMPT_PATH.read_text("utf-8"))
     provider = OpenAICompatibleLocalProvider(
@@ -183,8 +197,21 @@ def process_job(job: dict[str, Any]) -> None:
         # Do not replace it with the older calculated status from the workset view.
         row["workset_status"] = job["workset_status_snapshot"]
         examples = relevant_examples(cur, row["filename"], row["file_id"])
+        ocr_evidence = existing_ocr_evidence(
+            cur, int(row["file_id"]), str(row["content_sha256"]),
+        )
 
-    context = extract_bounded_context(str(row["path"]))
+    context = ({
+        "status": "ocr_recommended",
+        "reason": "ocr_required_from_existing_evidence",
+        "text": "",
+        "pages": ocr_evidence.get("pages"),
+        "ocr_recommended": True,
+        "evidence_source": "semantic_documents",
+        "evidence_run_id": str(ocr_evidence["run_id"]),
+        "evidence_file_id": int(ocr_evidence["evidence_file_id"]),
+        "evidence_updated_at": ocr_evidence["updated_at"].isoformat(),
+    } if ocr_evidence else extract_bounded_context(str(row["path"])))
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     if context["status"] != "ready":
         proposal = abstention(int(row["file_id"]), context["reason"])
