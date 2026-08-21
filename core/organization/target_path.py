@@ -14,8 +14,10 @@ from core.organization.review_taxonomy import taxonomy
 CONTRACT_VERSION = "canonical-dutch-target-path-v5"
 TARGET_ROOT = "/volume1/data/Persoonlijk"
 ZONE_LABELS = {
-    "active": "Actief", "archive": "Archief",
-    "needs_review": "Te beoordelen", "quarantine": "Quarantaine",
+    "active": "Actief",
+    "inactive": "Inactief",
+    "needs_review": "Te beoordelen",
+    "quarantine": "Quarantaine",
 }
 CATEGORY_LABELS = {
     "work_career": "Werk & Loopbaan",
@@ -137,6 +139,22 @@ def document_family(row: dict[str, Any]) -> tuple[str, str]:
     for code, label, terms in FAMILY_RULES:
         if any(term in evidence for term in terms):
             return code, label
+    # Use the canonical taxonomy for domain-specific document families.
+    # FAMILY_RULES above remain the explicit/high-priority rules.
+    for family in taxonomy()["families"]:
+        code = str(family.get("code") or "")
+        label = str(family.get("label") or code)
+        keywords = family.get("keywords") or []
+
+        if code == "general":
+            continue
+
+        if any(
+            str(keyword).casefold() in evidence
+            for keyword in keywords
+            if str(keyword).strip()
+        ):
+            return code, label
     if is_supporting_dataset(row):
         return "course_data", "Cursusdata"
     return "general", "Algemeen"
@@ -194,7 +212,9 @@ def propose_target(row: dict[str, Any]) -> dict[str, Any]:
     else:
         zone = "active" if category != "needs_review" else "needs_review"
     accepted_lifecycle = str(row.get("accepted_lifecycle") or "")
-    if accepted_lifecycle in {"archive_candidate", "needs_review"}:
+    if accepted_lifecycle == "inactive" and category != "needs_review":
+        zone = "inactive"
+    elif accepted_lifecycle in {"archive_candidate", "needs_review"}:
         zone, reason, confidence = "needs_review", "accepted_lifecycle_conflicts_with_active_workset", "high"
     elif accepted_lifecycle == "quarantine":
         zone, reason, confidence = "quarantine", "accepted_quarantine_classification", "high"

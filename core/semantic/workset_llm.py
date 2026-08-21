@@ -96,14 +96,49 @@ def validate_proposal(content: str, file_id: int) -> dict[str, Any]:
     families = {item["code"] for item in taxonomy()["families"]}
     category, family = value.get("category_code"), value.get("family_code")
     lifecycle, privacy = value.get("lifecycle"), value.get("privacy_advice")
-    confidence, relation = value.get("confidence"), value.get("relation_kind", "none")
+    confidence = str(value.get("confidence") or "").casefold()
+    relation = str(value.get("relation_kind") or "none").casefold()
+
+    confidence_aliases = {
+        "very_low": "low",
+        "very low": "low",
+        "uncertain": "low",
+        "unknown": "low",
+        "0": "low",
+        "0.0": "low",
+
+        "moderate": "medium",
+        "average": "medium",
+        "mid": "medium",
+
+        "very_high": "high",
+        "very high": "high",
+        "certain": "high",
+        "strong": "high",
+    }
+
+    relation_aliases = {
+        "": "none",
+        "null": "none",
+        "unknown": "none",
+        "same_document": "related_document",
+        "similar_document": "related_document",
+        "related": "related_document",
+        "source": "source_document",
+        "export": "exported_representation",
+    }
+
+    confidence = confidence_aliases.get(confidence, confidence)
+    relation = relation_aliases.get(relation, relation)
     reason, related = value.get("reason"), value.get("related_file_ids", [])
     if category not in categories or family not in families:
         return abstention(file_id, "unknown_taxonomy_value")
     if lifecycle not in LIFECYCLES or privacy not in PRIVACY:
         return abstention(file_id, "invalid_lifecycle_or_privacy")
-    if confidence not in {"low", "medium", "high"} or relation not in RELATIONS:
-        return abstention(file_id, "invalid_confidence_or_relation")
+    if confidence not in {"low", "medium", "high"}:
+        confidence = "low"
+    if relation not in RELATIONS:
+        relation = "none"
     if not isinstance(reason, str) or not reason.strip() or len(reason) > 600:
         return abstention(file_id, "invalid_reason")
     if not reason_is_dutch(reason):
