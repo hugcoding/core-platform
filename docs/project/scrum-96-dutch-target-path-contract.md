@@ -23,6 +23,14 @@ menselijk oordeel `Actief maken` wordt de live preview opnieuw opgebouwd onder
 `Persoonlijk/Actief`. De historische lifecyclewaarde `inactive` en de huidige
 canonieke waarde `archive` worden daarbij gelijk behandeld.
 
+De read-only view `v_document_workset_path_review` maakt dit controleerbaar in
+de database. De view toont de berekende en effectieve lifecycle, het opgeslagen
+CORE-pad, een eventueel menselijk pad en `lifecycle_aligned_proposed_path`.
+`path_requires_lifecycle_correction = true` markeert een opgeslagen voorstel
+waarvan de bovenste map nog niet overeenkomt met de actuele lifecycle. Correcties
+worden via het portal als nieuwe append-only beoordeling opgeslagen; de view is
+niet bedoeld om rechtstreeks te wijzigen.
+
 Contract v2 verfijnt deze veilige basis met drie regels die uit de eerste
 50-documententoets voortkwamen:
 
