@@ -87,6 +87,23 @@ planitem al append-only als `verified` is vastgelegd met exact dezelfde SHA-256,
 bron en quarantainebestemming. De ruwe gebeurtenis blijft ongewijzigd, fysieke purge
 blijft uit en herhaald reconciliëren maakt door de idempotency key geen dubbel bewijs.
 
+### Verwijderingen verklaren
+
+De read-only view `v_file_removal_audit` combineert effectieve `DELETED`-events met
+append-only bewijs uit de duplicate-cleanup- en persoonlijke migratie-executors.
+Een bewezen quarantaineverplaatsing krijgt `removal_origin = core_quarantine` en
+toont onder meer doelpad, geverifieerde SHA-256, actor en herstelbaarheid. Een event
+zonder bewezen CORE-operatie blijft `external_or_unattributed`: CORE noemt dit niet
+automatisch handmatig, omdat ook OneDrive, SMB, scripts of andere toepassingen de
+verwijdering kunnen hebben veroorzaakt.
+
+```sql
+SELECT file_id, removed_path, removal_origin, operation_target_path,
+       verified_sha256, recovery_available, audit_status, observed_at
+FROM public.v_file_removal_audit
+ORDER BY observed_at DESC;
+```
+
 ## Buiten scope
 
 - fysieke verwijdering of purge;
