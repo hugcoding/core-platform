@@ -59,6 +59,8 @@ class ExactDuplicateReviewTests(unittest.TestCase):
         self.assertIn('id="duplicateReviewSection"', html)
         self.assertIn("duplicate-review.js", html)
         self.assertIn("Leidende kopie bevestigen", script)
+        self.assertIn("globalThis.crypto?.randomUUID", script)
+        self.assertIn("globalThis.crypto?.getRandomValues", script)
         self.assertIn('@app.get("/api/v1/workset/duplicates")', source)
         self.assertIn('@app.post("/api/v1/workset/duplicate-reviews")', source)
 
