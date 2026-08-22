@@ -61,6 +61,7 @@ show_help() {
     printf '%s\n' "  core policy seed --environment development|acceptance|production [--source POLICY_JSON] --dry-run|--apply"
     printf '%s\n' "  core metadata date-backfill [--source PATH] [--limit N] --dry-run|--apply"
     printf '%s\n' "  core metadata temporal-impact [--as-of TIMESTAMP] [--limit N] --dry-run"
+    printf '%s\n' "  core metadata correct-read-events [--limit N] --dry-run|--apply --confirm INVALIDATE_NON_MATERIAL_WATCHER_EVENTS"
     printf '%s\n' "  core semantic onedrive-golden-pilot --cutoff TIMESTAMP --dry-run"
     printf '%s\n' "  core semantic pilot-extract MANIFEST_JSON"
     printf '%s\n' "  core semantic pilot-chunks MANIFEST_JSON"
@@ -290,9 +291,13 @@ case "$command_domain" in
                 shift 2
                 sh ./tools/runtime/temporal-canonical-impact "$@"
                 ;;
+            correct-read-events)
+                shift 2
+                sh ./tools/runtime/file-event-corrections "$@"
+                ;;
             *)
                 echo "Unknown metadata command."
-                echo "Use: core metadata date-backfill ... | temporal-impact [--as-of TIMESTAMP] [--limit N] --dry-run"
+                echo "Use: core metadata date-backfill ... | temporal-impact ... | correct-read-events ..."
                 exit 1
                 ;;
         esac

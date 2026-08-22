@@ -58,6 +58,10 @@ Individuele lokale AI-aanvragen lopen asynchroon en resource-aware. Bekijk
 [SCRUM-106 Asynchrone AI-wachtrij](scrum-106-async-ai-queue.md) voor prioriteit,
 CPU/RAM-begrenzing, de alarmbel en expliciete menselijke overname.
 
+Alleen openen of sluiten wordt niet langer als documentwijziging behandeld. Zie
+[SCRUM-114 openen is geen wijziging](scrum-114-watcher-read-events.md) voor de
+materiële toestandscontrole en append-only correcties van historische schijnevents.
+
 ## Projectworkflow
 
 Ontwikkel en commit vanuit de lokale workspace:
