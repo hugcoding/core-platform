@@ -1,0 +1,10 @@
+BEGIN;
+DROP VIEW IF EXISTS public.v_duplicate_cleanup_item_status;
+DROP TRIGGER IF EXISTS duplicate_cleanup_events_immutable ON public.duplicate_cleanup_events;
+DROP TRIGGER IF EXISTS duplicate_cleanup_plan_items_immutable ON public.duplicate_cleanup_plan_items;
+DROP TRIGGER IF EXISTS duplicate_cleanup_plans_immutable ON public.duplicate_cleanup_plans;
+DROP TABLE IF EXISTS public.duplicate_cleanup_events;
+DROP TABLE IF EXISTS public.duplicate_cleanup_plan_items;
+DROP TABLE IF EXISTS public.duplicate_cleanup_plans;
+DROP FUNCTION IF EXISTS public.reject_duplicate_cleanup_mutation();
+COMMIT;

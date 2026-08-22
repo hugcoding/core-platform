@@ -36,6 +36,10 @@ De veilige retentieslice staat in
 [SCRUM-104 lifecycle-nominaties](scrum-104-lifecycle-nominations.md):
 archief- en verwijdernominaties blijven onafhankelijk van de actieve werkset en
 wijzigen geen bestanden.
+De eerste herstelbare uitvoeringsstap staat in
+[SCRUM-104 duplicate-cleanup-pilot](scrum-104-duplicate-cleanup-pilot.md): alleen
+gevalideerde overtollige exacte kopieën binnen `/volume1/data` kunnen na een
+dry-run en expliciete goedkeuring naar CORE-quarantaine worden verplaatst.
 
 De read-only databasegroeimeting en contractgrenzen voor operationele, semantic-
 en classificatiedata staan in
