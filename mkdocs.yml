@@ -76,6 +76,7 @@ nav:
       - SCRUM-99 Privacyclassificatie: project/scrum-99-privacy-classification.md
       - SCRUM-104 Lifecycle-nominaties: project/scrum-104-lifecycle-nominations.md
       - SCRUM-104 Duplicate-cleanup-pilot: project/scrum-104-duplicate-cleanup-pilot.md
+      - SCRUM-114 Watcher read-events: project/scrum-114-watcher-read-events.md
       - SCRUM-106 Asynchrone AI-wachtrij: project/scrum-106-async-ai-queue.md
       - SCRUM-92 Database-backed policies: project/scrum-92-policy-registry.md
   - Runtime:

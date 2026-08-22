@@ -238,7 +238,7 @@ def path_is_missing(path):
 def get_file_by_path(cur, path):
     cur.execute(
         """SELECT id, path, deleted_at, size_bytes, modified_at_fs,
-                  content_sha256, created_at, updated_at
+                  filesystem_device, inode, content_sha256, created_at, updated_at
            FROM files WHERE path = %s""",
         (path,),
     )
@@ -363,6 +363,24 @@ def classify_path_mutation(existing_file):
     if existing_file["deleted_at"] is not None:
         return "RESTORED"
     return "MODIFIED"
+
+
+def observed_file_state_is_unchanged(
+    existing_file, *, size_bytes, modified_at_fs, filesystem_device, inode
+):
+    """Return true when an UPSERT contains no material filesystem change.
+
+    Watchers may emit notifications when a file is merely opened and closed.  Those
+    notifications must not become document mutations or refresh workset activity.
+    """
+    if not existing_file or existing_file.get("deleted_at") is not None:
+        return False
+    return (
+        existing_file.get("size_bytes") == size_bytes
+        and existing_file.get("modified_at_fs") == modified_at_fs
+        and existing_file.get("filesystem_device") == filesystem_device
+        and existing_file.get("inode") == inode
+    )
 
 
 def classify_rename_mutation(old_path, new_path):
@@ -660,12 +678,6 @@ def process_event(cur, data):
         logger.warning("Missing file, marked deleted: %s", path)
         return
 
-    folder_path = os.path.dirname(path)
-    folder_id = upsert_folder(cur, folder_path)
-
-    if not folder_id:
-        raise RuntimeError(f"No folder_id for {folder_path}")
-
     filename = os.path.basename(path)
     extension = os.path.splitext(filename)[1].lstrip(".").lower() or None
 
@@ -676,6 +688,22 @@ def process_event(cur, data):
     filesystem_device = stat.st_dev
 
     existing_file = get_file_by_path(cur, path)
+    if not FORCE_FULL and observed_file_state_is_unchanged(
+        existing_file,
+        size_bytes=size_bytes,
+        modified_at_fs=modified_at_fs,
+        filesystem_device=filesystem_device,
+        inode=inode,
+    ):
+        logger.info("No material change; watcher/scanner event ignored: %s", path)
+        return
+
+    folder_path = os.path.dirname(path)
+    folder_id = upsert_folder(cur, folder_path)
+
+    if not folder_id:
+        raise RuntimeError(f"No folder_id for {folder_path}")
+
     hash_path = xxhash.xxh64(path).hexdigest()
     hash_content = hash_first_1024(path)
     mime = get_mime(path)

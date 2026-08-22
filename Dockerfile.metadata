@@ -12,5 +12,6 @@ COPY core/organization ./core/organization
 COPY core/semantic ./core/semantic
 
 COPY tools/runtime/date_evidence_backfill.py ./date_evidence_backfill.py
+COPY tools/runtime/file_event_corrections.py ./file_event_corrections.py
 
 CMD ["python3", "metadata_worker.py"]

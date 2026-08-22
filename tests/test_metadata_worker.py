@@ -178,6 +178,30 @@ class MutationClassificationTests(unittest.TestCase):
         )
         self.assertEqual("MOVED", mutation)
 
+    def test_identical_observed_state_is_not_a_material_change(self):
+        existing = {
+            "deleted_at": None,
+            "size_bytes": 100,
+            "modified_at_fs": 200,
+            "filesystem_device": 99,
+            "inode": 1234,
+        }
+
+        self.assertTrue(metadata_worker.observed_file_state_is_unchanged(
+            existing,
+            size_bytes=100,
+            modified_at_fs=200,
+            filesystem_device=99,
+            inode=1234,
+        ))
+        self.assertFalse(metadata_worker.observed_file_state_is_unchanged(
+            existing,
+            size_bytes=101,
+            modified_at_fs=200,
+            filesystem_device=99,
+            inode=1234,
+        ))
+
 
 class ScanSessionTests(unittest.TestCase):
     def test_empty_scan_session_is_stored_as_null(self):
@@ -315,6 +339,24 @@ class MutationPersistenceTests(unittest.TestCase):
         )
         self.assertEqual(event_query.count("%s"), len(event_params))
         self.assertEqual("CREATED", event_params[2])
+
+    def test_read_only_open_notification_does_not_create_modified_event(self):
+        cursor = ProcessCursor(existing_file={
+            "id": 42,
+            "path": "/volume1/photos/new.jpg",
+            "deleted_at": None,
+            "size_bytes": 100,
+            "modified_at_fs": 200,
+            "filesystem_device": 99,
+            "inode": 1234,
+            "content_sha256": None,
+        })
+
+        self.process_upsert(cursor)
+
+        self.assertFalse(any("INSERT INTO files" in query for query, _ in cursor.calls))
+        self.assertFalse(any("UPDATE files SET" in query for query, _ in cursor.calls))
+        self.assertFalse(any("INSERT INTO file_events" in query for query, _ in cursor.calls))
 
     def test_mime_is_only_written_to_canonical_files_column(self):
         cursor = ProcessCursor()
