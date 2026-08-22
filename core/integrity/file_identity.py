@@ -63,7 +63,7 @@ def inspect_file_identity(connector: Callable, path: str | None = None) -> dict:
         f"""
         SELECT id, event_type, file_id, candidate_file_id, new_path,
                confidence_score, confidence_level, decision, reason, created_at
-        FROM file_events WHERE {event_where}
+        FROM v_file_events_effective WHERE {event_where}
         ORDER BY created_at DESC LIMIT 200
         """,
         event_params,
@@ -82,7 +82,7 @@ def inspect_file_identity(connector: Callable, path: str | None = None) -> dict:
         FROM files f
         JOIN LATERAL (
             SELECT event_type, created_at
-            FROM file_events
+            FROM v_file_events_effective
             WHERE file_id = f.id
               AND event_status <> 'invalidated'
               AND event_type IN (

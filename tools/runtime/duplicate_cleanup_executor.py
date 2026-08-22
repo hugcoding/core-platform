@@ -223,7 +223,7 @@ def is_approved(plan_id: str) -> bool:
 
 
 def correlate(plan_id: str, item: dict, actor: str) -> bool:
-    rows = copy_rows("""SELECT id FROM public.file_events WHERE file_id={}
+    rows = copy_rows("""SELECT id FROM public.v_file_events_effective WHERE file_id={}
       AND event_type='MOVED' AND old_path={} AND new_path={}
       AND created_at >= (SELECT created_at FROM public.duplicate_cleanup_plans WHERE id={})
       ORDER BY created_at DESC LIMIT 1""".format(item["redundant_file_id"], pg(item["source_path"]),
