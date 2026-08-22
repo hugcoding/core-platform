@@ -43,6 +43,11 @@ show_help() {
     printf '%s\n' "  core cleanup classification-plan --results latest --dry-run"
     printf '%s\n' "  core cleanup retention-plan --results latest --dry-run"
     printf '%s\n' "  core cleanup onedrive-baseline --source PATH --dry-run"
+    printf '%s\n' "  core cleanup duplicates plan --limit 10 --dry-run|--create-plan"
+    printf '%s\n' "  core cleanup duplicates approve PLAN_ID --confirm PLAN_ID"
+    printf '%s\n' "  core cleanup duplicates execute PLAN_ID --confirm PLAN_ID"
+    printf '%s\n' "  core cleanup duplicates reconcile PLAN_ID"
+    printf '%s\n' "  core cleanup duplicates rollback PLAN_ID --confirm PLAN_ID"
     printf '%s\n' "  core workset pilot [--policy POLICY_JSON] [--as-of TIMESTAMP] --dry-run"
     printf '%s\n' "  core workset target-path-pilot [--limit 50] --dry-run"
     printf '%s\n' "  core workset review-learning-analyze [--minimum-support 3] --dry-run"
@@ -218,9 +223,13 @@ case "$command_domain" in
                 shift 2
                 sh ./tools/runtime/onedrive-baseline "$@"
                 ;;
+            duplicates)
+                shift 2
+                sh ./tools/runtime/duplicate-cleanup-executor "$@"
+                ;;
             *)
                 echo "Unknown cleanup command."
-                echo "Use: core cleanup assess | legacy-duplicates ... | migration-inventory ... | onedrive-baseline --source PATH --dry-run"
+                echo "Use: core cleanup assess | legacy-duplicates ... | migration-inventory ... | onedrive-baseline ... | duplicates plan|approve|execute|reconcile|rollback ..."
                 exit 1
                 ;;
         esac

@@ -40,13 +40,15 @@ def nearest_existing(path: Path) -> Path:
 
 
 def validate_paths(
-    source: Union[str, Path], target: Union[str, Path], *, source_may_be_missing: bool = False
+    source: Union[str, Path], target: Union[str, Path], *, source_may_be_missing: bool = False,
+    allowed_zones: Optional[Tuple[Path, ...]] = None,
 ) -> Tuple[Path, Path]:
     source_path, target_path = normalized_path(source), normalized_path(target)
     if not is_within(source_path, DATA_ROOT) or not is_within(target_path, DATA_ROOT):
         raise MigrationSafetyError("source_and_target_must_be_within_volume1_data")
-    if not any(is_within(target_path, zone) for zone in ALLOWED_ZONES):
-        raise MigrationSafetyError("target_must_be_in_personal_active_or_inactive")
+    zones = allowed_zones or ALLOWED_ZONES
+    if not any(is_within(target_path, zone) for zone in zones):
+        raise MigrationSafetyError("target_outside_allowed_zone")
     if source_path == target_path:
         raise MigrationSafetyError("source_equals_target")
     resolved_root = DATA_ROOT.resolve(strict=True)
@@ -80,9 +82,12 @@ class Preconditions:
 
 
 def inspect_preconditions(
-    item: Mapping[str, Any], *, minimum_free_bytes: int = 0
+    item: Mapping[str, Any], *, minimum_free_bytes: int = 0,
+    allowed_zones: Optional[Tuple[Path, ...]] = None,
 ) -> Preconditions:
-    source, target = validate_paths(item["source_path"], item["target_path"])
+    source, target = validate_paths(
+        item["source_path"], item["target_path"], allowed_zones=allowed_zones
+    )
     if not source.is_file() or source.is_symlink():
         raise MigrationSafetyError("source_missing_or_not_regular_file")
     if target.exists() or target.is_symlink():
@@ -100,8 +105,13 @@ def inspect_preconditions(
     return Preconditions(source, target, expected_size, stat.st_mtime_ns, expected_hash)
 
 
-def move_verified(item: Mapping[str, Any], *, minimum_free_bytes: int = 0) -> Dict[str, Any]:
-    checked = inspect_preconditions(item, minimum_free_bytes=minimum_free_bytes)
+def move_verified(
+    item: Mapping[str, Any], *, minimum_free_bytes: int = 0,
+    allowed_zones: Optional[Tuple[Path, ...]] = None,
+) -> Dict[str, Any]:
+    checked = inspect_preconditions(
+        item, minimum_free_bytes=minimum_free_bytes, allowed_zones=allowed_zones
+    )
     checked.target.parent.mkdir(parents=True, exist_ok=True)
     if checked.source.stat().st_dev != checked.target.parent.stat().st_dev:
         raise MigrationSafetyError("cross_filesystem_move_not_supported")
@@ -122,10 +132,13 @@ def move_verified(item: Mapping[str, Any], *, minimum_free_bytes: int = 0) -> Di
     }
 
 
-def resume_verified_move(item: Mapping[str, Any]) -> Dict[str, Any]:
+def resume_verified_move(
+    item: Mapping[str, Any], *, allowed_zones: Optional[Tuple[Path, ...]] = None
+) -> Dict[str, Any]:
     """Finish or verify a move interrupted between append-only events."""
     source, target = validate_paths(
-        item["source_path"], item["target_path"], source_may_be_missing=True
+        item["source_path"], item["target_path"], source_may_be_missing=True,
+        allowed_zones=allowed_zones,
     )
     if not target.is_file() or target.is_symlink():
         raise MigrationSafetyError("interrupted_move_target_missing")
@@ -144,9 +157,12 @@ def resume_verified_move(item: Mapping[str, Any]) -> Dict[str, Any]:
             "content_sha256": expected_hash, "resumed": True}
 
 
-def rollback_verified(item: Mapping[str, Any]) -> Dict[str, Any]:
+def rollback_verified(
+    item: Mapping[str, Any], *, allowed_zones: Optional[Tuple[Path, ...]] = None
+) -> Dict[str, Any]:
     source, target = validate_paths(
-        item["source_path"], item["target_path"], source_may_be_missing=True
+        item["source_path"], item["target_path"], source_may_be_missing=True,
+        allowed_zones=allowed_zones,
     )
     expected_hash = str(item["content_sha256"]).lower()
     expected_size = int(item["size_bytes"])
