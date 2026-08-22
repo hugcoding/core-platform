@@ -8,7 +8,22 @@
 
   const esc = value => String(value ?? '').replace(/[&<>"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[char]));
   const bytes = value => new Intl.NumberFormat('nl-NL', {style:'unit', unit:'megabyte', maximumFractionDigits:1}).format(Number(value || 0) / 1048576);
-  const reviewId = () => crypto.randomUUID();
+  const reviewId = () => {
+    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+    const randomByte = () => {
+      if (globalThis.crypto?.getRandomValues) {
+        const value = new Uint8Array(1);
+        globalThis.crypto.getRandomValues(value);
+        return value[0];
+      }
+      return Math.floor(Math.random() * 256);
+    };
+    const bytes = Array.from({length: 16}, randomByte);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = bytes.map(value => value.toString(16).padStart(2, '0'));
+    return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}`;
+  };
 
   function memberRow(member, group) {
     const checked = Number(group.selected_file_id || group.golden_file_id) === Number(member.file_id);
