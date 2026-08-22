@@ -79,8 +79,13 @@ core cleanup duplicates rollback PLAN_ID --confirm PLAN_ID
 Plannen, items en statusovergangen zijn append-only. Per item bewaart CORE onder
 andere de review-ID, contentgroep, beide file-ID's, SHA-256, grootte, oorspronkelijke
 paden, quarantainepad, mtime, policyversie en actor. De watcher registreert de move;
-reconciliation koppelt dit `MOVED`-event aan de CORE-operatie zonder het document
-als actief te kwalificeren.
+reconciliation koppelt bij voorkeur dit `MOVED`-event aan de CORE-operatie zonder het
+document als actief te kwalificeren. Omdat `.core/quarantaine` buiten de normale
+inventaris valt, kan de watcher uitsluitend een effectief `DELETED`-event op het
+bronpad registreren. CORE accepteert dat alleen als fallback wanneer hetzelfde
+planitem al append-only als `verified` is vastgelegd met exact dezelfde SHA-256,
+bron en quarantainebestemming. De ruwe gebeurtenis blijft ongewijzigd, fysieke purge
+blijft uit en herhaald reconciliëren maakt door de idempotency key geen dubbel bewijs.
 
 ## Buiten scope
 

@@ -223,17 +223,52 @@ def is_approved(plan_id: str) -> bool:
 
 
 def correlate(plan_id: str, item: dict, actor: str) -> bool:
-    rows = copy_rows("""SELECT id FROM public.v_file_events_effective WHERE file_id={}
+    rows = copy_rows("""SELECT id, event_type FROM public.v_file_events_effective WHERE file_id={}
       AND event_type='MOVED' AND old_path={} AND new_path={}
       AND created_at >= (SELECT created_at FROM public.duplicate_cleanup_plans WHERE id={})
       ORDER BY created_at DESC LIMIT 1""".format(item["redundant_file_id"], pg(item["source_path"]),
                                                   pg(item["target_path"]), pg(plan_id)))
     if not rows:
+        rows = copy_rows("""SELECT fe.id, fe.event_type
+          FROM public.v_file_events_effective fe
+          WHERE fe.file_id={}
+            AND fe.event_type='DELETED'
+            AND fe.old_path={}
+            AND fe.created_at >= (
+              SELECT created_at FROM public.duplicate_cleanup_plans WHERE id={}
+            )
+            AND EXISTS (
+              SELECT 1 FROM public.duplicate_cleanup_events verified
+              WHERE verified.plan_id={}
+                AND verified.item_id={}
+                AND verified.event_type='verified'
+                AND verified.details->>'content_sha256'={}
+                AND verified.details->>'target_path'={}
+                AND verified.details->>'source_path'={}
+                AND verified.details->>'physical_purge'='false'
+                AND verified.details->>'recovery_available'='true'
+                AND verified.details->>'qualifies_for_activation'='false'
+            )
+          ORDER BY fe.created_at DESC LIMIT 1""".format(
+              item["redundant_file_id"], pg(item["source_path"]), pg(plan_id), pg(plan_id),
+              pg(item["id"]), pg(str(item["content_sha256"]).lower()), pg(item["target_path"]),
+              pg(item["source_path"]),
+          ))
+    if not rows:
         return False
+    event_type = rows[0]["event_type"]
+    correlation_kind = (
+        "effective_moved_event" if event_type == "MOVED"
+        else "verified_move_to_excluded_quarantine"
+    )
     event(plan_id, "event_correlated", actor,
           "{}:{}:correlated:{}".format(plan_id, item["id"], rows[0]["id"]), item["id"],
-          {"file_event_id": rows[0]["id"], "source": "core_duplicate_quarantine",
-           "qualifies_for_activation": False})
+          {"file_event_id": rows[0]["id"], "file_event_type": event_type,
+           "correlation_kind": correlation_kind, "source": "core_duplicate_quarantine",
+           "content_sha256": str(item["content_sha256"]).lower(),
+           "source_path": item["source_path"], "target_path": item["target_path"],
+           "qualifies_for_activation": False, "physical_purge": False,
+           "recovery_available": True})
     return True
 
 

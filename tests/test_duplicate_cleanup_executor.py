@@ -1,4 +1,5 @@
 import os
+import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,14 @@ ROOT = Path(__file__).parents[1]
 MIGRATION = ROOT / "database/migrations/20260822_add_duplicate_cleanup_executor.sql"
 ROLLBACK = ROOT / "database/migrations/rollback/20260822_add_duplicate_cleanup_executor.sql"
 RUNTIME = ROOT / "tools/runtime/duplicate_cleanup_executor.py"
+
+
+def load_runtime():
+    spec = importlib.util.spec_from_file_location("duplicate_cleanup_runtime", RUNTIME)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 class DuplicateCleanupExecutorTests(unittest.TestCase):
@@ -90,6 +99,76 @@ class DuplicateCleanupExecutorTests(unittest.TestCase):
                     "content_sha256": digest}
             with self.assertRaisesRegex(personal_executor.MigrationSafetyError, "leader_missing"):
                 duplicate_executor.inspect_preconditions(item)
+
+    def test_reconciliation_prefers_effective_moved_event(self):
+        runtime = load_runtime()
+        item = {
+            "id": "item-1", "redundant_file_id": "42", "content_sha256": "abc123",
+            "source_path": "/volume1/data/import/source.pdf",
+            "target_path": "/volume1/data/.core/quarantaine/duplicaten/group/source.pdf",
+        }
+        with patch.object(runtime, "copy_rows", return_value=[{
+            "id": "move-event", "event_type": "MOVED",
+        }]) as query, patch.object(runtime, "event") as append_event:
+            self.assertTrue(runtime.correlate("plan-1", item, "tester"))
+        self.assertEqual(query.call_count, 1)
+        details = append_event.call_args.args[5]
+        self.assertEqual(details["correlation_kind"], "effective_moved_event")
+        self.assertFalse(details["qualifies_for_activation"])
+
+    def test_reconciliation_accepts_deleted_only_with_verified_evidence(self):
+        runtime = load_runtime()
+        item = {
+            "id": "item-1", "redundant_file_id": "42", "content_sha256": "ABC123",
+            "source_path": "/volume1/data/import/source.pdf",
+            "target_path": "/volume1/data/.core/quarantaine/duplicaten/group/source.pdf",
+        }
+        with patch.object(runtime, "copy_rows", side_effect=[[], [{
+            "id": "delete-event", "event_type": "DELETED",
+        }]]) as query, patch.object(runtime, "event") as append_event:
+            self.assertTrue(runtime.correlate("plan-1", item, "tester"))
+        self.assertEqual(query.call_count, 2)
+        fallback_sql = query.call_args_list[1].args[0]
+        self.assertIn("verified.event_type='verified'", fallback_sql)
+        self.assertIn("verified.details->>'content_sha256'='abc123'", fallback_sql)
+        self.assertIn("verified.details->>'target_path'", fallback_sql)
+        details = append_event.call_args.args[5]
+        self.assertEqual(details["file_event_type"], "DELETED")
+        self.assertEqual(details["correlation_kind"], "verified_move_to_excluded_quarantine")
+        self.assertFalse(details["physical_purge"])
+        self.assertTrue(details["recovery_available"])
+
+    def test_reconciliation_rejects_unverified_deleted_event(self):
+        runtime = load_runtime()
+        item = {
+            "id": "item-1", "redundant_file_id": "42", "content_sha256": "abc123",
+            "source_path": "/volume1/data/import/source.pdf",
+            "target_path": "/volume1/data/.core/quarantaine/duplicaten/group/source.pdf",
+        }
+        with patch.object(runtime, "copy_rows", side_effect=[[], []]), patch.object(
+            runtime, "event"
+        ) as append_event:
+            self.assertFalse(runtime.correlate("plan-1", item, "tester"))
+        append_event.assert_not_called()
+
+    def test_reconciliation_uses_a_stable_idempotency_key(self):
+        runtime = load_runtime()
+        item = {
+            "id": "item-1", "redundant_file_id": "42", "content_sha256": "abc123",
+            "source_path": "/volume1/data/import/source.pdf",
+            "target_path": "/volume1/data/.core/quarantaine/duplicaten/group/source.pdf",
+        }
+        keys = []
+        for _ in range(2):
+            with patch.object(runtime, "copy_rows", side_effect=[[], [{
+                "id": "delete-event", "event_type": "DELETED",
+            }]]), patch.object(runtime, "event") as append_event:
+                self.assertTrue(runtime.correlate("plan-1", item, "tester"))
+                keys.append(append_event.call_args.args[3])
+        self.assertEqual(keys, [
+            "plan-1:item-1:correlated:delete-event",
+            "plan-1:item-1:correlated:delete-event",
+        ])
 
 
 if __name__ == "__main__":
