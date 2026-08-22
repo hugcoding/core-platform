@@ -111,6 +111,11 @@
         </label>
       </div>
       <div id="duplicateReviewSummary" class="duplicate-summary"></div>
+      <section id="duplicateBulkBar" class="bulk-review-bar duplicate-bulk-bar" hidden>
+        <label><input id="duplicateBulkSelectAll" type="checkbox"> Selecteer alle zichtbare groepen</label>
+        <span id="duplicateBulkSelectedCount">0 geselecteerd</span>
+        <button id="duplicateBulkOpen" type="button" disabled>Leidende kopieën bevestigen</button>
+      </section>
       <section id="duplicateReviewGroups" class="duplicate-groups" aria-live="polite"></section>
     </details>
     <nav class="review-exports" aria-label="Beoordelingen exporteren"><span>Handmatige beoordelingen</span><a
@@ -151,6 +156,21 @@
         <p id="bulkReviewMessage" class="bulk-review-message" aria-live="polite"></p>
         <footer><button value="cancel" type="submit">Terug</button><button id="bulkReviewConfirm" type="button"
             class="confirm">Alles bevestigen</button></footer>
+      </form>
+    </dialog>
+    <dialog id="duplicateBulkDialog" class="bulk-review-dialog">
+      <form method="dialog">
+        <header>
+          <div><p class="eyebrow">BULKBEOORDELING</p><h2>Controleer de leidende kopieën</h2></div>
+          <button value="cancel" aria-label="Sluiten">×</button>
+        </header>
+        <p>Per duplicaatgroep wordt alleen jouw gekozen leidende kopie append-only vastgelegd. Er worden geen bestanden gewijzigd.</p>
+        <div class="bulk-summary-wrap">
+          <table><thead><tr><th>Duplicaatgroep</th><th>Leidende kopie</th><th>Locatie</th></tr></thead>
+            <tbody id="duplicateBulkSummary"></tbody></table>
+        </div>
+        <p id="duplicateBulkMessage" class="bulk-review-message" aria-live="polite"></p>
+        <footer><button value="cancel" type="submit">Terug</button><button id="duplicateBulkConfirm" type="button" class="confirm">Alles bevestigen</button></footer>
       </form>
     </dialog>
   </main>
