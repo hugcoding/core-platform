@@ -257,7 +257,8 @@ def overview():
                   COUNT(*) FILTER (WHERE deleted_at IS NULL AND updated_at >= now() - interval '24 hours') AS changed_24h,
                   (SELECT COUNT(*) FROM content_groups) AS content_groups,
                   (SELECT COUNT(*) FROM content_groups WHERE selection_status <> 'single_source') AS duplicate_groups,
-                  (SELECT COUNT(*) FROM file_events WHERE event_status = 'active') AS active_events
+                  (SELECT COUNT(*) FROM v_file_events_effective
+                   WHERE event_status = 'active') AS active_events
                 FROM files
             """)
             with conn.cursor() as cur:

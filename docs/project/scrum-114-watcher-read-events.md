@@ -29,3 +29,8 @@ core metadata correct-read-events --limit 100 --apply \
 
 De effectieve event-view sluit gecorrigeerde events uit. De originele auditregel en de
 append-only correctie blijven beide bewaard.
+
+Operationele lezers gebruiken deze effectieve historie: de Pulse-telling,
+identiteits- en integriteitsanalyse en eventcorrelatie van persoonlijke migratie en
+duplicate-quarantaine. Rechtstreeks lezen uit `file_events` is alleen bedoeld voor
+auditonderzoek, nieuwe eventregistratie en de correctietool zelf.

@@ -29,6 +29,24 @@ class FileEventCorrectionRuntimeTests(unittest.TestCase):
         self.assertIn('"file_mutations": False', source)
         self.assertNotIn("DELETE FROM", source)
 
+    def test_operational_consumers_use_effective_history(self):
+        dashboard = (ROOT / "dashboard/app.py").read_text()
+        identity = (ROOT / "core/integrity/file_identity.py").read_text()
+        personal = (ROOT / "tools/runtime/personal_migration_executor.py").read_text()
+        duplicates = (ROOT / "tools/runtime/duplicate_cleanup_executor.py").read_text()
+
+        self.assertIn("FROM v_file_events_effective", dashboard)
+        self.assertEqual(2, identity.count("FROM v_file_events_effective"))
+        self.assertIn("FROM public.v_file_events_effective", personal)
+        self.assertIn("FROM public.v_file_events_effective", duplicates)
+
+    def test_raw_history_is_reserved_for_writes_audit_and_correction_selection(self):
+        dashboard = (ROOT / "dashboard/app.py").read_text()
+        identity = (ROOT / "core/integrity/file_identity.py").read_text()
+
+        self.assertNotIn("FROM file_events ", dashboard)
+        self.assertNotIn("FROM file_events ", identity)
+
 
 if __name__ == "__main__":
     unittest.main()
