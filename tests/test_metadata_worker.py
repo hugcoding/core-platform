@@ -404,6 +404,14 @@ class MutationPersistenceTests(unittest.TestCase):
         self.assertIn("last_mutation_type = 'DELETED'", query)
         self.assertNotIn("last_mutation_at", query)
         self.assertIn("updated_at = NOW()", query)
+        self.assertIn("AND deleted_at IS NULL", query)
+
+    def test_missing_path_delete_is_only_written_for_an_active_record(self):
+        source = Path(metadata_worker.__file__).read_text(encoding="utf-8")
+        self.assertEqual(
+            2,
+            source.count("WHERE path = %s\n              AND deleted_at IS NULL"),
+        )
 
     def test_document_event_computes_full_hash_and_recomputes_group(self):
         cursor = ProcessCursor()

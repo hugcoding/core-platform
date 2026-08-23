@@ -638,6 +638,7 @@ def process_event(cur, data):
                 updated_at = NOW(),
                 last_mutation_type = 'DELETED'
             WHERE path = %s
+              AND deleted_at IS NULL
             RETURNING id, content_sha256, size_bytes
         """, (path,))
         row = cur.fetchone()
@@ -661,6 +662,7 @@ def process_event(cur, data):
                 updated_at = NOW(),
                 last_mutation_type = 'DELETED'
             WHERE path = %s
+              AND deleted_at IS NULL
             RETURNING id, content_sha256, size_bytes
         """, (path,))
         row = cur.fetchone()

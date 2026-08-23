@@ -19,6 +19,15 @@ class FileEventCorrectionMigrationTests(unittest.TestCase):
         self.assertIn("event_status <> 'invalidated'", sql)
         self.assertIn("DROP TABLE IF EXISTS public.file_event_corrections", sql)
 
+    def test_duplicate_delete_correction_is_append_only_and_reversible(self):
+        migration = (ROOT / "database/migrations/20260823_add_duplicate_delete_corrections.sql").read_text()
+        rollback = (ROOT / "database/migrations/rollback/20260823_add_duplicate_delete_corrections.sql").read_text()
+        self.assertIn("'duplicate_observation'", migration)
+        self.assertIn("CREATE OR REPLACE VIEW public.v_file_events_effective", migration)
+        self.assertNotIn("DELETE FROM public.file_events", migration)
+        self.assertNotIn("UPDATE public.file_events", migration)
+        self.assertIn("duplicate-observation evidence is preserved but inactive", rollback)
+
 
 class FileEventCorrectionRuntimeTests(unittest.TestCase):
     def test_apply_requires_explicit_confirmation_and_never_changes_files(self):
@@ -46,6 +55,17 @@ class FileEventCorrectionRuntimeTests(unittest.TestCase):
 
         self.assertNotIn("FROM file_events ", dashboard)
         self.assertNotIn("FROM file_events ", identity)
+
+    def test_duplicate_delete_tool_requires_exact_sources_and_no_state_change(self):
+        source = (ROOT / "tools/runtime/file_event_corrections.py").read_text()
+        cli = (ROOT / "tools/runtime/core").read_text()
+        self.assertIn("INVALIDATE_DUPLICATE_DELETE_OBSERVATIONS", source)
+        self.assertIn("scanner.source = 'polling_scanner'", source)
+        self.assertIn("candidate.source = 'filesystem_watcher'", source)
+        for event_type in ("RESTORED", "CREATED", "MOVED", "RENAMED"):
+            self.assertIn("'" + event_type + "'", source)
+        self.assertIn("correct-duplicate-deletes", cli)
+        self.assertIn('"original_events_deleted": False', source)
 
 
 if __name__ == "__main__":
