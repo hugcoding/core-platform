@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS public.personal_migration_plans (
     created_by text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT personal_migration_plan_roots_check CHECK (
-        source_root LIKE '/volume1/data/%'
+        (source_root = '/volume1/data' OR source_root LIKE '/volume1/data/%')
         AND target_root = '/volume1/data/Persoonlijk'
     )
 );

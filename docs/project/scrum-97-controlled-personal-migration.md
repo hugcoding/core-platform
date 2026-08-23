@@ -6,6 +6,12 @@ De executor gebruikt uitsluitend actuele golden records waarvoor lifecycle én
 doelpad door een mens zijn geaccepteerd. Classificaties worden niet aangepast en
 bestanden worden nooit overschreven of verwijderd.
 
+Een plan bewaart `/volume1/data` als canonieke bronroot. De database accepteert
+deze exacte root en, voor toekomstige beperkte runs, een onderliggende map. Het
+doel blijft strikt `/volume1/data/Persoonlijk`; itemdoelen moeten daaronder in
+`Actief` of `Inactief` vallen. Hierdoor komt het plancontract overeen met de
+padvalidatie van de executor zonder het toegestane doelgebied te verruimen.
+
 ## Veiligheidsflow
 
 ```mermaid
