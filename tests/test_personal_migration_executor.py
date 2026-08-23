@@ -37,6 +37,16 @@ class PersonalMigrationExecutorTests(unittest.TestCase):
         self.assertIn("g.content_sha256 = v.content_sha256", runtime)
         self.assertNotIn("g.hash_content", runtime)
 
+    def test_plan_root_contract_accepts_canonical_data_root(self):
+        base = (ROOT / "database/migrations/20260821_add_personal_migration_executor.sql").read_text()
+        fix = (ROOT / "database/migrations/20260823_fix_personal_migration_root_contract.sql").read_text()
+        rollback = (ROOT / "database/migrations/rollback/20260823_fix_personal_migration_root_contract.sql").read_text()
+        contract = "source_root = '/volume1/data' OR source_root LIKE '/volume1/data/%'"
+        self.assertIn(contract, base)
+        self.assertIn(contract, fix)
+        self.assertIn("rollback blocked: canonical /volume1/data migration plans exist", rollback)
+        self.assertNotIn("DELETE FROM public.personal_migration_plans", fix)
+
     def test_core_cli_exposes_full_migration_lifecycle(self):
         cli = (ROOT / "tools/runtime/core").read_text()
         for command in ("migrate plan", "migrate approve", "migrate execute", "migrate reconcile", "migrate rollback"):
