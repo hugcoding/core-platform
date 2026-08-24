@@ -409,6 +409,55 @@ def rollback(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_all(args: argparse.Namespace) -> int:
+    require_confirmation(args.confirm, "MIGRATE_ALL_REVIEWED")
+    total_planned = 0
+    completed_plans = []
+    for _batch_number in range(1, args.max_batches + 1):
+        eligible, blocked = inspect_candidates(args.batch_size, args.minimum_free_bytes)
+        if not eligible:
+            print(json.dumps({
+                "status": "completed", "batches": len(completed_plans),
+                "verified_items": total_planned, "remaining_eligible": 0,
+                "remaining_blocked": len(blocked), "plan_ids": completed_plans,
+                "physical_purge": False,
+            }, ensure_ascii=False))
+            return 0
+
+        plan_args = argparse.Namespace(
+            create_plan=True, dry_run=False, limit=args.batch_size,
+            minimum_free_bytes=args.minimum_free_bytes, actor=args.actor,
+        )
+        plan(plan_args)
+        canonical = json.dumps(eligible, sort_keys=True, separators=(",", ":"))
+        plan_key = hashlib.sha256(canonical.encode()).hexdigest()
+        rows = copy_rows(
+            "SELECT id FROM public.personal_migration_plans WHERE plan_key={}".format(pg(plan_key))
+        )
+        if not rows:
+            raise MigrationSafetyError("created_plan_not_found")
+        plan_id = rows[0]["id"]
+        approve(argparse.Namespace(plan_id=plan_id, confirm=plan_id, actor=args.actor))
+        execute(argparse.Namespace(
+            plan_id=plan_id, confirm=plan_id, actor=args.actor,
+            minimum_free_bytes=args.minimum_free_bytes,
+        ))
+        reconcile(argparse.Namespace(plan_id=plan_id, actor=args.actor))
+        completed_plans.append(plan_id)
+        total_planned += len(eligible)
+
+    remaining, blocked = inspect_candidates(1, args.minimum_free_bytes)
+    if remaining:
+        raise MigrationSafetyError("maximum_batch_count_reached")
+    print(json.dumps({
+        "status": "completed", "batches": len(completed_plans),
+        "verified_items": total_planned, "remaining_eligible": 0,
+        "remaining_blocked": len(blocked), "plan_ids": completed_plans,
+        "physical_purge": False,
+    }, ensure_ascii=False))
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="personal-migration-executor")
     sub = result.add_subparsers(dest="action", required=True)
@@ -429,16 +478,26 @@ def parser() -> argparse.ArgumentParser:
     sync = sub.add_parser("reconcile")
     sync.add_argument("plan_id")
     sync.add_argument("--actor", default="core-cli")
+    all_batches = sub.add_parser("run-all")
+    all_batches.add_argument("--batch-size", type=int, default=100)
+    all_batches.add_argument("--max-batches", type=int, default=10)
+    all_batches.add_argument("--minimum-free-bytes", type=int, default=0)
+    all_batches.add_argument("--confirm", required=True)
+    all_batches.add_argument("--actor", default="core-cli")
     return result
 
 
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
-    if getattr(args, "limit", 1) < 1 or getattr(args, "limit", 1) > 100:
+    effective_limit = getattr(args, "batch_size", getattr(args, "limit", 1))
+    if effective_limit < 1 or effective_limit > 100:
         print("limit must be between 1 and 100", file=sys.stderr); return 2
+    if getattr(args, "max_batches", 1) < 1 or getattr(args, "max_batches", 1) > 100:
+        print("max-batches must be between 1 and 100", file=sys.stderr); return 2
     try:
         return {"plan": plan, "approve": approve, "execute": execute,
-                "reconcile": reconcile, "rollback": rollback}[args.action](args)
+                "reconcile": reconcile, "rollback": rollback,
+                "run-all": run_all}[args.action](args)
     except (MigrationSafetyError, subprocess.CalledProcessError, OSError) as exc:
         detail = exc.stderr.strip() if isinstance(exc, subprocess.CalledProcessError) else str(exc)
         print("Personal migration failed: {}".format(detail), file=sys.stderr)

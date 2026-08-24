@@ -128,3 +128,15 @@ De expliciete batchgoedkeuring is de controlegrens voor policy-backed
 voorstellen. Maximaal honderd bestanden gaan in één plan; een grotere werkset
 wordt daardoor gecontroleerd in meerdere batches verwerkt. Botsende doelpaden,
 gewijzigde hashes en niet-actuele bronnen blijven per bestand geblokkeerd.
+
+Na een gecontroleerde dry-run kan de volledige beoordeelde werkset met één
+expliciete opdracht in begrensde batches worden uitgevoerd:
+
+```bash
+core workset migrate run-all --confirm MIGRATE_ALL_REVIEWED
+```
+
+De orchestrator gebruikt standaard batches van honderd en maximaal tien batches.
+Iedere batch behoudt een eigen onveranderlijk plan, goedkeuring, verificatie en
+reconciliation. De run stopt bij de eerste fout of zodra de limiet is bereikt.
+Quarantaine blijft herstelbaar en fysieke purge blijft uitgeschakeld.

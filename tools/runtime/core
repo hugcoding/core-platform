@@ -264,7 +264,7 @@ case "$command_domain" in
                 ;;
             *)
                 echo "Unknown workset command."
-                echo "Use: core workset pilot ... | target-path-pilot ... | review-learning-analyze --dry-run | review-category-repair --dry-run|--apply | lifecycle-path-repair --dry-run|--apply | migrate plan|approve|execute|reconcile|rollback ..."
+                echo "Use: core workset pilot ... | target-path-pilot ... | review-learning-analyze --dry-run | review-category-repair --dry-run|--apply | lifecycle-path-repair --dry-run|--apply | migrate plan|approve|execute|reconcile|rollback|run-all ..."
                 exit 1
                 ;;
         esac
