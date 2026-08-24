@@ -361,13 +361,15 @@ def execute(args: argparse.Namespace) -> int:
         raise MigrationSafetyError("plan_not_approved")
     moved = 0
     for item in plan_items(args.plan_id):
-        if item["current_status"] not in ("approved", "moving", "moved"):
+        if item["current_status"] not in ("approved", "moving", "moved", "failed"):
             continue
         try:
             if not deletion_nomination_is_current(item):
                 raise MigrationSafetyError("deletion_nomination_no_longer_current")
             event(args.plan_id, "moving", args.actor, "{}:{}:moving".format(args.plan_id, item["id"]), item["id"])
-            if item["current_status"] in ("moving", "moved"):
+            if item["current_status"] in ("moving", "moved") or (
+                item["current_status"] == "failed" and Path(item["target_path"]).exists()
+            ):
                 result = resume_verified_move(item, allowed_zones=allowed_zones(item))
             else:
                 required_free = max(int(args.minimum_free_bytes), int(item["planned_minimum_free_bytes"]))

@@ -75,6 +75,8 @@ class PersonalMigrationExecutorTests(unittest.TestCase):
         self.assertIn('all_batches.add_argument("--max-batches", type=int, default=10)', runtime)
         self.assertIn('"physical_purge": False', runtime)
         self.assertIn("maximum_batch_count_reached", runtime)
+        self.assertIn('("approved", "moving", "moved", "failed")', runtime)
+        self.assertIn('item["current_status"] == "failed"', runtime)
 
     def test_v2_routes_active_deletion_nominations_to_reversible_quarantine(self):
         runtime = (ROOT / "tools/runtime/personal_migration_executor.py").read_text()
