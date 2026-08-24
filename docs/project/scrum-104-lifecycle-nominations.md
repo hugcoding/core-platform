@@ -82,6 +82,8 @@ zijn genomineerd.
 ```bash
 docker exec -i postgres psql -v ON_ERROR_STOP=1 -U hugo -d nasdb_test \
   < database/migrations/20260815_add_document_lifecycle_nominations.sql
+docker exec -i postgres psql -v ON_ERROR_STOP=1 -U hugo -d nasdb_test \
+  < database/migrations/20260824_extend_personal_migration_to_deletion_quarantine.sql
 docker compose up -d --build --no-deps dashboard
 ```
 
@@ -95,3 +97,21 @@ notitie gebruikt CORE een neutrale auditreden. Na opslag blijft het document in
 de huidige beoordelingslijst staan en toont de knop zelf duidelijk de actieve
 markering. Nogmaals klikken trekt de nominatie append-only in. De nominatie
 wijzigt het bestand en de actieve werksetstatus niet.
+
+## Gecontroleerde quarantaineoverdracht
+
+Een actieve menselijke verwijdernominatie heeft in migratiecontract v2 voorrang
+op een eerder oordeel `Actief` of `Inactief`. CORE stelt dan uitsluitend een
+reversibele verplaatsing voor naar:
+
+```text
+/volume1/data/.core/quarantaine/verwijderreview/<nomination-id>/<file-id>-<bestandsnaam>
+```
+
+De migrator vereist nog steeds een dry-run, onveranderlijk plan, expliciete
+batchgoedkeuring, bron- en doelcontrole en verificatie van SHA-256, grootte en
+mtime. De nominatie-id wordt bij het planitem bewaard. Er vindt geen fysieke
+purge plaats; rollback naar het oorspronkelijke pad blijft mogelijk. Een
+ingetrokken nominatie, gewijzigde hash, ontbrekend bestand of doelconflict wordt
+geblokkeerd. Bestanden zonder verwijdernominatie volgen alleen een menselijk
+geaccepteerde route naar `Persoonlijk/Actief` of `Persoonlijk/Inactief`.

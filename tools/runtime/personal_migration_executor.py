@@ -21,7 +21,8 @@ from core.migration.personal_executor import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-CONTRACT = "personal-migration-executor-v1"
+CONTRACT = "personal-migration-executor-v2"
+DELETION_QUARANTINE_ROOT = Path("/volume1/data/.core/quarantaine/verwijderreview")
 
 
 def pg(value: object) -> str:
@@ -45,7 +46,7 @@ def copy_rows(query: str) -> List[Dict[str, str]]:
     return psql("COPY ({}) TO STDOUT WITH CSV HEADER;".format(query), rows=True)
 
 
-CANDIDATES = """
+NORMAL_CANDIDATES = """
 SELECT v.file_id, v.content_group_id, v.content_sha256, v.source_path,
        v.lifecycle_aligned_proposed_path AS target_path, f.size_bytes,
        v.effective_lifecycle, v.lifecycle_reviewed_at, v.target_path_reviewed_at,
@@ -55,7 +56,10 @@ SELECT v.file_id, v.content_group_id, v.content_sha256, v.source_path,
        ,(SELECT count(*) FROM public.v_exact_duplicate_review_handoff h
          WHERE h.content_group_id = v.content_group_id
            AND h.selected_file_id = v.file_id
-           AND h.eligible_for_executor) AS reviewed_redundant_copies
+           AND h.eligible_for_executor) AS reviewed_redundant_copies,
+       NULL::uuid AS deletion_nomination_id,
+       2 AS candidate_priority,
+       NULL::text AS previous_cleanup_status
 FROM public.v_document_workset_path_review v
 JOIN public.files f ON f.id = v.file_id AND f.deleted_at IS NULL
 JOIN public.content_groups g ON g.id = v.content_group_id
@@ -71,8 +75,54 @@ WHERE v.effective_lifecycle IN ('active', 'archive')
   AND v.target_path_decision = 'accepted'
   AND v.lifecycle_aligned_proposed_path ~ '^/volume1/data/Persoonlijk/(Actief|Inactief)/'
   AND v.source_path LIKE '/volume1/data/%'
-ORDER BY v.target_path_reviewed_at, v.file_id
+  AND NOT EXISTS (
+      SELECT 1 FROM public.v_active_document_lifecycle_nominations nomination
+      WHERE nomination.file_id = v.file_id AND nomination.nomination_type = 'deletion'
+  )
 """
+
+DELETION_CANDIDATES = """
+SELECT nomination.file_id, nomination.content_group_id, nomination.content_sha256,
+       file.path AS source_path,
+       '/volume1/data/.core/quarantaine/verwijderreview/' || nomination.id::text || '/'
+         || file.id::text || '-' || file.filename AS target_path,
+       file.size_bytes, 'deletion_review'::text AS effective_lifecycle,
+       nomination.created_at AS lifecycle_reviewed_at,
+       nomination.created_at AS target_path_reviewed_at,
+       (SELECT count(*) FROM public.content_group_members member
+        JOIN public.files copy ON copy.id = member.file_id AND copy.deleted_at IS NULL
+        WHERE member.content_group_id = nomination.content_group_id) AS available_copies,
+       0::bigint AS reviewed_redundant_copies,
+       nomination.id AS deletion_nomination_id,
+       1 AS candidate_priority,
+       previous_cleanup.current_status AS previous_cleanup_status
+FROM public.v_active_document_lifecycle_nominations nomination
+JOIN public.files file ON file.id = nomination.file_id AND file.deleted_at IS NULL
+JOIN public.content_group_members member
+  ON member.content_group_id = nomination.content_group_id AND member.file_id = file.id
+LEFT JOIN LATERAL (
+    SELECT status.current_status
+    FROM public.duplicate_cleanup_plan_items cleanup
+    JOIN public.v_duplicate_cleanup_item_status status ON status.id = cleanup.id
+    WHERE cleanup.redundant_file_id = nomination.file_id
+    ORDER BY cleanup.created_at DESC, cleanup.id DESC LIMIT 1
+) previous_cleanup ON true
+WHERE nomination.nomination_type = 'deletion'
+  AND file.content_sha256 = nomination.content_sha256
+  AND file.path LIKE '/volume1/data/%'
+  AND file.path NOT LIKE '/volume1/data/.core/quarantaine/%'
+"""
+
+CANDIDATES = """SELECT * FROM (({}) UNION ALL ({})) candidates
+ORDER BY candidate_priority, target_path_reviewed_at, file_id""".format(
+    DELETION_CANDIDATES, NORMAL_CANDIDATES
+)
+
+
+def allowed_zones(item: dict) -> Optional[Tuple[Path, ...]]:
+    if item.get("effective_lifecycle") == "deletion_review":
+        return (DELETION_QUARANTINE_ROOT,)
+    return None
 
 
 def event(plan_id: str, event_type: str, actor: str, key: str,
@@ -93,7 +143,15 @@ def inspect_candidates(limit: int, minimum_free_bytes: int) -> Tuple[List[dict],
         item["size_bytes"] = int(item["size_bytes"])
         available_copies = int(item["available_copies"])
         reviewed_redundant_copies = int(item["reviewed_redundant_copies"])
-        if available_copies > 1:
+        if item.get("previous_cleanup_status") not in (None, "", "rolled_back"):
+            item["blocked_reason"] = "already_in_duplicate_cleanup:{}".format(
+                item["previous_cleanup_status"]
+            )
+            blocked.append(item)
+            continue
+        if item.get("deletion_nomination_id"):
+            item["duplicate_resolution"] = "deletion_review"
+        elif available_copies > 1:
             if reviewed_redundant_copies != available_copies - 1:
                 item["blocked_reason"] = "duplicate_review_required"
                 blocked.append(item)
@@ -102,7 +160,10 @@ def inspect_candidates(limit: int, minimum_free_bytes: int) -> Tuple[List[dict],
         else:
             item["duplicate_resolution"] = None
         try:
-            checked = inspect_preconditions(item, minimum_free_bytes=minimum_free_bytes)
+            checked = inspect_preconditions(
+                item, minimum_free_bytes=minimum_free_bytes,
+                allowed_zones=allowed_zones(item),
+            )
             item["mtime_ns"] = checked.mtime_ns
             eligible.append(item)
         except (MigrationSafetyError, OSError) as exc:
@@ -145,14 +206,15 @@ def plan(args: argparse.Namespace) -> int:
         for sequence, item in enumerate(eligible, 1):
             item_id = str(uuid.uuid4())
             item["item_id"] = item_id
-            values.append("({},{},{},{},{},{},{},{},{},{},{},{},{},{})".format(
+            values.append("({},{},{},{},{},{},{},{},{},{},{},{},{},{},{})".format(
                 pg(item_id), pg(plan_id), sequence, item["file_id"], pg(item["content_group_id"]),
                 pg(item["content_sha256"]), item["size_bytes"], pg(item["source_path"]),
                 pg(item["target_path"]), item["mtime_ns"], pg(item["effective_lifecycle"]),
                 pg(item["lifecycle_reviewed_at"]), pg(item["target_path_reviewed_at"]),
-                pg(item["duplicate_resolution"])))
+                pg(item["duplicate_resolution"]), pg(item.get("deletion_nomination_id"))))
             detail = json.dumps({"source_path": item["source_path"], "target_path": item["target_path"],
-                                 "duplicate_resolution": item["duplicate_resolution"]},
+                                 "duplicate_resolution": item["duplicate_resolution"],
+                                 "deletion_nomination_id": item.get("deletion_nomination_id")},
                                 ensure_ascii=False, separators=(",", ":"))
             planned_events.append("({},{},'planned',{},{},{}::jsonb)".format(
                 pg(plan_id), pg(item_id), pg("{}:{}:planned".format(plan_id, item_id)),
@@ -160,9 +222,9 @@ def plan(args: argparse.Namespace) -> int:
         sql = """BEGIN;
         INSERT INTO public.personal_migration_plans
           (id,plan_key,contract_version,source_root,target_root,max_batch_size,minimum_free_bytes,item_count,created_by)
-        VALUES ({},{},{},'/volume1/data','/volume1/data/Persoonlijk',{},{},{},{});
+        VALUES ({},{},{},'/volume1/data','/volume1/data',{},{},{},{});
         INSERT INTO public.personal_migration_plan_items
-          (id,plan_id,sequence_no,file_id,content_group_id,content_sha256,size_bytes,source_path,target_path,mtime_ns,effective_lifecycle,lifecycle_reviewed_at,target_path_reviewed_at,duplicate_resolution)
+          (id,plan_id,sequence_no,file_id,content_group_id,content_sha256,size_bytes,source_path,target_path,mtime_ns,effective_lifecycle,lifecycle_reviewed_at,target_path_reviewed_at,duplicate_resolution,deletion_nomination_id)
         VALUES {};
         INSERT INTO public.personal_migration_events
           (plan_id,item_id,event_type,idempotency_key,actor,details)
@@ -218,15 +280,52 @@ def is_approved(plan_id: str) -> bool:
     return bool(rows and rows[0]["ok"] == "t")
 
 
+def deletion_nomination_is_current(item: dict) -> bool:
+    if item["effective_lifecycle"] != "deletion_review":
+        return True
+    rows = copy_rows("""SELECT EXISTS(
+      SELECT 1 FROM public.v_active_document_lifecycle_nominations nomination
+      JOIN public.files file ON file.id=nomination.file_id AND file.deleted_at IS NULL
+      WHERE nomination.id={} AND nomination.file_id={}
+        AND nomination.nomination_type='deletion'
+        AND nomination.content_sha256={}
+        AND file.content_sha256=nomination.content_sha256
+    ) AS ok""".format(
+        pg(item["deletion_nomination_id"]), item["file_id"], pg(item["content_sha256"])
+    ))
+    return bool(rows and rows[0]["ok"] == "t")
+
+
 def correlate(plan_id: str, item: dict, actor: str) -> bool:
     rows = copy_rows("""SELECT id FROM public.v_file_events_effective WHERE file_id={}
       AND event_type='MOVED' AND old_path={} AND new_path={}
       AND created_at >= (SELECT created_at FROM public.personal_migration_plans WHERE id={})
       ORDER BY created_at DESC LIMIT 1""".format(item["file_id"], pg(item["source_path"]), pg(item["target_path"]), pg(plan_id)))
+    event_type = "MOVED"
+    if not rows and item["effective_lifecycle"] == "deletion_review":
+        rows = copy_rows("""SELECT fe.id FROM public.v_file_events_effective fe
+          WHERE fe.file_id={} AND fe.event_type='DELETED' AND fe.old_path={}
+            AND fe.created_at >= (SELECT created_at FROM public.personal_migration_plans WHERE id={})
+            AND EXISTS (
+              SELECT 1 FROM public.personal_migration_events verified
+              WHERE verified.plan_id={} AND verified.item_id={} AND verified.event_type='verified'
+                AND verified.details->>'content_sha256'={}
+                AND verified.details->>'target_path'={}
+                AND verified.details->>'source_path'={}
+                AND verified.details->>'recovery_available'='true'
+                AND verified.details->>'qualifies_for_activation'='false'
+            ) ORDER BY fe.created_at DESC LIMIT 1""".format(
+                item["file_id"], pg(item["source_path"]), pg(plan_id), pg(plan_id),
+                pg(item["id"]), pg(str(item["content_sha256"]).lower()),
+                pg(item["target_path"]), pg(item["source_path"])))
+        event_type = "DELETED"
     if not rows:
         return False
+    source = "core_deletion_quarantine" if item["effective_lifecycle"] == "deletion_review" else "core_managed_move"
     event(plan_id, "event_correlated", actor, "{}:{}:correlated:{}".format(plan_id, item["id"], rows[0]["id"]), item["id"],
-          {"file_event_id": rows[0]["id"], "qualifies_for_activation": False, "source": "core_managed_move"})
+          {"file_event_id": rows[0]["id"], "file_event_type": event_type,
+           "qualifies_for_activation": False, "source": source,
+           "physical_purge": False, "recovery_available": True})
     return True
 
 
@@ -239,15 +338,22 @@ def execute(args: argparse.Namespace) -> int:
         if item["current_status"] not in ("approved", "moving", "moved"):
             continue
         try:
+            if not deletion_nomination_is_current(item):
+                raise MigrationSafetyError("deletion_nomination_no_longer_current")
             event(args.plan_id, "moving", args.actor, "{}:{}:moving".format(args.plan_id, item["id"]), item["id"])
             if item["current_status"] in ("moving", "moved"):
-                result = resume_verified_move(item)
+                result = resume_verified_move(item, allowed_zones=allowed_zones(item))
             else:
                 required_free = max(int(args.minimum_free_bytes), int(item["planned_minimum_free_bytes"]))
-                result = move_verified(item, minimum_free_bytes=required_free)
+                result = move_verified(
+                    item, minimum_free_bytes=required_free,
+                    allowed_zones=allowed_zones(item),
+                )
             event(args.plan_id, "moved", args.actor, "{}:{}:moved".format(args.plan_id, item["id"]), item["id"], result)
             event(args.plan_id, "verified", args.actor, "{}:{}:verified".format(args.plan_id, item["id"]), item["id"],
-                  dict(result, qualifies_for_activation=False, source="core_managed_move"))
+                  dict(result, qualifies_for_activation=False,
+                       source=("core_deletion_quarantine" if item["effective_lifecycle"] == "deletion_review" else "core_managed_move"),
+                       physical_purge=False, recovery_available=True))
             correlate(args.plan_id, item, args.actor)
             moved += 1
         except (MigrationSafetyError, OSError) as exc:
@@ -270,7 +376,7 @@ def rollback(args: argparse.Namespace) -> int:
         if item["current_status"] not in ("verified", "event_correlated", "rollback_pending", "failed"):
             continue
         event(args.plan_id, "rollback_pending", args.actor, "{}:{}:rollback-pending".format(args.plan_id, item["id"]), item["id"])
-        result = rollback_verified(item)
+        result = rollback_verified(item, allowed_zones=allowed_zones(item))
         event(args.plan_id, "rolled_back", args.actor, "{}:{}:rolled-back".format(args.plan_id, item["id"]), item["id"], result)
         restored += 1
     print(json.dumps({"status": "rolled_back", "plan_id": args.plan_id, "restored": restored}))
