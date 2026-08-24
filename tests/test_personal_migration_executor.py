@@ -61,6 +61,29 @@ class PersonalMigrationExecutorTests(unittest.TestCase):
         for command in ("migrate plan", "migrate approve", "migrate execute", "migrate reconcile", "migrate rollback"):
             self.assertIn(command, cli)
 
+    def test_v2_routes_active_deletion_nominations_to_reversible_quarantine(self):
+        runtime = (ROOT / "tools/runtime/personal_migration_executor.py").read_text()
+        migration = (ROOT / "database/migrations/20260824_extend_personal_migration_to_deletion_quarantine.sql").read_text()
+        rollback = (ROOT / "database/migrations/rollback/20260824_extend_personal_migration_to_deletion_quarantine.sql").read_text()
+        self.assertIn("personal-migration-executor-v2", runtime)
+        self.assertIn("v_active_document_lifecycle_nominations", runtime)
+        self.assertIn("nomination.nomination_type = 'deletion'", runtime)
+        self.assertIn("/volume1/data/.core/quarantaine/verwijderreview/", runtime)
+        self.assertIn("core_deletion_quarantine", runtime)
+        self.assertIn("physical_purge=False", runtime)
+        self.assertIn("deletion_nomination_no_longer_current", runtime)
+        self.assertIn("already_in_duplicate_cleanup", runtime)
+        self.assertIn("deletion_nomination_id", migration)
+        self.assertIn("effective_lifecycle = 'deletion_review'", migration)
+        self.assertIn("rollback blocked: deletion-quarantine migration plans exist", rollback)
+
+    def test_deletion_nomination_has_priority_over_active_or_archive_route(self):
+        runtime = (ROOT / "tools/runtime/personal_migration_executor.py").read_text()
+        self.assertIn("candidate_priority", runtime)
+        self.assertIn("NOT EXISTS (", runtime)
+        self.assertIn("nomination.nomination_type = 'deletion'", runtime)
+        self.assertIn('item["duplicate_resolution"] = "deletion_review"', runtime)
+
     def test_path_validation_rejects_escape_and_wrong_zone(self):
         with self.assertRaises(executor.MigrationSafetyError):
             executor.validate_paths("/tmp/source.pdf", "/volume1/data/Persoonlijk/Actief/a.pdf")
