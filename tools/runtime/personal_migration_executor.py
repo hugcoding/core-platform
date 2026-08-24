@@ -142,6 +142,20 @@ def allowed_zones(item: dict) -> Optional[Tuple[Path, ...]]:
     return None
 
 
+def complete_directory_target(item: dict) -> dict:
+    """Turn an explicitly directory-shaped review target into a file target.
+
+    Portal reviews may deliberately end in ``/`` when the reviewer specifies
+    only the desired folder.  A filesystem move always needs the full target
+    filename, so preserve the source filename in that case.
+    """
+    raw_target = str(item["target_path"])
+    if raw_target.endswith(("/", "\\")):
+        item["target_path"] = str(Path(raw_target) / Path(item["source_path"]).name)
+        item["target_path_completed_from_directory"] = True
+    return item
+
+
 def event(plan_id: str, event_type: str, actor: str, key: str,
           item_id: Optional[str] = None, details: Optional[dict] = None) -> None:
     payload = json.dumps(details or {}, ensure_ascii=False, separators=(",", ":"))
@@ -157,7 +171,7 @@ def inspect_candidates(limit: int, minimum_free_bytes: int) -> Tuple[List[dict],
     for row in copy_rows("SELECT * FROM ({}) q LIMIT {}".format(CANDIDATES, limit * 5)):
         if len(eligible) >= limit:
             break
-        item = dict(row)
+        item = complete_directory_target(dict(row))
         item["size_bytes"] = int(item["size_bytes"])
         available_copies = int(item["available_copies"])
         reviewed_redundant_copies = int(item["reviewed_redundant_copies"])
@@ -182,8 +196,14 @@ def inspect_candidates(limit: int, minimum_free_bytes: int) -> Tuple[List[dict],
                 item, minimum_free_bytes=minimum_free_bytes,
                 allowed_zones=allowed_zones(item),
             )
+            target = Path(item["target_path"])
             if item["target_path"] in reserved_targets:
                 item["blocked_reason"] = "batch_target_collision"
+                blocked.append(item)
+                continue
+            if any(target in Path(reserved).parents or Path(reserved) in target.parents
+                   for reserved in reserved_targets):
+                item["blocked_reason"] = "batch_target_file_directory_collision"
                 blocked.append(item)
                 continue
             item["mtime_ns"] = checked.mtime_ns

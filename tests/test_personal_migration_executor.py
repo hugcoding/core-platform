@@ -164,6 +164,22 @@ class PersonalMigrationExecutorTests(unittest.TestCase):
                 with self.assertRaisesRegex(executor.MigrationSafetyError, "target_collision"):
                     executor.inspect_preconditions(item)
 
+    def test_intermediate_target_file_is_blocked_before_move(self):
+        with tempfile.TemporaryDirectory() as temp:
+            data = Path(temp) / "data"
+            source = data / "import/a.pdf"
+            blocking_parent = data / "Persoonlijk/Actief/Werk"
+            source.parent.mkdir(parents=True)
+            blocking_parent.parent.mkdir(parents=True)
+            source.write_bytes(b"source")
+            blocking_parent.write_bytes(b"not a directory")
+            target = blocking_parent / "a.pdf"
+            with patch.object(executor, "DATA_ROOT", data), patch.object(
+                executor, "ALLOWED_ZONES", (data / "Persoonlijk/Actief", data / "Persoonlijk/Inactief")
+            ):
+                with self.assertRaisesRegex(executor.MigrationSafetyError, "target_parent_not_directory"):
+                    executor.validate_paths(source, target)
+
     def test_interrupted_hardlink_move_can_resume_without_overwrite(self):
         with tempfile.TemporaryDirectory() as temp:
             data = Path(temp) / "data"
