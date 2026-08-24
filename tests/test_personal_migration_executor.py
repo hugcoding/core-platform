@@ -84,6 +84,22 @@ class PersonalMigrationExecutorTests(unittest.TestCase):
         self.assertIn("nomination.nomination_type = 'deletion'", runtime)
         self.assertIn('item["duplicate_resolution"] = "deletion_review"', runtime)
 
+    def test_policy_backed_workset_candidates_fill_the_remaining_migration_set(self):
+        runtime = (ROOT / "tools/runtime/personal_migration_executor.py").read_text()
+        migration = (ROOT / "database/migrations/20260824_add_policy_backed_personal_migration.sql").read_text()
+        rollback = (ROOT / "database/migrations/rollback/20260824_add_policy_backed_personal_migration.sql").read_text()
+        self.assertIn("'workset_policy' END AS lifecycle_basis", runtime)
+        self.assertIn("'core_proposal'", runtime)
+        self.assertIn("'zone_fallback'", runtime)
+        self.assertIn("batch_target_collision", runtime)
+        self.assertIn("WHERE source_path <> target_path", runtime)
+        self.assertNotIn("AND v.lifecycle_reviewed_at IS NOT NULL", runtime)
+        self.assertNotIn("AND v.target_path_decision = 'accepted'", runtime)
+        self.assertIn("lifecycle_basis", migration)
+        self.assertIn("target_path_basis", migration)
+        self.assertIn("DROP NOT NULL", migration)
+        self.assertIn("rollback blocked: policy-backed personal migration plans exist", rollback)
+
     def test_path_validation_rejects_escape_and_wrong_zone(self):
         with self.assertRaises(executor.MigrationSafetyError):
             executor.validate_paths("/tmp/source.pdf", "/volume1/data/Persoonlijk/Actief/a.pdf")
