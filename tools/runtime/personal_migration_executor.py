@@ -52,6 +52,10 @@ SELECT v.file_id, v.content_group_id, v.content_sha256, v.source_path,
        (SELECT count(*) FROM public.content_group_members gm
         JOIN public.files mf ON mf.id = gm.file_id AND mf.deleted_at IS NULL
         WHERE gm.content_group_id = v.content_group_id) AS available_copies
+       ,(SELECT count(*) FROM public.v_exact_duplicate_review_handoff h
+         WHERE h.content_group_id = v.content_group_id
+           AND h.selected_file_id = v.file_id
+           AND h.eligible_for_executor) AS reviewed_redundant_copies
 FROM public.v_document_workset_path_review v
 JOIN public.files f ON f.id = v.file_id AND f.deleted_at IS NULL
 JOIN public.content_groups g ON g.id = v.content_group_id
@@ -87,10 +91,16 @@ def inspect_candidates(limit: int, minimum_free_bytes: int) -> Tuple[List[dict],
             break
         item = dict(row)
         item["size_bytes"] = int(item["size_bytes"])
-        if int(item["available_copies"]) > 1:
-            item["blocked_reason"] = "duplicate_review_required"
-            blocked.append(item)
-            continue
+        available_copies = int(item["available_copies"])
+        reviewed_redundant_copies = int(item["reviewed_redundant_copies"])
+        if available_copies > 1:
+            if reviewed_redundant_copies != available_copies - 1:
+                item["blocked_reason"] = "duplicate_review_required"
+                blocked.append(item)
+                continue
+            item["duplicate_resolution"] = "golden_only"
+        else:
+            item["duplicate_resolution"] = None
         try:
             checked = inspect_preconditions(item, minimum_free_bytes=minimum_free_bytes)
             item["mtime_ns"] = checked.mtime_ns
@@ -135,12 +145,14 @@ def plan(args: argparse.Namespace) -> int:
         for sequence, item in enumerate(eligible, 1):
             item_id = str(uuid.uuid4())
             item["item_id"] = item_id
-            values.append("({},{},{},{},{},{},{},{},{},{},{},{},{})".format(
+            values.append("({},{},{},{},{},{},{},{},{},{},{},{},{},{})".format(
                 pg(item_id), pg(plan_id), sequence, item["file_id"], pg(item["content_group_id"]),
                 pg(item["content_sha256"]), item["size_bytes"], pg(item["source_path"]),
                 pg(item["target_path"]), item["mtime_ns"], pg(item["effective_lifecycle"]),
-                pg(item["lifecycle_reviewed_at"]), pg(item["target_path_reviewed_at"])))
-            detail = json.dumps({"source_path": item["source_path"], "target_path": item["target_path"]},
+                pg(item["lifecycle_reviewed_at"]), pg(item["target_path_reviewed_at"]),
+                pg(item["duplicate_resolution"])))
+            detail = json.dumps({"source_path": item["source_path"], "target_path": item["target_path"],
+                                 "duplicate_resolution": item["duplicate_resolution"]},
                                 ensure_ascii=False, separators=(",", ":"))
             planned_events.append("({},{},'planned',{},{},{}::jsonb)".format(
                 pg(plan_id), pg(item_id), pg("{}:{}:planned".format(plan_id, item_id)),
@@ -150,7 +162,7 @@ def plan(args: argparse.Namespace) -> int:
           (id,plan_key,contract_version,source_root,target_root,max_batch_size,minimum_free_bytes,item_count,created_by)
         VALUES ({},{},{},'/volume1/data','/volume1/data/Persoonlijk',{},{},{},{});
         INSERT INTO public.personal_migration_plan_items
-          (id,plan_id,sequence_no,file_id,content_group_id,content_sha256,size_bytes,source_path,target_path,mtime_ns,effective_lifecycle,lifecycle_reviewed_at,target_path_reviewed_at)
+          (id,plan_id,sequence_no,file_id,content_group_id,content_sha256,size_bytes,source_path,target_path,mtime_ns,effective_lifecycle,lifecycle_reviewed_at,target_path_reviewed_at,duplicate_resolution)
         VALUES {};
         INSERT INTO public.personal_migration_events
           (plan_id,item_id,event_type,idempotency_key,actor,details)
