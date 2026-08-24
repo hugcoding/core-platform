@@ -65,8 +65,18 @@ class PersonalMigrationExecutorTests(unittest.TestCase):
 
     def test_core_cli_exposes_full_migration_lifecycle(self):
         cli = (ROOT / "tools/runtime/core").read_text()
-        for command in ("migrate plan", "migrate approve", "migrate execute", "migrate reconcile", "migrate rollback"):
+        for command in ("migrate plan", "migrate approve", "migrate execute", "migrate reconcile", "migrate rollback", "run-all"):
             self.assertIn(command, cli)
+
+    def test_run_all_retains_bounded_batches_and_explicit_confirmation(self):
+        runtime = (ROOT / "tools/runtime/personal_migration_executor.py").read_text()
+        self.assertIn('require_confirmation(args.confirm, "MIGRATE_ALL_REVIEWED")', runtime)
+        self.assertIn('all_batches.add_argument("--batch-size", type=int, default=100)', runtime)
+        self.assertIn('all_batches.add_argument("--max-batches", type=int, default=10)', runtime)
+        self.assertIn('"physical_purge": False', runtime)
+        self.assertIn("maximum_batch_count_reached", runtime)
+        self.assertIn('("approved", "moving", "moved", "failed")', runtime)
+        self.assertIn('item["current_status"] == "failed"', runtime)
 
     def test_v2_routes_active_deletion_nominations_to_reversible_quarantine(self):
         runtime = (ROOT / "tools/runtime/personal_migration_executor.py").read_text()
