@@ -48,7 +48,14 @@ def copy_rows(query: str) -> List[Dict[str, str]]:
 
 NORMAL_CANDIDATES = """
 SELECT v.file_id, v.content_group_id, v.content_sha256, v.source_path,
-       v.lifecycle_aligned_proposed_path AS target_path, f.size_bytes,
+       CASE
+         WHEN v.lifecycle_aligned_proposed_path ~ '^/volume1/data/Persoonlijk/(Actief|Inactief)/'
+           THEN v.lifecycle_aligned_proposed_path
+         WHEN v.effective_lifecycle = 'active'
+           THEN '/volume1/data/Persoonlijk/Actief/' || v.filename
+         ELSE '/volume1/data/Persoonlijk/Inactief/' || v.filename
+       END AS target_path,
+       f.size_bytes,
        v.effective_lifecycle, v.lifecycle_reviewed_at, v.target_path_reviewed_at,
        (SELECT count(*) FROM public.content_group_members gm
         JOIN public.files mf ON mf.id = gm.file_id AND mf.deleted_at IS NULL
@@ -59,21 +66,21 @@ SELECT v.file_id, v.content_group_id, v.content_sha256, v.source_path,
            AND h.eligible_for_executor) AS reviewed_redundant_copies,
        NULL::uuid AS deletion_nomination_id,
        2 AS candidate_priority,
-       NULL::text AS previous_cleanup_status
+       NULL::text AS previous_cleanup_status,
+       CASE WHEN v.lifecycle_reviewed_at IS NOT NULL
+            THEN 'human_review' ELSE 'workset_policy' END AS lifecycle_basis,
+       CASE
+         WHEN v.target_path_decision = 'accepted' AND v.target_path_reviewed_at IS NOT NULL
+           THEN 'human_review'
+         WHEN v.lifecycle_aligned_proposed_path ~ '^/volume1/data/Persoonlijk/(Actief|Inactief)/'
+           THEN 'core_proposal'
+         ELSE 'zone_fallback'
+       END AS target_path_basis
 FROM public.v_document_workset_path_review v
 JOIN public.files f ON f.id = v.file_id AND f.deleted_at IS NULL
 JOIN public.content_groups g ON g.id = v.content_group_id
  AND g.golden_file_id = v.file_id AND g.content_sha256 = v.content_sha256
 WHERE v.effective_lifecycle IN ('active', 'archive')
-  AND v.lifecycle_reviewed_at IS NOT NULL
-  AND EXISTS (
-      SELECT 1 FROM public.v_latest_document_review lr
-      WHERE lr.file_id = v.file_id AND lr.review_type = 'lifecycle'
-        AND lr.decision = 'accepted'
-  )
-  AND v.target_path_reviewed_at IS NOT NULL
-  AND v.target_path_decision = 'accepted'
-  AND v.lifecycle_aligned_proposed_path ~ '^/volume1/data/Persoonlijk/(Actief|Inactief)/'
   AND v.source_path LIKE '/volume1/data/%'
   AND NOT EXISTS (
       SELECT 1 FROM public.v_active_document_lifecycle_nominations nomination
@@ -95,7 +102,9 @@ SELECT nomination.file_id, nomination.content_group_id, nomination.content_sha25
        0::bigint AS reviewed_redundant_copies,
        nomination.id AS deletion_nomination_id,
        1 AS candidate_priority,
-       previous_cleanup.current_status AS previous_cleanup_status
+       previous_cleanup.current_status AS previous_cleanup_status,
+       'deletion_nomination'::text AS lifecycle_basis,
+       'deletion_quarantine'::text AS target_path_basis
 FROM public.v_active_document_lifecycle_nominations nomination
 JOIN public.files file ON file.id = nomination.file_id AND file.deleted_at IS NULL
 JOIN public.content_group_members member
@@ -114,6 +123,7 @@ WHERE nomination.nomination_type = 'deletion'
 """
 
 CANDIDATES = """SELECT * FROM (({}) UNION ALL ({})) candidates
+WHERE source_path <> target_path
 ORDER BY candidate_priority, target_path_reviewed_at, file_id""".format(
     DELETION_CANDIDATES, NORMAL_CANDIDATES
 )
@@ -136,6 +146,7 @@ def event(plan_id: str, event_type: str, actor: str, key: str,
 
 def inspect_candidates(limit: int, minimum_free_bytes: int) -> Tuple[List[dict], List[dict]]:
     eligible, blocked = [], []
+    reserved_targets = set()
     for row in copy_rows("SELECT * FROM ({}) q LIMIT {}".format(CANDIDATES, limit * 5)):
         if len(eligible) >= limit:
             break
@@ -164,8 +175,13 @@ def inspect_candidates(limit: int, minimum_free_bytes: int) -> Tuple[List[dict],
                 item, minimum_free_bytes=minimum_free_bytes,
                 allowed_zones=allowed_zones(item),
             )
+            if item["target_path"] in reserved_targets:
+                item["blocked_reason"] = "batch_target_collision"
+                blocked.append(item)
+                continue
             item["mtime_ns"] = checked.mtime_ns
             eligible.append(item)
+            reserved_targets.add(item["target_path"])
         except (MigrationSafetyError, OSError) as exc:
             item["blocked_reason"] = str(exc)
             blocked.append(item)
@@ -206,15 +222,18 @@ def plan(args: argparse.Namespace) -> int:
         for sequence, item in enumerate(eligible, 1):
             item_id = str(uuid.uuid4())
             item["item_id"] = item_id
-            values.append("({},{},{},{},{},{},{},{},{},{},{},{},{},{},{})".format(
+            values.append("({},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{})".format(
                 pg(item_id), pg(plan_id), sequence, item["file_id"], pg(item["content_group_id"]),
                 pg(item["content_sha256"]), item["size_bytes"], pg(item["source_path"]),
                 pg(item["target_path"]), item["mtime_ns"], pg(item["effective_lifecycle"]),
                 pg(item["lifecycle_reviewed_at"]), pg(item["target_path_reviewed_at"]),
-                pg(item["duplicate_resolution"]), pg(item.get("deletion_nomination_id"))))
+                pg(item["duplicate_resolution"]), pg(item.get("deletion_nomination_id")),
+                pg(item["lifecycle_basis"]), pg(item["target_path_basis"])))
             detail = json.dumps({"source_path": item["source_path"], "target_path": item["target_path"],
                                  "duplicate_resolution": item["duplicate_resolution"],
-                                 "deletion_nomination_id": item.get("deletion_nomination_id")},
+                                 "deletion_nomination_id": item.get("deletion_nomination_id"),
+                                 "lifecycle_basis": item["lifecycle_basis"],
+                                 "target_path_basis": item["target_path_basis"]},
                                 ensure_ascii=False, separators=(",", ":"))
             planned_events.append("({},{},'planned',{},{},{}::jsonb)".format(
                 pg(plan_id), pg(item_id), pg("{}:{}:planned".format(plan_id, item_id)),
@@ -224,7 +243,7 @@ def plan(args: argparse.Namespace) -> int:
           (id,plan_key,contract_version,source_root,target_root,max_batch_size,minimum_free_bytes,item_count,created_by)
         VALUES ({},{},{},'/volume1/data','/volume1/data',{},{},{},{});
         INSERT INTO public.personal_migration_plan_items
-          (id,plan_id,sequence_no,file_id,content_group_id,content_sha256,size_bytes,source_path,target_path,mtime_ns,effective_lifecycle,lifecycle_reviewed_at,target_path_reviewed_at,duplicate_resolution,deletion_nomination_id)
+          (id,plan_id,sequence_no,file_id,content_group_id,content_sha256,size_bytes,source_path,target_path,mtime_ns,effective_lifecycle,lifecycle_reviewed_at,target_path_reviewed_at,duplicate_resolution,deletion_nomination_id,lifecycle_basis,target_path_basis)
         VALUES {};
         INSERT INTO public.personal_migration_events
           (plan_id,item_id,event_type,idempotency_key,actor,details)
