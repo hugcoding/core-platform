@@ -55,7 +55,17 @@ def validate_paths(
     source_anchor = nearest_existing(source_path) if source_may_be_missing else source_path
     if not is_within(source_anchor.resolve(strict=True), resolved_root):
         raise MigrationSafetyError("source_resolves_outside_volume1_data")
-    target_ancestor = nearest_existing(target_path.parent).resolve(strict=True)
+    # Fail with a controlled error when an intermediate target component is a
+    # file.  ``Path.mkdir(parents=True)`` would otherwise raise an opaque
+    # NotADirectoryError halfway through an approved batch.
+    target_parent = target_path.parent
+    relative_parent = target_parent.relative_to(DATA_ROOT)
+    current = DATA_ROOT
+    for component in relative_parent.parts:
+        current = current / component
+        if current.exists() and not current.is_dir():
+            raise MigrationSafetyError("target_parent_not_directory:{}".format(current))
+    target_ancestor = nearest_existing(target_parent).resolve(strict=True)
     if not is_within(target_ancestor, resolved_root):
         raise MigrationSafetyError("target_resolves_outside_volume1_data")
     return source_path, target_path
