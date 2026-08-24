@@ -36,6 +36,9 @@ Een kopie komt alleen in aanmerking wanneer:
 
 - SCRUM-110 een actuele menselijke leidende kopie heeft;
 - `v_exact_duplicate_review_handoff` de overdracht expliciet toestaat;
+- de persoonlijke migrator laat bij meerdere fysieke kopieën uitsluitend de gekozen
+  actuele golden copy door wanneer de gevalideerde handoff alle overige nog
+  beschikbare kopieën dekt; nieuwe of gewijzigde kopieën blijven geblokkeerd;
 - leidende en overtollige kopie nog bestaan en dezelfde SHA-256 en grootte hebben;
 - beide kopieën binnen `/volume1/data` staan;
 - de overtollige kopie nog niet in quarantaine of een actief cleanupplan zit;

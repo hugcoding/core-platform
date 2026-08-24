@@ -30,7 +30,16 @@ class PersonalMigrationExecutorTests(unittest.TestCase):
         self.assertIn("i.id,'approved'", runtime)
         self.assertIn("explicit_confirmation_required", runtime)
         self.assertIn("duplicate_review_required", runtime)
+        self.assertIn("v_exact_duplicate_review_handoff", runtime)
+        self.assertIn('item["duplicate_resolution"] = "golden_only"', runtime)
+        self.assertIn("target_path_reviewed_at,duplicate_resolution", runtime)
         self.assertIn("qualifies_for_activation", runtime)
+
+    def test_duplicate_handoff_must_cover_every_other_available_copy(self):
+        runtime = (ROOT / "tools/runtime/personal_migration_executor.py").read_text()
+        self.assertIn("reviewed_redundant_copies != available_copies - 1", runtime)
+        self.assertIn("h.selected_file_id = v.file_id", runtime)
+        self.assertIn("h.eligible_for_executor", runtime)
 
     def test_candidate_query_uses_current_content_group_hash_column(self):
         runtime = (ROOT / "tools/runtime/personal_migration_executor.py").read_text()
