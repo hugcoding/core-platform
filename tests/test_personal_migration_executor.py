@@ -11,6 +11,13 @@ ROOT = Path(__file__).parents[1]
 
 
 class PersonalMigrationExecutorTests(unittest.TestCase):
+    def test_nullable_database_values_do_not_become_empty_sql_literals(self):
+        runtime = (ROOT / "tools/runtime/personal_migration_executor.py").read_text()
+        self.assertIn("def pg_optional", runtime)
+        self.assertIn('value is None or value == ""', runtime)
+        self.assertIn('pg_optional(item["lifecycle_reviewed_at"])', runtime)
+        self.assertIn('pg_optional(item.get("deletion_nomination_id"))', runtime)
+
     def test_schema_is_append_only_and_reversible(self):
         sql = (ROOT / "database/migrations/20260821_add_personal_migration_executor.sql").read_text()
         rollback = (ROOT / "database/migrations/rollback/20260821_add_personal_migration_executor.sql").read_text()
