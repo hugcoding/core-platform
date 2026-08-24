@@ -31,6 +31,13 @@ def pg(value: object) -> str:
     return "'{}'".format(str(value).replace("'", "''"))
 
 
+def pg_optional(value: object) -> str:
+    """Serialize nullable COPY values without turning an empty field into SQL ''."""
+    if value is None or value == "":
+        return "NULL"
+    return pg(value)
+
+
 def psql(sql: str, *, rows: bool = False) -> List[Dict[str, str]]:
     docker = os.getenv("DOCKER_BIN", "docker")
     if docker == "docker" and Path("/usr/local/bin/docker").exists():
@@ -226,8 +233,8 @@ def plan(args: argparse.Namespace) -> int:
                 pg(item_id), pg(plan_id), sequence, item["file_id"], pg(item["content_group_id"]),
                 pg(item["content_sha256"]), item["size_bytes"], pg(item["source_path"]),
                 pg(item["target_path"]), item["mtime_ns"], pg(item["effective_lifecycle"]),
-                pg(item["lifecycle_reviewed_at"]), pg(item["target_path_reviewed_at"]),
-                pg(item["duplicate_resolution"]), pg(item.get("deletion_nomination_id")),
+                pg_optional(item["lifecycle_reviewed_at"]), pg_optional(item["target_path_reviewed_at"]),
+                pg_optional(item["duplicate_resolution"]), pg_optional(item.get("deletion_nomination_id")),
                 pg(item["lifecycle_basis"]), pg(item["target_path_basis"])))
             detail = json.dumps({"source_path": item["source_path"], "target_path": item["target_path"],
                                  "duplicate_resolution": item["duplicate_resolution"],
