@@ -78,6 +78,12 @@ class PersonalMigrationExecutorTests(unittest.TestCase):
         self.assertIn('("approved", "moving", "moved", "failed")', runtime)
         self.assertIn('item["current_status"] == "failed"', runtime)
 
+    def test_rollback_can_be_limited_to_directory_shaped_review_targets(self):
+        runtime = (ROOT / "tools/runtime/personal_migration_executor.py").read_text()
+        self.assertIn('command.add_argument("--directory-targets-only", action="store_true")', runtime)
+        self.assertIn('args.directory_targets_only and not str(item["target_path"]).endswith', runtime)
+        self.assertIn('"directory_targets_only" if args.directory_targets_only', runtime)
+
     def test_v2_routes_active_deletion_nominations_to_reversible_quarantine(self):
         runtime = (ROOT / "tools/runtime/personal_migration_executor.py").read_text()
         migration = (ROOT / "database/migrations/20260824_extend_personal_migration_to_deletion_quarantine.sql").read_text()
