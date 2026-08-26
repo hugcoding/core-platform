@@ -248,12 +248,16 @@ def workset_page():
 
 @app.get("/api/v1/workset/{file_id}/content")
 def open_workset_document(file_id: int):
-    """Open original content from the read-only NAS mount; never mutate it."""
+    """Open the current verified physical content; never mutate it."""
     try:
         with db_connect() as conn:
             rows = query_all(conn, """
-                SELECT id, path, filename FROM public.files
-                WHERE id = %s AND deleted_at IS NULL
+                SELECT f.id, COALESCE(location.current_path, f.path) AS path, f.filename
+                FROM public.files f
+                LEFT JOIN public.v_workset_current_physical_location location
+                  ON location.file_id = f.id
+                WHERE f.id = %s
+                  AND (f.deleted_at IS NULL OR location.current_path IS NOT NULL)
             """, (file_id,))
         if not rows:
             raise HTTPException(status_code=404, detail="document not found")
@@ -494,7 +498,14 @@ WORKSET_SELECT = """
         w.content_sha256,
         w.filename,
         w.extension,
-        w.path,
+        COALESCE(location.current_path, w.path) AS path,
+        w.path AS registered_path,
+        location.current_path AS current_physical_path,
+        location.location_kind AS physical_location_kind,
+        location.current_status AS physical_location_status,
+        location.plan_id AS physical_location_plan_id,
+        location.plan_item_id AS physical_location_item_id,
+        location.status_changed_at AS physical_location_changed_at,
         w.size_bytes,
         w.workset_status,
         w.reason_code,
@@ -519,6 +530,8 @@ WORKSET_SELECT = """
     FROM public.v_active_document_workset w
     LEFT JOIN public.v_current_file_classification c
         ON c.file_id = w.file_id
+    LEFT JOIN public.v_workset_current_physical_location location
+        ON location.file_id = w.file_id
     LEFT JOIN LATERAL (
         SELECT
             p.classification,
@@ -637,7 +650,9 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
     item["calculated_workset_status"] = row.get("workset_status")
     item["smb_path"] = smb_path(str(row["path"]))
     item["classification_status"] = "accepted" if row.get("category") else "not_reviewed"
-    item["migration_status"] = "virtual_only"
+    item["migration_status"] = row.get("physical_location_status") or "virtual_only"
+    item["physical_location_kind"] = row.get("physical_location_kind") or "registered_path"
+    item["is_deletion_quarantined"] = row.get("physical_location_kind") == "deletion_quarantine"
     privacy_proposal = effective_privacy_proposal(row)
 
     item["privacy_proposal"] = privacy_proposal
@@ -672,6 +687,10 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
         "expired_human_review" if lifecycle["lifecycle_expired"] else
         "human_review" if row.get("latest_corrected_lifecycle") else "core_workset_policy"
     )
+    if item["is_deletion_quarantined"]:
+        item["effective_lifecycle"] = "quarantine"
+        item["workset_status"] = "quarantine"
+        item["lifecycle_source"] = "verified_deletion_quarantine"
     item["nominations"] = {
         "archive": ({
             "id": str(row["archive_nomination_id"]),
@@ -765,7 +784,7 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
 
 @app.get("/api/v1/workset")
 def workset(
-    status: str = Query("active", pattern="^(active|inactive|needs_review|all)$"),
+    status: str = Query("active", pattern="^(active|inactive|needs_review|quarantine|all)$"),
     extension: str = Query("all", pattern="^(pdf|docx|xlsx|all)$"),
     search: str = Query("", max_length=100),
     family: str = Query("all", max_length=80, pattern="^[a-z0-9_'-]{1,80}$|^all$"),
@@ -782,9 +801,9 @@ def workset(
         conditions.append("w.extension = %s")
         params.append(extension)
     if search.strip():
-        conditions.append("(w.filename ILIKE %s OR w.path ILIKE %s)")
+        conditions.append("(w.filename ILIKE %s OR w.path ILIKE %s OR location.current_path ILIKE %s)")
         pattern = f"%{search.strip()}%"
-        params.extend([pattern, pattern])
+        params.extend([pattern, pattern, pattern])
     where = " WHERE " + " AND ".join(conditions) if conditions else ""
     try:
         with db_connect() as conn:
@@ -963,6 +982,7 @@ def workset(
         "active": sum(item.get("workset_status") == "active" for item in enriched),
         "inactive": sum(item.get("workset_status") == "inactive" for item in enriched),
         "needs_review": sum(item.get("workset_status") == "needs_review" for item in enriched),
+        "quarantine": sum(item.get("workset_status") == "quarantine" for item in enriched),
     }
     if status != "all":
         enriched = [item for item in enriched if item.get("workset_status") == status]

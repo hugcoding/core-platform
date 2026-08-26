@@ -47,3 +47,5 @@
 .taxonomy-proposal label { display: grid; gap: .3rem; margin: .75rem 0; }
 .taxonomy-actions { margin-top: .6rem; }
 .taxonomy-message, .taxonomy-empty { color: var(--muted); margin: .65rem 0 0; }
+.status-pill.quarantine{background:#402742;color:#f0b9ef;border-color:#754b78}
+.document-card:has(.status-pill.quarantine) .lifecycle-review{display:none}
