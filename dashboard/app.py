@@ -767,7 +767,12 @@ def workset(
                 , r.id AS latest_review_id, r.decision AS latest_review_decision,
                   r.corrected_document_family_code AS latest_review_family,
                   r.corrected_category_code AS latest_review_category,
-                  r.review_notes AS latest_review_notes, r.created_at AS latest_review_at
+                  r.review_notes AS latest_review_notes, r.created_at AS latest_review_at,
+                  r.proposed_category_label AS latest_proposed_category_label,
+                  r.proposed_family_label AS latest_proposed_family_label,
+                  r.proposed_target_path AS latest_proposed_target_path,
+                  r.proposed_filename AS latest_proposed_filename,
+                  r.proposed_filename_raw AS latest_proposed_filename_raw
             """ if review_storage else ""
             review_join = """
                 LEFT JOIN public.v_latest_document_review r
