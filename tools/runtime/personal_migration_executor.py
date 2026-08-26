@@ -421,13 +421,18 @@ def rollback(args: argparse.Namespace) -> int:
     require_confirmation(args.confirm, args.plan_id)
     restored = 0
     for item in reversed(plan_items(args.plan_id)):
+        if args.directory_targets_only and not str(item["target_path"]).endswith(("/", "\\")):
+            continue
         if item["current_status"] not in ("verified", "event_correlated", "rollback_pending", "failed"):
             continue
         event(args.plan_id, "rollback_pending", args.actor, "{}:{}:rollback-pending".format(args.plan_id, item["id"]), item["id"])
         result = rollback_verified(item, allowed_zones=allowed_zones(item))
         event(args.plan_id, "rolled_back", args.actor, "{}:{}:rolled-back".format(args.plan_id, item["id"]), item["id"], result)
         restored += 1
-    print(json.dumps({"status": "rolled_back", "plan_id": args.plan_id, "restored": restored}))
+    print(json.dumps({
+        "status": "rolled_back", "plan_id": args.plan_id, "restored": restored,
+        "scope": "directory_targets_only" if args.directory_targets_only else "full_plan",
+    }))
     return 0
 
 
@@ -497,6 +502,8 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--actor", default="core-cli")
         if name == "execute":
             command.add_argument("--minimum-free-bytes", type=int, default=0)
+        if name == "rollback":
+            command.add_argument("--directory-targets-only", action="store_true")
     sync = sub.add_parser("reconcile")
     sync.add_argument("plan_id")
     sync.add_argument("--actor", default="core-cli")
