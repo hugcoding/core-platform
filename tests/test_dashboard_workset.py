@@ -59,6 +59,25 @@ class DashboardWorksetTests(unittest.TestCase):
         )
         self.assertEqual("", self.dashboard.smb_path("/volume1/private/document.docx"))
 
+    def test_workset_uses_verified_current_physical_location(self):
+        self.assertIn("v_workset_current_physical_location", self.dashboard.WORKSET_SELECT)
+        self.assertIn("COALESCE(location.current_path, w.path) AS path", self.dashboard.WORKSET_SELECT)
+        row = {
+            "file_id": 9, "filename": "weg.pdf", "extension": "pdf",
+            "path": "/volume1/data/.core/quarantaine/verwijderreview/weg.pdf",
+            "registered_path": "/volume1/data/import/weg.pdf",
+            "workset_status": "needs_review", "physical_location_status": "verified",
+            "physical_location_kind": "deletion_quarantine",
+        }
+        result = self.dashboard.enrich_workset_row(row)
+        self.assertEqual("quarantine", result["workset_status"])
+        self.assertTrue(result["is_deletion_quarantined"])
+        self.assertIn(r"\data\.core\quarantaine\verwijderreview", result["smb_path"])
+
+    def test_workset_page_offers_quarantine_filter(self):
+        html = (ROOT / "dashboard/static/workset.html").read_text(encoding="utf-8")
+        self.assertIn('<option value="quarantine">Quarantaine</option>', html)
+
     def test_human_lifecycle_override_drives_effective_workset_and_target_zone(self):
         future = datetime(2027, 8, 1, tzinfo=timezone.utc)
         resolved = self.dashboard.resolve_effective_lifecycle(
@@ -163,7 +182,7 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn("filesystem_mtime", result["documents"][0]["reason_code"])
         self.assertEqual(r"\\192.168.68.105\data\import\document.docx", result["documents"][0]["smb_path"])
         params = query_all.call_args.args[2]
-        self.assertEqual(("docx", "%document%", "%document%"), params)
+        self.assertEqual(("docx", "%document%", "%document%", "%document%"), params)
 
     def test_source_limits_mutation_to_append_only_review_events(self):
         source = (ROOT / "dashboard" / "app.py").read_text(encoding="utf-8")
