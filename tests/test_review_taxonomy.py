@@ -12,7 +12,7 @@ class ReviewTaxonomyTests(unittest.TestCase):
             "id": "00000000-0000-0000-0000-000000000001", "file_id": 7,
             "review_type": "target_path", "decision": "accepted",
             "corrected_category_code": "learning_development",
-            "proposed_family_label": "Cursusmateriaal",
+            "proposed_family_label": "Lesnotities",
         }]
         result = build_taxonomy_proposals(reviews)
         self.assertEqual(1, len(result))
@@ -30,6 +30,15 @@ class ReviewTaxonomyTests(unittest.TestCase):
         self.assertNotIn(code, [item["code"] for item in base["families"]])
         self.assertIn(code, [item["code"] for item in result["families"]])
         self.assertTrue(result["version"].endswith("+db"))
+
+    def test_existing_family_label_is_not_returned_as_new_proposal(self):
+        reviews = [{
+            "id": "00000000-0000-0000-0000-000000000002", "file_id": 8,
+            "review_type": "target_path", "decision": "accepted",
+            "corrected_category_code": "work_career",
+            "proposed_family_label": "  SALARISSTROKEN ",
+        }]
+        self.assertEqual([], build_taxonomy_proposals(reviews))
 
     def test_vve_context_gets_small_explained_shortlist(self):
         result = contextual_options(
