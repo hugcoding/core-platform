@@ -9,7 +9,7 @@ SELECT DISTINCT ON (status.file_id)
        status.source_path AS registered_source_path,
        status.target_path AS current_path,
        status.effective_lifecycle,
-       status.deletion_nomination_id,
+       item.deletion_nomination_id,
        status.current_status,
        status.status_changed_at,
        CASE
@@ -18,6 +18,7 @@ SELECT DISTINCT ON (status.file_id)
            ELSE 'personal_active'
        END AS location_kind
 FROM public.v_personal_migration_item_status status
+JOIN public.personal_migration_plan_items item ON item.id = status.id
 WHERE status.current_status IN ('verified', 'event_correlated')
 ORDER BY status.file_id, status.status_changed_at DESC, status.id DESC;
 
