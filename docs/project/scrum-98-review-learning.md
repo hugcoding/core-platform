@@ -1,5 +1,18 @@
 # SCRUM-98 gecontroleerd leren uit portalbeoordelingen
 
+## Gecontroleerde taxonomievoorstellen
+
+Nieuwe categorie- en familienamen uit geaccepteerde menselijke beoordelingen
+worden als afzonderlijke voorstellen gegroepeerd. In de Workset kan een
+voorstel expliciet worden goedgekeurd of afgewezen. Een goedgekeurd voorstel
+wordt als database-extensie aan de bestaande JSON-taxonomie toegevoegd en is
+daarna beschikbaar in de categorie- en familiekeuzes en in de live
+doelpadpreview.
+
+De besluitvorming is append-only, toont support en bronbeoordelingen en wijzigt
+geen bestaande beoordeling of bestand. De basistaxonomie blijft ongewijzigd;
+intrekken of herzien gebeurt met een nieuw besluit dat naar het vorige verwijst.
+
 ## Contextbewuste traject- en werkgevermappen
 
 Voor sollicitatiedocumenten kan CORE een werkgever- of trajectmap voorstellen op

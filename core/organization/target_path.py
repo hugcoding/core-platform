@@ -93,6 +93,8 @@ def canonical_category(row: dict[str, Any]) -> tuple[str, str, str]:
     accepted = CATEGORY_ALIASES.get(accepted, accepted)
     if accepted in CATEGORY_LABELS and accepted != "needs_review":
         return accepted, "accepted_human_classification", "high"
+    if accepted and str(row.get("accepted_category_label") or "").strip():
+        return accepted, "accepted_human_taxonomy_extension", "high"
     evidence = " ".join(str(row.get(key) or "") for key in
                         ("filename", "path", "accepted_document_family")).casefold()
     normalized_path = str(row.get("path") or "").replace("\\", "/").casefold()
@@ -128,6 +130,9 @@ def document_family(row: dict[str, Any]) -> tuple[str, str]:
     accepted = str(row.get("accepted_document_family") or "").strip().casefold()
     if accepted in FAMILY_LABELS:
         return accepted, FAMILY_LABELS[accepted]
+    accepted_label = str(row.get("accepted_document_family_label") or "").strip()
+    if accepted and accepted_label:
+        return accepted, safe_component(accepted_label)
     evidence = " " + _evidence(row).replace("-", " ") + " "
     filename_stem = PurePosixPath(str(row.get("filename") or "")).stem.casefold()
     filename_tokens = {token for token in re.split(r"[^a-z0-9]+", filename_stem) if token}
@@ -198,6 +203,9 @@ def application_trajectory(row: dict[str, Any]) -> tuple[str, str]:
 
 def propose_target(row: dict[str, Any]) -> dict[str, Any]:
     category, reason, confidence = canonical_category(row)
+    category_label = CATEGORY_LABELS.get(category) or safe_component(
+        str(row.get("accepted_category_label") or ""), fallback="Te beoordelen"
+    )
     family_code, family = document_family(row)
     trajectory_code, trajectory_label = "", ""
     if is_secret_candidate(row):
@@ -226,7 +234,7 @@ def propose_target(row: dict[str, Any]) -> dict[str, Any]:
     if zone == "quarantine":
         parts.append(family)
     elif category != "needs_review":
-        parts.append(CATEGORY_LABELS[category])
+        parts.append(category_label)
         if category == "work_career" and "sollicit" in _evidence(row):
             trajectory_code, trajectory_label, trajectory_parts = application_trajectory_parts(row)
             parts.append("Sollicitaties")
@@ -253,7 +261,7 @@ def propose_target(row: dict[str, Any]) -> dict[str, Any]:
     return {
         **row, "contract_version": CONTRACT_VERSION, "contract_checksum": contract_checksum(),
         "zone_code": zone, "zone_label": ZONE_LABELS[zone],
-        "category_code": category, "category_label": CATEGORY_LABELS[category],
+        "category_code": category, "category_label": category_label,
         "trajectory_code": trajectory_code, "trajectory_label": trajectory_label,
         "document_family_code": family_code, "folder_label": family,
         "suggested_target_path": str(PurePosixPath(*parts)),

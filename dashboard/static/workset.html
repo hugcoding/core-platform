@@ -118,6 +118,21 @@
       </section>
       <section id="duplicateReviewGroups" class="duplicate-groups" aria-live="polite"></section>
     </details>
+    <details id="taxonomyProposalSection" class="taxonomy-proposals panel">
+      <summary><span>Taxonomievoorstellen</span><b id="taxonomyProposalCount">laden…</b></summary>
+      <div class="taxonomy-toolbar">
+        <p>Keur nieuwe categorieën en families gecontroleerd goed. Na akkoord worden ze direct beschikbaar in de keuzelijsten.</p>
+        <label>Weergave
+          <select id="taxonomyProposalState">
+            <option value="pending" selected>Te beoordelen</option>
+            <option value="accepted">Geaccepteerd</option>
+            <option value="rejected">Afgewezen</option>
+            <option value="all">Alles</option>
+          </select>
+        </label>
+      </div>
+      <section id="taxonomyProposalList" class="taxonomy-proposal-list" aria-live="polite"></section>
+    </details>
     <nav class="review-exports" aria-label="Beoordelingen exporteren"><span>Handmatige beoordelingen</span><a
         href="/api/v1/workset/reviews/export?format=csv">CSV export</a><a
         href="/api/v1/workset/reviews/export?format=json">JSON export</a></nav>
@@ -180,6 +195,7 @@
   <script src="/coredashboard/assets/candidate-families.js"></script>
   <script src="/coredashboard/assets/workset-ai.js"></script>
   <script src="/coredashboard/assets/duplicate-review.js"></script>
+  <script src="/coredashboard/assets/taxonomy-proposals.js"></script>
 </body>
 
 </html>
