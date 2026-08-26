@@ -64,6 +64,17 @@ def extend_taxonomy(base: dict[str, Any], extensions: list[dict[str, Any]]) -> d
 def build_taxonomy_proposals(
     reviews: list[dict[str, Any]], decisions: Optional[list[dict[str, Any]]] = None,
 ) -> list[dict[str, Any]]:
+    base_taxonomy = taxonomy()
+    existing_labels = {
+        "category": {
+            normalize_taxonomy_label(item["label"])
+            for item in base_taxonomy["categories"]
+        },
+        "family": {
+            normalize_taxonomy_label(item["label"])
+            for item in base_taxonomy["families"]
+        },
+    }
     latest_by_file: dict[int, dict[str, Any]] = {}
     for row in reviews:
         if row.get("review_type") == "target_path":
@@ -76,6 +87,11 @@ def build_taxonomy_proposals(
         for proposal_type, field in (("category", "proposed_category_label"), ("family", "proposed_family_label")):
             label = str(row.get(field) or "").strip()
             if not label:
+                continue
+            # A human may type the visible label of an existing option in the
+            # free-form proposal field. That is evidence for the existing
+            # taxonomy, not a request to create a duplicate custom option.
+            if normalize_taxonomy_label(label) in existing_labels[proposal_type]:
                 continue
             category = "" if proposal_type == "category" else str(row.get("corrected_category_code") or "")
             if proposal_type == "family" and not category:
