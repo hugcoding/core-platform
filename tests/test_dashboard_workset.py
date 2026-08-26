@@ -197,6 +197,20 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn("workset_status_unchanged", source)
         self.assertIn("archive_status_unchanged", source)
 
+    def test_reviewed_cards_expose_saved_refinement_proposals(self):
+        source = (ROOT / "dashboard" / "app.py").read_text(encoding="utf-8")
+        script = (ROOT / "dashboard/static/workset.js").read_text(encoding="utf-8")
+        for field in (
+            "latest_proposed_category_label", "latest_proposed_family_label",
+            "latest_proposed_target_path", "latest_proposed_filename",
+            "latest_proposed_filename_raw",
+        ):
+            self.assertIn(field, source)
+            self.assertIn(field, script)
+        self.assertIn("Jouw aanvullende voorstellen", script)
+        self.assertIn("event.proposed_family_label", script)
+        self.assertIn("event.proposed_filename", script)
+
     def test_target_path_references_are_cached_while_typing(self):
         connection = mock.MagicMock()
         connection.__enter__.return_value = connection
