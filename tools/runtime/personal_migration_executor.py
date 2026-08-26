@@ -142,15 +142,25 @@ def allowed_zones(item: dict) -> Optional[Tuple[Path, ...]]:
     return None
 
 
+def is_directory_shaped_target(item: dict) -> bool:
+    raw_target = str(item["target_path"])
+    source_suffix = Path(item["source_path"]).suffix.lower()
+    target_suffix = Path(raw_target.rstrip("/\\")).suffix.lower()
+    return raw_target.endswith(("/", "\\")) or bool(
+        source_suffix and target_suffix != source_suffix
+    )
+
+
 def complete_directory_target(item: dict) -> dict:
     """Turn an explicitly directory-shaped review target into a file target.
 
-    Portal reviews may deliberately end in ``/`` when the reviewer specifies
-    only the desired folder.  A filesystem move always needs the full target
-    filename, so preserve the source filename in that case.
+    Portal reviews may specify only the desired folder, either with a trailing
+    slash or as an extensionless path. A filesystem move always needs the full
+    target filename, so preserve the source filename in that case. Document
+    migrations preserve the source extension by contract.
     """
     raw_target = str(item["target_path"])
-    if raw_target.endswith(("/", "\\")):
+    if is_directory_shaped_target(item):
         item["target_path"] = str(Path(raw_target) / Path(item["source_path"]).name)
         item["target_path_completed_from_directory"] = True
     return item
@@ -421,7 +431,7 @@ def rollback(args: argparse.Namespace) -> int:
     require_confirmation(args.confirm, args.plan_id)
     restored = 0
     for item in reversed(plan_items(args.plan_id)):
-        if args.directory_targets_only and not str(item["target_path"]).endswith(("/", "\\")):
+        if args.directory_targets_only and not is_directory_shaped_target(item):
             continue
         if item["current_status"] not in ("verified", "event_correlated", "rollback_pending", "failed"):
             continue
