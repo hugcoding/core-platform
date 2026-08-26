@@ -11,6 +11,12 @@ ROOT = Path(__file__).parents[1]
 
 
 class PersonalMigrationExecutorTests(unittest.TestCase):
+    def test_workset_location_reads_late_added_nomination_from_base_table(self):
+        migration = (ROOT / "database/migrations/20260826_add_workset_physical_location.sql").read_text()
+        self.assertIn("item.deletion_nomination_id", migration)
+        self.assertIn("JOIN public.personal_migration_plan_items item", migration)
+        self.assertNotIn("status.deletion_nomination_id", migration)
+
     def test_nullable_database_values_do_not_become_empty_sql_literals(self):
         runtime = (ROOT / "tools/runtime/personal_migration_executor.py").read_text()
         self.assertIn("def pg_optional", runtime)
