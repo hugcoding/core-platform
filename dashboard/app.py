@@ -23,8 +23,12 @@ from fastapi.staticfiles import StaticFiles
 
 from core.organization.target_path import CONTRACT_VERSION, propose_target
 from core.organization.review_taxonomy import (
+    build_taxonomy_proposals,
     contextual_options,
+    extend_taxonomy,
+    normalize_taxonomy_label,
     taxonomy,
+    taxonomy_extension_code,
     taxonomy_fallback_proposal,
 )
 from core.organization.review_learning import (build_proposed_family_candidates,build_learned_family_preferences,)
@@ -83,6 +87,45 @@ def query_all(conn, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, An
         cur.execute(sql, params)
         columns = [item.name for item in cur.description]
         return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+
+def effective_review_taxonomy(conn: Any) -> dict[str, Any]:
+    # Keep this optional extension independent from the established query
+    # sequence: older deployments and test doubles do not have the view yet.
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT to_regclass('public.v_active_document_taxonomy_extensions') IS NOT NULL"
+            )
+            result = cur.fetchone()
+            available = bool(result and isinstance(result[0], bool) and result[0])
+    except Exception:
+        available = False
+    extensions = query_all(conn, """
+        SELECT proposal_type, proposed_label, taxonomy_code, category_code
+        FROM public.v_active_document_taxonomy_extensions
+        ORDER BY proposal_type, proposed_label, taxonomy_code
+    """) if available else []
+    return extend_taxonomy(taxonomy(), extensions)
+
+
+def taxonomy_proposal_rows(conn: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    reviews = query_all(conn, """
+        SELECT id, file_id, review_type, decision, corrected_category_code,
+               proposed_category_label, proposed_family_label, created_at
+        FROM public.document_review_events
+        WHERE review_type = 'target_path'
+          AND (proposed_category_label IS NOT NULL OR proposed_family_label IS NOT NULL)
+        ORDER BY file_id, created_at, id
+    """)
+    available = query_one(
+        conn, "SELECT to_regclass('public.v_latest_document_taxonomy_proposal_review') IS NOT NULL AS available"
+    )["available"]
+    decisions = query_all(conn, """
+        SELECT proposal_key, decision, reviewer, created_at
+        FROM public.v_latest_document_taxonomy_proposal_review
+    """) if available else []
+    return reviews, decisions
 
 
 def iso(value: Any) -> Any:
@@ -745,6 +788,7 @@ def workset(
     where = " WHERE " + " AND ".join(conditions) if conditions else ""
     try:
         with db_connect() as conn:
+            review_taxonomy = effective_review_taxonomy(conn)
             summary = query_one(conn, """
                 SELECT
                     COUNT(*) AS total,
@@ -882,6 +926,11 @@ def workset(
             status_code=503,
             detail=f"workset unavailable: {type(exc).__name__}: {exc}"
         ) from exc
+    category_labels = {item["code"]: item["label"] for item in review_taxonomy["categories"]}
+    family_labels = {item["code"]: item["label"] for item in review_taxonomy["families"]}
+    for row in rows:
+        row["accepted_category_label"] = category_labels.get(str(row.get("latest_review_category") or ""))
+        row["accepted_document_family_label"] = family_labels.get(str(row.get("latest_review_family") or ""))
     enriched = [enrich_workset_row(row) for row in rows]
 
     visible_ids = {int(item["file_id"]) for item in enriched}
@@ -1042,7 +1091,7 @@ def workset(
         "nomination_summary": nomination_summary,
         "filtered_total": count,
         "families": sorted(families.values(), key=lambda value: (value["label"].casefold(), value["code"])),
-        "review_taxonomy": taxonomy(),
+        "review_taxonomy": review_taxonomy,
         "review_writes_enabled": review_writes_enabled(),
         "privacy_review_enabled": review_writes_enabled() and privacy_storage,
         "lifecycle_review_enabled": review_writes_enabled() and lifecycle_storage,
@@ -1054,6 +1103,103 @@ def workset(
         "safety": {"database_writes": review_writes_enabled(), "file_mutations": False,
                    "model_updates": False},
     }
+
+
+@app.get("/api/v1/workset/taxonomy-proposals")
+def workset_taxonomy_proposals(
+    decision: str = Query("pending", pattern="^(pending|accepted|rejected|all)$"),
+):
+    try:
+        with db_connect() as conn:
+            reviews, decisions = taxonomy_proposal_rows(conn)
+            proposals = build_taxonomy_proposals(reviews, decisions)
+            if decision != "all":
+                proposals = [item for item in proposals if item["decision"] == decision]
+            effective = effective_review_taxonomy(conn)
+        category_labels = {item["code"]: item["label"] for item in effective["categories"]}
+        for proposal in proposals:
+            proposal["category_label"] = category_labels.get(
+                proposal.get("category_code"), proposal.get("category_code")
+            )
+        return {
+            "status": "ok", "proposals": proposals, "count": len(proposals),
+            "writes_enabled": review_writes_enabled(), "file_mutations": False,
+            "existing_reviews_mutated": False,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"taxonomy proposals unavailable: {type(exc).__name__}: {exc}") from exc
+
+
+@app.post("/api/v1/workset/taxonomy-proposals/reviews")
+def review_workset_taxonomy_proposal(payload: dict[str, Any] = Body(...)):
+    if not review_writes_enabled():
+        raise HTTPException(status_code=403, detail="review writes are disabled")
+    proposal_key = str(payload.get("proposal_key") or "").strip()
+    decision = str(payload.get("decision") or "").strip()
+    notes = str(payload.get("review_notes") or "").strip() or None
+    try:
+        idempotency_key = str(uuid.UUID(str(payload.get("idempotency_key") or "")))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="valid idempotency key required") from exc
+    if decision not in {"accepted", "rejected"}:
+        raise HTTPException(status_code=422, detail="invalid taxonomy decision")
+    if notes and len(notes) > 2000:
+        raise HTTPException(status_code=422, detail="review note exceeds 2000 characters")
+    try:
+        with db_connect() as conn:
+            available = query_one(
+                conn, "SELECT to_regclass('public.document_taxonomy_proposal_reviews') IS NOT NULL AS available"
+            )["available"]
+            if not available:
+                raise HTTPException(status_code=503, detail="taxonomy proposal migration is not applied")
+            reviews, decisions = taxonomy_proposal_rows(conn)
+            candidate = next(
+                (item for item in build_taxonomy_proposals(reviews, decisions)
+                 if item["proposal_key"] == proposal_key), None,
+            )
+            if not candidate:
+                raise HTTPException(status_code=409, detail="taxonomy proposal is stale or unavailable")
+            latest = query_all(conn, """
+                SELECT id FROM public.v_latest_document_taxonomy_proposal_review
+                WHERE proposal_key = %s
+            """, (proposal_key,))
+            supersedes = latest[0]["id"] if latest else None
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO public.document_taxonomy_proposal_reviews (
+                        idempotency_key, proposal_key, proposal_type, proposed_label,
+                        normalized_label, taxonomy_code, category_code, decision,
+                        source_review_event_ids, review_notes, reviewer, supersedes_event_id
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::uuid[],%s,%s,%s)
+                    ON CONFLICT (idempotency_key) DO NOTHING
+                    RETURNING id, created_at
+                """, (
+                    idempotency_key, candidate["proposal_key"], candidate["proposal_type"],
+                    candidate["proposed_label"], normalize_taxonomy_label(candidate["proposed_label"]),
+                    taxonomy_extension_code(candidate["proposed_label"]), candidate.get("category_code"),
+                    decision, candidate["source_review_event_ids"], notes,
+                    os.getenv("CORE_REVIEWER", "hugo"), supersedes,
+                ))
+                created = cur.fetchone()
+                if not created:
+                    cur.execute("""
+                        SELECT id, created_at, proposal_key, decision, taxonomy_code
+                        FROM public.document_taxonomy_proposal_reviews
+                        WHERE idempotency_key = %s
+                    """, (idempotency_key,))
+                    created = cur.fetchone()
+                    if str(created[2]) != proposal_key or str(created[3]) != decision:
+                        raise HTTPException(status_code=409, detail="idempotency key belongs to another taxonomy review")
+        return {
+            "status": "stored", "review_id": str(created[0]), "created_at": iso(created[1]),
+            "proposal_key": proposal_key, "decision": decision,
+            "taxonomy_code": candidate["taxonomy_code"], "file_mutations": False,
+            "existing_reviews_mutated": False,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"taxonomy review unavailable: {type(exc).__name__}: {exc}") from exc
 
 
 @app.post("/api/v1/workset/nominations")
@@ -1408,12 +1554,13 @@ def workset_target_path_preview(
     proposed_target_path: Optional[str] = Query(None, alias="target_path", max_length=500),
 ):
     """Recalculate a target proposal from unsaved portal selections."""
-    valid_categories = {item["code"] for item in taxonomy()["categories"]}
-    valid_families = {item["code"] for item in taxonomy()["families"]}
-    if category not in valid_categories or family not in valid_families:
-        raise HTTPException(status_code=422, detail="invalid category or document family")
     try:
         with db_connect() as conn:
+            effective_taxonomy = effective_review_taxonomy(conn)
+            valid_categories = {item["code"] for item in effective_taxonomy["categories"]}
+            valid_families = {item["code"] for item in effective_taxonomy["families"]}
+            if category not in valid_categories or family not in valid_families:
+                raise HTTPException(status_code=422, detail="invalid category or document family")
             matches = query_all(conn, WORKSET_SELECT + " WHERE w.file_id = %s", (file_id,))
             lifecycle = effective_lifecycle_for_file(conn, matches[0]) if matches else None
         if not matches:
@@ -1421,7 +1568,13 @@ def workset_target_path_preview(
         row = matches[0]
         preview = propose_target({
             **row, "accepted_category": category,
+            "accepted_category_label": next(
+                (item["label"] for item in effective_taxonomy["categories"] if item["code"] == category), None
+            ),
             "accepted_document_family": family,
+            "accepted_document_family_label": next(
+                (item["label"] for item in effective_taxonomy["families"] if item["code"] == family), None
+            ),
             "accepted_lifecycle": lifecycle["effective_lifecycle"],
         })
         filename_proposal = None
@@ -1540,8 +1693,11 @@ def prepare_bulk_review(conn, payload: dict[str, Any]) -> list[dict[str, Any]]:
     by_id = {int(row["file_id"]): row for row in rows}
     if set(by_id) != set(file_ids):
         raise HTTPException(status_code=409, detail="one or more files are no longer classifiable workset candidates")
-    valid_categories = {item["code"] for item in taxonomy()["categories"]}
-    valid_families = {item["code"] for item in taxonomy()["families"]}
+    effective_taxonomy = effective_review_taxonomy(conn)
+    valid_categories = {item["code"] for item in effective_taxonomy["categories"]}
+    valid_families = {item["code"] for item in effective_taxonomy["families"]}
+    category_labels = {item["code"]: item["label"] for item in effective_taxonomy["categories"]}
+    family_labels = {item["code"]: item["label"] for item in effective_taxonomy["families"]}
     prepared = []
     for selection in selections:
         file_id = int(selection["file_id"])
@@ -1559,6 +1715,8 @@ def prepare_bulk_review(conn, payload: dict[str, Any]) -> list[dict[str, Any]]:
         original = enrich_workset_row(row)["target_proposal"]
         proposal = propose_target({
             **row, "accepted_category": category, "accepted_document_family": family,
+            "accepted_category_label": category_labels.get(category),
+            "accepted_document_family_label": family_labels.get(family),
             "accepted_lifecycle": row.get("lifecycle"),
         })
         manual_path = str(selection.get("manual_target_path") or "").strip()
@@ -2175,19 +2333,6 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
     proposed_path = None
     if family and not re.fullmatch(r"[a-z0-9_'-]{1,80}", family):
         raise HTTPException(status_code=422, detail="invalid document family code")
-    valid_categories = {item["code"] for item in taxonomy()["categories"]}
-    valid_families = {item["code"] for item in taxonomy()["families"]}
-    if review_type == "target_path":
-        if decision == "accepted":
-            if category not in valid_categories:
-                raise HTTPException(status_code=422, detail="invalid category code")
-            if family not in valid_families:
-                raise HTTPException(status_code=422, detail="invalid document family code")
-        else:
-            if category is not None and category not in valid_categories:
-                raise HTTPException(status_code=422, detail="invalid category code")
-            if family is not None and family not in valid_families:
-                raise HTTPException(status_code=422, detail="invalid document family code")
     if notes and len(notes) > 2000:
         raise HTTPException(status_code=422, detail="review note exceeds 2000 characters")
     if proposed_category and len(proposed_category) > 120:
@@ -2200,6 +2345,25 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
         with db_connect() as conn:
             if not query_one(conn, "SELECT to_regclass('public.document_review_events') IS NOT NULL AS available")["available"]:
                 raise HTTPException(status_code=503, detail="review storage migration is not applied")
+            if review_type == "target_path":
+                base_taxonomy = taxonomy()
+                effective_taxonomy = base_taxonomy
+                valid_categories = {item["code"] for item in base_taxonomy["categories"]}
+                valid_families = {item["code"] for item in base_taxonomy["families"]}
+                if category not in valid_categories or family not in valid_families:
+                    effective_taxonomy = effective_review_taxonomy(conn)
+                    valid_categories = {item["code"] for item in effective_taxonomy["categories"]}
+                    valid_families = {item["code"] for item in effective_taxonomy["families"]}
+                if decision == "accepted":
+                    if category not in valid_categories:
+                        raise HTTPException(status_code=422, detail="invalid category code")
+                    if family not in valid_families:
+                        raise HTTPException(status_code=422, detail="invalid document family code")
+                else:
+                    if category is not None and category not in valid_categories:
+                        raise HTTPException(status_code=422, detail="invalid category code")
+                    if family is not None and family not in valid_families:
+                        raise HTTPException(status_code=422, detail="invalid document family code")
             matches = query_all(
                 conn, WORKSET_SELECT + " WHERE w.file_id = %s", (file_id,),
             )
@@ -2346,7 +2510,13 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                 raise HTTPException(status_code=409, detail="file is no longer an active workset candidate")
             selected_proposal = propose_target({
                 **row, "accepted_category": category,
+                "accepted_category_label": next(
+                    (item["label"] for item in effective_taxonomy["categories"] if item["code"] == category), category,
+                ),
                 "accepted_document_family": family,
+                "accepted_document_family_label": next(
+                    (item["label"] for item in effective_taxonomy["families"] if item["code"] == family), family,
+                ),
                 "accepted_lifecycle": effective_lifecycle["effective_lifecycle"],
             })
             if filename_proposal:

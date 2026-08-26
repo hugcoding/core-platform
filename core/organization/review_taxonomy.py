@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import re
+import unicodedata
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from collections import Counter
 
 
@@ -20,6 +23,81 @@ def category_label(code: str) -> str:
 
 def family_label(code: str) -> str:
     return next((item["label"] for item in taxonomy()["families"] if item["code"] == code), code)
+
+
+def normalize_taxonomy_label(value: str) -> str:
+    return " ".join(str(value or "").strip().casefold().split())
+
+
+def taxonomy_extension_code(label: str) -> str:
+    ascii_label = unicodedata.normalize("NFKD", label).encode("ascii", "ignore").decode()
+    base = re.sub(r"[^a-z0-9]+", "_", ascii_label.casefold()).strip("_")[:64]
+    if not base:
+        base = "voorstel"
+    digest = hashlib.sha256(normalize_taxonomy_label(label).encode()).hexdigest()[:8]
+    return "custom_{}_{}".format(base, digest)
+
+
+def extend_taxonomy(base: dict[str, Any], extensions: list[dict[str, Any]]) -> dict[str, Any]:
+    result = json.loads(json.dumps(base))
+    category_codes = {item["code"] for item in result["categories"]}
+    family_keys = {(item["code"], tuple(item.get("categories", []))) for item in result["families"]}
+    for item in extensions:
+        if item.get("proposal_type") == "category":
+            if item["taxonomy_code"] not in category_codes:
+                result["categories"].append({"code": item["taxonomy_code"], "label": item["proposed_label"]})
+                category_codes.add(item["taxonomy_code"])
+        elif item.get("proposal_type") == "family" and item.get("category_code"):
+            key = (item["taxonomy_code"], (item["category_code"],))
+            if key not in family_keys:
+                result["families"].append({
+                    "code": item["taxonomy_code"], "label": item["proposed_label"],
+                    "categories": [item["category_code"]], "keywords": [],
+                    "source": "accepted_human_taxonomy_extension",
+                })
+                family_keys.add(key)
+    if extensions:
+        result["version"] = "{}+db".format(base["version"])
+    return result
+
+
+def build_taxonomy_proposals(
+    reviews: list[dict[str, Any]], decisions: Optional[list[dict[str, Any]]] = None,
+) -> list[dict[str, Any]]:
+    latest_by_file: dict[int, dict[str, Any]] = {}
+    for row in reviews:
+        if row.get("review_type") == "target_path":
+            latest_by_file[int(row["file_id"])] = row
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    labels: dict[tuple[str, str, str], str] = {}
+    for row in latest_by_file.values():
+        if row.get("decision") != "accepted":
+            continue
+        for proposal_type, field in (("category", "proposed_category_label"), ("family", "proposed_family_label")):
+            label = str(row.get(field) or "").strip()
+            if not label:
+                continue
+            category = "" if proposal_type == "category" else str(row.get("corrected_category_code") or "")
+            if proposal_type == "family" and not category:
+                continue
+            key = (proposal_type, category, normalize_taxonomy_label(label))
+            grouped.setdefault(key, []).append(row)
+            labels.setdefault(key, label)
+    latest_decisions = {str(item["proposal_key"]): item for item in decisions or []}
+    result = []
+    for (proposal_type, category, normalized), evidence in grouped.items():
+        proposal_key = "{}:{}:{}".format(proposal_type, category, normalized)
+        decision = latest_decisions.get(proposal_key, {})
+        result.append({
+            "proposal_key": proposal_key, "proposal_type": proposal_type,
+            "category_code": category or None, "proposed_label": labels[(proposal_type, category, normalized)],
+            "normalized_label": normalized, "taxonomy_code": taxonomy_extension_code(labels[(proposal_type, category, normalized)]),
+            "support": len(evidence), "example_file_ids": sorted(int(item["file_id"]) for item in evidence)[:10],
+            "source_review_event_ids": sorted(str(item["id"]) for item in evidence)[:20],
+            "decision": decision.get("decision") or "pending",
+            "decision_at": decision.get("created_at"), "reviewer": decision.get("reviewer"),
+        })
+    return sorted(result, key=lambda item: (item["decision"] != "pending", -item["support"], item["proposed_label"].casefold()))
 
 
 CATEGORY_SIGNALS = {

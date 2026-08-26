@@ -1,9 +1,36 @@
 import unittest
 
-from core.organization.review_taxonomy import category_options, contextual_options, taxonomy
+from core.organization.review_taxonomy import (
+    build_taxonomy_proposals, category_options, contextual_options, extend_taxonomy,
+    taxonomy, taxonomy_extension_code,
+)
 
 
 class ReviewTaxonomyTests(unittest.TestCase):
+    def test_human_family_proposals_are_grouped_as_pending_evidence(self):
+        reviews = [{
+            "id": "00000000-0000-0000-0000-000000000001", "file_id": 7,
+            "review_type": "target_path", "decision": "accepted",
+            "corrected_category_code": "learning_development",
+            "proposed_family_label": "Cursusmateriaal",
+        }]
+        result = build_taxonomy_proposals(reviews)
+        self.assertEqual(1, len(result))
+        self.assertEqual("family", result[0]["proposal_type"])
+        self.assertEqual("pending", result[0]["decision"])
+        self.assertEqual(1, result[0]["support"])
+
+    def test_accepted_extension_is_added_without_mutating_base_taxonomy(self):
+        base = taxonomy()
+        code = taxonomy_extension_code("Cursusmateriaal")
+        result = extend_taxonomy(base, [{
+            "proposal_type": "family", "taxonomy_code": code,
+            "proposed_label": "Cursusmateriaal", "category_code": "learning_development",
+        }])
+        self.assertNotIn(code, [item["code"] for item in base["families"]])
+        self.assertIn(code, [item["code"] for item in result["families"]])
+        self.assertTrue(result["version"].endswith("+db"))
+
     def test_vve_context_gets_small_explained_shortlist(self):
         result = contextual_options(
             {"filename": "MEMO riolering.pdf", "path": "/Documenten/Administratie/VVE Eksterlaan/MEMO riolering.pdf"},
