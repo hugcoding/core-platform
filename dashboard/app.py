@@ -1826,14 +1826,18 @@ def workset_ai_jobs(status: str = Query("all", pattern="^(all|pending|running|re
                 JOIN public.files f ON f.id=j.file_id
                 LEFT JOIN public.workset_ai_proposals p ON p.id=j.proposal_id
             """ + where + " ORDER BY j.priority DESC,j.requested_at,j.id LIMIT 200", params)
-            ready_ids = [int(row["file_id"]) for row in rows if row["status"] == "ready"]
+            ready_hashes = [row["content_sha256"] for row in rows if row["status"] == "ready"]
             candidates = query_all(
-                conn, WORKSET_SELECT + " WHERE w.file_id=ANY(%s)", (ready_ids,),
-            ) if ready_ids else []
-            candidates_by_id = {int(item["file_id"]): item for item in candidates}
+                conn, WORKSET_SELECT + " WHERE w.content_sha256=ANY(%s)", (ready_hashes,),
+            ) if ready_hashes else []
+            candidates_by_hash = {str(item["content_sha256"]): item for item in candidates}
             for item in rows:
-                candidate = candidates_by_id.get(int(item["file_id"]))
+                item["requested_file_id"] = int(item["file_id"])
+                candidate = candidates_by_hash.get(str(item["content_sha256"]))
+                item["workset_available"] = candidate is not None
                 if item["status"] == "ready" and candidate:
+                    item["file_id"] = int(candidate["file_id"])
+                    item["filename"] = candidate["filename"]
                     target = propose_target({
                         **candidate,
                         "accepted_category": item["category_code"],
@@ -1846,6 +1850,8 @@ def workset_ai_jobs(status: str = Query("all", pattern="^(all|pending|running|re
             ready_review = query_one(conn, """
                 SELECT count(*)::bigint AS count
                 FROM public.workset_ai_jobs j
+                JOIN public.v_active_document_workset w
+                  ON w.content_sha256 = j.content_sha256
                 WHERE j.status='ready' AND NOT EXISTS (
                     SELECT 1 FROM public.document_review_events e
                     WHERE e.ai_proposal_id=j.proposal_id AND e.decision='accepted'
@@ -2049,8 +2055,10 @@ def accept_complete_ai_proposal(job_id: str, payload: dict[str, Any] = Body(...)
                     status_code=409,
                     detail="AI proposal is not ready",
                 )
-            rows = query_all(conn, WORKSET_SELECT + " WHERE w.file_id=%s", (ai["file_id"],))
-            if not rows or rows[0]["content_sha256"] != ai["content_sha256"]:
+            rows = query_all(
+                conn, WORKSET_SELECT + " WHERE w.content_sha256=%s", (ai["content_sha256"],),
+            )
+            if not rows:
                 raise HTTPException(status_code=409, detail="AI proposal is stale")
             row = rows[0]
             target = propose_target({**row, "accepted_category": ai["category_code"],
