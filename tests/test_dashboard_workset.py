@@ -74,7 +74,29 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertTrue(result["is_deletion_quarantined"])
         self.assertIn(r"\data\.core\quarantaine\verwijderreview", result["smb_path"])
         self.assertIsNotNone(result["target_proposal"])
-        self.assertEqual("quarantine", result["target_proposal"]["zone_code"])
+        self.assertEqual("needs_review", result["target_proposal"]["zone_code"])
+        self.assertNotIn("/Persoonlijk/Quarantaine/", result["target_proposal"]["suggested_target_path"])
+
+    def test_quarantine_target_proposal_uses_underlying_active_lifecycle(self):
+        row = {
+            "file_id": 10, "filename": "document.pdf", "extension": "pdf",
+            "path": "/volume1/data/.core/quarantaine/verwijderreview/document.pdf",
+            "workset_status": "active", "physical_location_status": "verified",
+            "physical_location_kind": "deletion_quarantine",
+            "category": "home_living", "document_family": "mortgage_documents",
+        }
+        result = self.dashboard.enrich_workset_row(row)
+        self.assertEqual("quarantine", result["workset_status"])
+        self.assertEqual("active", result["restore_lifecycle"])
+        self.assertEqual("active", result["target_proposal"]["zone_code"])
+        self.assertIn("/Persoonlijk/Actief/Wonen/Hypotheekdocumenten/", result["target_proposal"]["suggested_target_path"])
+
+    def test_quarantine_review_does_not_reuse_old_quarantine_target_as_manual_input(self):
+        script = (ROOT / "dashboard/static/workset.js").read_text(encoding="utf-8")
+        self.assertIn("doc.is_deletion_quarantined", script)
+        self.assertIn("/volume1/data/persoonlijk/quarantaine/", script)
+        source = (ROOT / "dashboard/app.py").read_text(encoding="utf-8")
+        self.assertIn("quarantine is the current physical location, not a classification target", source)
 
     def test_bulk_classification_includes_underlying_review_status_for_quarantine(self):
         source = (ROOT / "dashboard/app.py").read_text(encoding="utf-8")

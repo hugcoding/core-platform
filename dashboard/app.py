@@ -601,22 +601,24 @@ def resolve_effective_lifecycle(
 
 def effective_lifecycle_for_file(conn: Any, row: dict[str, Any]) -> dict[str, Any]:
     """Read latest human lifecycle evidence for endpoints using the compact base query."""
-    if row.get("physical_location_kind") == "deletion_quarantine":
-        return {
-            "calculated_lifecycle": resolve_effective_lifecycle(row.get("workset_status"))["calculated_lifecycle"],
-            "effective_lifecycle": "quarantine", "workset_status": "quarantine",
-            "lifecycle_expired": False,
-        }
     latest = query_all(conn, """
         SELECT corrected_lifecycle, lifecycle_active_until
         FROM public.v_latest_document_review
         WHERE file_id = %s AND review_type = 'lifecycle'
     """, (row["file_id"],))
     review = latest[0] if latest else {}
-    return resolve_effective_lifecycle(
+    resolved = resolve_effective_lifecycle(
         row.get("workset_status"), review.get("corrected_lifecycle"),
         review.get("lifecycle_active_until"),
     )
+    if row.get("physical_location_kind") == "deletion_quarantine":
+        return {
+            **resolved, "effective_lifecycle": "quarantine", "workset_status": "quarantine",
+            "lifecycle_expired": False, "restore_lifecycle": resolved["effective_lifecycle"],
+            "restore_workset_status": resolved["workset_status"],
+        }
+    return {**resolved, "restore_lifecycle": resolved["effective_lifecycle"],
+            "restore_workset_status": resolved["workset_status"]}
 
 def effective_privacy_proposal(row: dict[str, Any]) -> dict[str, Any]:
     """Combine metadata privacy rules with persisted deterministic content evidence."""
@@ -693,10 +695,12 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
         "expired_human_review" if lifecycle["lifecycle_expired"] else
         "human_review" if row.get("latest_corrected_lifecycle") else "core_workset_policy"
     )
+    proposal_lifecycle = lifecycle["effective_lifecycle"]
     if item["is_deletion_quarantined"]:
         item["effective_lifecycle"] = "quarantine"
         item["workset_status"] = "quarantine"
         item["lifecycle_source"] = "verified_deletion_quarantine"
+        item["restore_lifecycle"] = proposal_lifecycle
     item["nominations"] = {
         "archive": ({
             "id": str(row["archive_nomination_id"]),
@@ -743,7 +747,7 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
             **row,
             "accepted_category": item["effective_category"],
             "accepted_document_family": item["effective_document_family"],
-            "accepted_lifecycle": item["effective_lifecycle"],
+            "accepted_lifecycle": proposal_lifecycle,
         })
 
         fallback = taxonomy_fallback_proposal(row, proposal)
@@ -753,7 +757,7 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
                 **row,
                 "accepted_category": fallback["category_code"],
                 "accepted_document_family": fallback["document_family_code"],
-                "accepted_lifecycle": item["effective_lifecycle"],
+                "accepted_lifecycle": proposal_lifecycle,
             })
 
             proposal["proposal_reason_code"] = fallback["reason_code"]
@@ -1601,7 +1605,7 @@ def workset_target_path_preview(
             "accepted_document_family_label": next(
                 (item["label"] for item in effective_taxonomy["families"] if item["code"] == family), None
             ),
-            "accepted_lifecycle": lifecycle["effective_lifecycle"],
+            "accepted_lifecycle": lifecycle.get("restore_lifecycle", lifecycle["effective_lifecycle"]),
         })
         filename_proposal = None
         target_path = preview["suggested_target_path"]
@@ -2399,6 +2403,18 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
             if not matches:
                 raise HTTPException(status_code=409, detail="file is no longer a workset candidate")
             row = matches[0]
+            if (
+                review_type == "target_path"
+                and row.get("physical_location_kind") == "deletion_quarantine"
+                and proposed_path_input
+                and proposed_path_input.casefold().startswith(
+                    "/volume1/data/persoonlijk/quarantaine/"
+                )
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail="quarantine is the current physical location, not a classification target",
+                )
             filename_proposal = None
             if proposed_filename_raw:
                 if review_type != "target_path":
@@ -2531,7 +2547,9 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
             effective_lifecycle = effective_lifecycle_for_file(conn, row)
             proposal_row = {
                 **row,
-                "latest_corrected_lifecycle": effective_lifecycle["effective_lifecycle"],
+                "latest_corrected_lifecycle": effective_lifecycle.get(
+                    "restore_lifecycle", effective_lifecycle["effective_lifecycle"]
+                ),
                 "latest_lifecycle_active_until": None,
             }
             proposal = enrich_workset_row(proposal_row).get("target_proposal")
@@ -2546,7 +2564,9 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                 "accepted_document_family_label": next(
                     (item["label"] for item in effective_taxonomy["families"] if item["code"] == family), family,
                 ),
-                "accepted_lifecycle": effective_lifecycle["effective_lifecycle"],
+                "accepted_lifecycle": effective_lifecycle.get(
+                    "restore_lifecycle", effective_lifecycle["effective_lifecycle"]
+                ),
             })
             if filename_proposal:
                 base_target = proposed_path or selected_proposal["suggested_target_path"]
