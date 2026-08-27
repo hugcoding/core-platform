@@ -106,7 +106,7 @@ function updateBulkControls() {
 }
 function decorateBulkCards() {
   document.querySelectorAll('.document-card').forEach(card => {
-    if (card.querySelector('.bulk-select')) return;
+    if (card.querySelector('.bulk-select') || !card.querySelector('.review-panel')) return;
     const label = document.createElement('label'); label.className = 'bulk-select';
     label.innerHTML = '<input type="checkbox" aria-label="Document selecteren"><span>Selecteer</span>';
     card.prepend(label);
