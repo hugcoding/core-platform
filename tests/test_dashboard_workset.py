@@ -73,6 +73,14 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertEqual("quarantine", result["workset_status"])
         self.assertTrue(result["is_deletion_quarantined"])
         self.assertIn(r"\data\.core\quarantaine\verwijderreview", result["smb_path"])
+        self.assertIsNotNone(result["target_proposal"])
+        self.assertEqual("quarantine", result["target_proposal"]["zone_code"])
+
+    def test_bulk_classification_includes_underlying_review_status_for_quarantine(self):
+        source = (ROOT / "dashboard/app.py").read_text(encoding="utf-8")
+        self.assertIn("w.workset_status IN ('active', 'inactive', 'needs_review')", source)
+        script = (ROOT / "dashboard/static/workset.js").read_text(encoding="utf-8")
+        self.assertIn("!card.querySelector('.review-panel')", script)
 
     def test_workset_page_offers_quarantine_filter(self):
         html = (ROOT / "dashboard/static/workset.html").read_text(encoding="utf-8")

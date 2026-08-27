@@ -51,7 +51,7 @@ EXPORT_DIR = Path(os.getenv("EXPORT_DIR", "/exports/migration-inventory"))
 HOST_PROC = Path(os.getenv("HOST_PROC", "/host/proc"))
 STORAGE_PATH = Path(os.getenv("STORAGE_PATH", "/volume1"))
 STARTED = time.monotonic()
-CLASSIFIABLE_WORKSET_STATUSES = {"active", "inactive"}
+CLASSIFIABLE_WORKSET_STATUSES = {"active", "inactive", "quarantine"}
 TARGET_PATH_REFERENCE_TTL_SECONDS = 30.0
 _target_path_reference_lock = threading.Lock()
 _target_path_reference_cache: dict[str, Any] = {
@@ -601,6 +601,12 @@ def resolve_effective_lifecycle(
 
 def effective_lifecycle_for_file(conn: Any, row: dict[str, Any]) -> dict[str, Any]:
     """Read latest human lifecycle evidence for endpoints using the compact base query."""
+    if row.get("physical_location_kind") == "deletion_quarantine":
+        return {
+            "calculated_lifecycle": resolve_effective_lifecycle(row.get("workset_status"))["calculated_lifecycle"],
+            "effective_lifecycle": "quarantine", "workset_status": "quarantine",
+            "lifecycle_expired": False,
+        }
     latest = query_all(conn, """
         SELECT corrected_lifecycle, lifecycle_active_until
         FROM public.v_latest_document_review
@@ -1706,7 +1712,7 @@ def prepare_bulk_review(conn, payload: dict[str, Any]) -> list[dict[str, Any]]:
     rows = query_all(conn,
         WORKSET_SELECT + """
             WHERE w.file_id = ANY(%s)
-            AND w.workset_status IN ('active', 'inactive')
+            AND w.workset_status IN ('active', 'inactive', 'needs_review')
         """,
         (file_ids,),
     )
@@ -1737,7 +1743,10 @@ def prepare_bulk_review(conn, payload: dict[str, Any]) -> list[dict[str, Any]]:
             **row, "accepted_category": category, "accepted_document_family": family,
             "accepted_category_label": category_labels.get(category),
             "accepted_document_family_label": family_labels.get(family),
-            "accepted_lifecycle": row.get("lifecycle"),
+            "accepted_lifecycle": (
+                "quarantine" if row.get("physical_location_kind") == "deletion_quarantine"
+                else row.get("lifecycle")
+            ),
         })
         manual_path = str(selection.get("manual_target_path") or "").strip()
         normalized = normalize_target_path(
