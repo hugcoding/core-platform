@@ -77,6 +77,11 @@ class WorksetAiQueueTests(unittest.TestCase):
         self.assertIn("latestAiJobsByFile", script)
         self.assertIn("job.awaiting_human_review", script)
         self.assertIn("notification_label:'OCR gereed'", script)
+        self.assertIn("job.workset_available===false", script)
+        self.assertIn("w.content_sha256=ANY(%s)", app)
+        self.assertIn('item["requested_file_id"]', app)
+        self.assertIn('item["workset_available"]', app)
+        self.assertIn("WHERE w.content_sha256=%s", app)
 
     def test_portal_explains_ocr_recommendation_without_automatic_ocr(self):
         worker = (ROOT / "workset_ai_worker.py").read_text(encoding="utf-8")
