@@ -657,7 +657,15 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
     item = {key: iso(value) for key, value in row.items()}
     item["calculated_workset_status"] = row.get("workset_status")
     item["smb_path"] = smb_path(str(row["path"]))
-    item["classification_status"] = "accepted" if row.get("category") else "not_reviewed"
+    item["classification_status"] = (
+        "accepted"
+        if row.get("category") or (
+            row.get("latest_review_decision") == "accepted"
+            and row.get("latest_review_category")
+            and row.get("latest_review_family")
+        )
+        else "not_reviewed"
+    )
     item["migration_status"] = row.get("physical_location_status") or "virtual_only"
     item["physical_location_kind"] = row.get("physical_location_kind") or "registered_path"
     item["is_deletion_quarantined"] = row.get("physical_location_kind") == "deletion_quarantine"
