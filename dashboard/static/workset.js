@@ -163,12 +163,18 @@ function decorateOriginalDocumentLinks() {
   document.querySelectorAll('.document-card').forEach(card => {
     const main = card.querySelector('.document-main'), source = main?.querySelector(':scope>code');
     if (!source || main.querySelector('.original-path-row')) return;
-    const doc = state.documents.find(item => item.path === source.getAttribute('title')); if (!doc) return;
+    const doc = state.documents.find(item => String(item.file_id) === String(source.dataset.sourceFile)); if (!doc) return;
     const row = document.createElement('div'); row.className = 'original-path-row';
-    const visiblePath = doc.smb_path || doc.path, openUrl = documentOpenUrl(doc, visiblePath);
-    row.innerHTML = `<a href="${wsEsc(openUrl)}"${openUrl.startsWith('/api/') ? ' target="_blank" rel="noopener noreferrer"' : ''} title="Origineel document openen">${wsEsc(visiblePath)}</a><button type="button" class="copy-original-path" data-path="${wsEsc(visiblePath)}" aria-label="Pad kopiëren" title="Pad kopiëren">⧉</button>`;
+    const visiblePath = doc.smb_path || doc.path, openUrl = documentOpenUrl(doc, visiblePath), folderUrl = folderOpenUrl(visiblePath);
+    row.innerHTML = `<a class="original-document-link" href="${wsEsc(openUrl)}"${openUrl.startsWith('/api/') ? ' target="_blank" rel="noopener noreferrer"' : ''} title="Document openen">${wsEsc(visiblePath)}</a><a class="open-original-folder" href="${wsEsc(folderUrl)}" aria-label="Map openen" title="Map openen">&#128193;</a><button type="button" class="copy-original-path" data-path="${wsEsc(visiblePath)}" aria-label="Pad kopiëren" title="Pad kopiëren">⧉</button>`;
     source.replaceWith(row); card.querySelector(':scope>.copy-path')?.remove();
   });
+}
+function folderOpenUrl(smbPath) {
+  const value = String(smbPath || '');
+  if (!value.startsWith('\\\\')) return '#';
+  const parts = value.slice(2).split('\\'); parts.pop();
+  return 'file://' + parts.map(encodeURIComponent).join('/');
 }
 function documentOpenUrl(doc, smbPath) {
   const extension = String(doc.extension || '').toLowerCase();
@@ -270,7 +276,7 @@ function documentCard(doc) {
   <span>File ID: ${wsEsc(doc.file_id)}</span>
   <span>${classification}</span>
   <span>Confidence: ${wsEsc(doc.activity_confidence)}</span>
-</div><code title="${wsEsc(pathSource)}">${wsEsc(doc.path)}</code><small class="path-source">${wsEsc(pathSource)}</small>${target}${latest}${privacyCard(doc)}${review}</div><button class="copy-path" type="button" data-path="${wsEsc(path)}">Kopieer SMB-pad</button></article>`
+</div><code data-source-file="${wsEsc(doc.file_id)}" title="${wsEsc(pathSource)}">${wsEsc(doc.path)}</code><small class="path-source">${wsEsc(pathSource)}</small>${target}${latest}${privacyCard(doc)}${review}</div><button class="copy-path" type="button" data-path="${wsEsc(path)}">Kopieer SMB-pad</button></article>`
 }
 function lifecycleCard(doc) { if (!state.lifecycleReviewEnabled) return ''; const labels = { active: 'Actief', archive: 'Inactief / archief', needs_review: 'Later beoordelen' }, current = doc.effective_lifecycle || doc.calculated_lifecycle, reviewed = doc.latest_lifecycle_review_id ? `<small>Menselijk vastgesteld: ${wsEsc(labels[current] || current)}${doc.lifecycle_active_until ? ` tot ${wsDt(doc.lifecycle_active_until)}` : ''}</small>` : '<small>Alleen een auditbaar oordeel; er wordt niets verplaatst.</small>'; return `<div class="lifecycle-review" data-file-id="${doc.file_id}"><div class="lifecycle-summary"><b>Lifecycle</b><span>CORE: ${wsEsc(labels[doc.calculated_lifecycle] || doc.calculated_lifecycle)}</span>${reviewed}</div><div class="lifecycle-controls"><button type="button" data-lifecycle="active" class="${current === 'active' ? 'selected' : ''}">Actief maken</button><label>voor <input class="active-months" type="number" min="1" max="120" placeholder="∞"> maanden</label><button type="button" data-lifecycle="archive" class="${current === 'archive' ? 'selected' : ''}">Inactief / archief</button><button type="button" data-lifecycle="needs_review" class="${current === 'needs_review' ? 'selected' : ''}">Later</button></div><span class="lifecycle-message" aria-live="polite"></span></div>` }
 function decorateLifecycleCards() { if (!state.lifecycleReviewEnabled) return; document.querySelectorAll('.document-card').forEach((card, index) => { const doc = state.documents[index]; if (!doc || card.querySelector('.lifecycle-review')) return; const holder = document.createElement('div'); holder.innerHTML = lifecycleCard(doc); const lifecycle = holder.firstElementChild, privacy = card.querySelector('.privacy-review'); lifecycle.querySelectorAll('[data-lifecycle]').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); submitLifecycle(lifecycle, button.dataset.lifecycle) })); if (privacy) privacy.before(lifecycle); else card.querySelector('.document-main').append(lifecycle) }) }
