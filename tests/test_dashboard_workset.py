@@ -98,6 +98,24 @@ class DashboardWorksetTests(unittest.TestCase):
         source = (ROOT / "dashboard/app.py").read_text(encoding="utf-8")
         self.assertIn("quarantine is the current physical location, not a classification target", source)
 
+    def test_accepted_human_review_counts_as_content_classification(self):
+        row = {
+            "file_id": 11, "filename": "vacature.docx", "extension": "docx",
+            "path": "/volume1/data/import/vacature.docx", "workset_status": "active",
+            "latest_review_decision": "accepted",
+            "latest_review_category": "work_career",
+            "latest_review_family": "vacancies",
+        }
+        result = self.dashboard.enrich_workset_row(row)
+        self.assertEqual("accepted", result["classification_status"])
+        self.assertEqual("work_career", result["effective_category"])
+        self.assertEqual("vacancies", result["effective_document_family"])
+
+    def test_portal_distinguishes_registered_and_verified_paths(self):
+        script = (ROOT / "dashboard/static/workset.js").read_text(encoding="utf-8")
+        self.assertIn("Geverifieerd huidig pad", script)
+        self.assertIn("Geregistreerd pad; geen geverifieerde migratielocatie", script)
+
     def test_bulk_classification_includes_underlying_review_status_for_quarantine(self):
         source = (ROOT / "dashboard/app.py").read_text(encoding="utf-8")
         self.assertIn("w.workset_status IN ('active', 'inactive', 'needs_review')", source)
