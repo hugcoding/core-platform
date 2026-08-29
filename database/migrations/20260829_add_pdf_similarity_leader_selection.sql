@@ -18,6 +18,16 @@ ALTER TABLE public.pdf_content_similarity_review_events
     OR action <> 'selected_leader'
   );
 
+-- PostgreSQL expands SELECT * when a view is created. Recreate the latest-event
+-- view so the newly added leader columns become visible to downstream views.
+CREATE OR REPLACE VIEW public.v_latest_pdf_content_similarity_review AS
+SELECT DISTINCT ON (group_key)
+  id, idempotency_key, group_key, action, file_ids, evidence_ids,
+  review_notes, reviewer, supersedes_event_id, created_at,
+  selected_file_id, redundant_file_ids
+FROM public.pdf_content_similarity_review_events
+ORDER BY group_key, created_at DESC, id DESC;
+
 CREATE OR REPLACE VIEW public.v_pdf_content_similarity_groups AS
 WITH current_evidence AS (
     SELECT e.*, f.filename, f.path, f.size_bytes, f.deleted_at
