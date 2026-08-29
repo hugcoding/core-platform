@@ -1,7 +1,10 @@
+import json
+import subprocess
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from tools.runtime.pdf_content_similarity import insert_sql
+from tools.runtime.pdf_content_similarity import analyze_with_available_runtime, insert_sql
 
 
 ROOT = Path(__file__).parents[1]
@@ -47,6 +50,18 @@ class PdfContentSimilarityIntegrationTests(unittest.TestCase):
         runtime = (ROOT / "tools/runtime/pdf_content_similarity.py").read_text("utf-8")
         self.assertIn("NOT EXISTS", runtime)
         self.assertIn("e.analyzer_version", runtime)
+
+    def test_missing_host_pypdf_uses_dashboard_container(self):
+        expected = {"content_sha256": "a" * 64}
+        missing = ModuleNotFoundError("No module named 'pypdf'", name="pypdf")
+        completed = subprocess.CompletedProcess([], 0, stdout=json.dumps(expected), stderr="")
+        with mock.patch("tools.runtime.pdf_content_similarity.analyze_pdf", side_effect=missing), mock.patch(
+            "tools.runtime.pdf_content_similarity.subprocess.run", return_value=completed,
+        ) as runner:
+            result = analyze_with_available_runtime(Path("/volume1/data/example.pdf"))
+        self.assertEqual(expected, result)
+        command = runner.call_args.args[0]
+        self.assertEqual(["docker", "compose", "exec", "-T", "dashboard"], command[:5])
 
 
 if __name__ == "__main__":

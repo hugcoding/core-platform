@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import logging
+import sys
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -167,3 +169,17 @@ def analyze_pdf_group(
         "file_mutations": False,
         "database_writes": False,
     }
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Emit one bounded JSON evidence record for use by isolated runtimes."""
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if len(arguments) != 1:
+        print("usage: python -m core.integrity.pdf_content_similarity PATH", file=sys.stderr)
+        return 2
+    print(json.dumps(analyze_pdf(Path(arguments[0])), ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

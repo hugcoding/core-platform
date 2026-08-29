@@ -62,6 +62,19 @@ def insert_sql(file_id: int, evidence: dict) -> str:
     ON CONFLICT (file_id, content_sha256, analyzer_version) DO NOTHING;"""
 
 
+def analyze_with_available_runtime(path: Path) -> dict:
+    """Prefer local Python; fall back to the read-only dashboard container."""
+    try:
+        return analyze_pdf(path)
+    except ModuleNotFoundError as exc:
+        if exc.name != "pypdf":
+            raise
+        command = ["docker", "compose", "exec", "-T", "dashboard", "python", "-m",
+                   "core.integrity.pdf_content_similarity", str(path)]
+        completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=True)
+        return json.loads(completed.stdout)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--file-id", type=int, action="append", default=[])
@@ -74,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     for row in candidates(args.file_id, args.limit):
         path = Path(row["path"])
         try:
-            evidence = analyze_pdf(path)
+            evidence = analyze_with_available_runtime(path)
             analyzed += 1
             if evidence["content_sha256"] != row["content_sha256"]:
                 skipped.append({"file_id": int(row["file_id"]), "reason": "content_hash_changed"}); continue
