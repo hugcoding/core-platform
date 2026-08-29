@@ -2,7 +2,7 @@ import unittest
 from unittest import mock
 from pathlib import Path
 
-from core.execution.queue import select_batch
+from core.execution.queue import partition_candidates, select_batch
 from tools.runtime import controlled_execution_queue as runtime
 
 ROOT = Path(__file__).parents[1]
@@ -24,6 +24,15 @@ class ControlledExecutionQueueTests(unittest.TestCase):
                 self.candidate(7, "quarantine_exact_duplicate", "/volume1/data/.core/quarantaine/duplicaten/7.pdf")]
         selected = select_batch(rows)
         self.assertEqual(1, len(selected)); self.assertEqual("quarantine_exact_duplicate", selected[0]["action_type"])
+
+    def test_path_outside_data_is_blocked_without_disabling_valid_queue(self):
+        valid = self.candidate(7, "migrate_active", "/volume1/data/Persoonlijk/Actief/7.pdf")
+        outside = {**self.candidate(8, "quarantine_exact_duplicate", "/volume1/data/.core/quarantaine/8.pdf"),
+                   "source_path": "/volume1/backup/8.pdf"}
+        ready, blocked = partition_candidates([outside, valid])
+        self.assertEqual([7], [item["file_id"] for item in ready])
+        self.assertEqual(8, blocked[0]["file_id"])
+        self.assertIn("outside /volume1/data", blocked[0]["blocked_reason"])
 
     def test_database_contract_is_append_only_and_bounded(self):
         sql = (ROOT / "database/migrations/20260829_add_controlled_execution_queue.sql").read_text("utf-8")
