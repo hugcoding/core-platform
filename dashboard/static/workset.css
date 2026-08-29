@@ -49,3 +49,4 @@
 .taxonomy-message, .taxonomy-empty { color: var(--muted); margin: .65rem 0 0; }
 .status-pill.quarantine{background:#402742;color:#f0b9ef;border-color:#754b78}
 .document-card:has(.status-pill.quarantine) .lifecycle-review{display:none}
+.pdf-similarity-document-link{grid-column:2;color:var(--cyan);text-decoration:underline;overflow-wrap:anywhere}.pdf-similarity-show-card{grid-column:2;justify-self:start;padding:5px 8px;border:1px solid #31556b;border-radius:7px;background:#10202b;color:#9fd7f0;cursor:pointer}.duplicate-member>em{grid-column:2}.duplicate-member>label{display:flex;gap:9px;align-items:start}

@@ -31,6 +31,11 @@ class PdfContentSimilarityIntegrationTests(unittest.TestCase):
         self.assertIn("Bewust apart bewaren", script)
         self.assertIn("Leidende kopie bevestigen", script)
         self.assertIn('type=\"radio\"', script)
+        self.assertIn('pdf-similarity-document-link', script)
+        self.assertIn('data-show-file', script)
+        self.assertIn("ws('worksetSearch').value=show.dataset.showFile", script)
+        self.assertIn('class=\"pdf-similarity-document-link\"', script)
+        self.assertIn('/content\" target=\"_blank\"', script)
         self.assertIn('@app.get("/api/v1/workset/pdf-similarity")', app)
         self.assertIn('"cleanup_handoff": False', app)
 

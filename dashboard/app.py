@@ -819,9 +819,9 @@ def workset(
         conditions.append("w.extension = %s")
         params.append(extension)
     if search.strip():
-        conditions.append("(w.filename ILIKE %s OR w.path ILIKE %s OR location.current_path ILIKE %s)")
+        conditions.append("(w.file_id::text = %s OR w.filename ILIKE %s OR w.path ILIKE %s OR location.current_path ILIKE %s)")
         pattern = f"%{search.strip()}%"
-        params.extend([pattern, pattern, pattern])
+        params.extend([search.strip(), pattern, pattern, pattern])
     where = " WHERE " + " AND ".join(conditions) if conditions else ""
     try:
         with db_connect() as conn:
