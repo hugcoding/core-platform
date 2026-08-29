@@ -64,5 +64,12 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         self.assertIn("from tools.runtime.personal_migration_executor", app)
         self.assertIn("COPY tools ./tools", dockerfile)
 
+    def test_parameterless_dashboard_queries_do_not_bind_percent_patterns(self):
+        app = (ROOT / "dashboard/app.py").read_text("utf-8")
+        helper_region = app[app.index("def query_one"):app.index("def effective_review_taxonomy")]
+        self.assertEqual(2, helper_region.count("if params:"))
+        self.assertEqual(2, helper_region.count("cur.execute(sql, params)"))
+        self.assertEqual(2, helper_region.count("cur.execute(sql)"))
+
 
 if __name__ == "__main__": unittest.main()

@@ -80,14 +80,20 @@ def redis_connect():
 
 def query_one(conn, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any]:
     with conn.cursor() as cur:
-        cur.execute(sql, params)
+        if params:
+            cur.execute(sql, params)
+        else:
+            cur.execute(sql)
         columns = [item.name for item in cur.description]
         return dict(zip(columns, cur.fetchone()))
 
 
 def query_all(conn, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
     with conn.cursor() as cur:
-        cur.execute(sql, params)
+        if params:
+            cur.execute(sql, params)
+        else:
+            cur.execute(sql)
         columns = [item.name for item in cur.description]
         return [dict(zip(columns, row)) for row in cur.fetchall()]
 
