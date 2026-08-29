@@ -1352,6 +1352,7 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
     exact = query_all(conn, """
       SELECT h.redundant_file_id AS file_id, 'quarantine_exact_duplicate'::text AS action_type,
              h.redundant_path AS source_path, h.quarantine_path AS target_path,
+             h.selected_file_id AS leader_file_id, h.selected_path AS leader_path,
              h.content_sha256, f.size_bytes, r.created_at AS reviewed_at,
              jsonb_build_object('review_event_id',h.review_event_id,'content_group_id',h.content_group_id,
                                 'leader_file_id',h.selected_file_id,'kind','exact_duplicate') AS evidence_snapshot
@@ -1364,6 +1365,7 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
     similar = query_all(conn, """
       SELECT h.redundant_file_id AS file_id, 'quarantine_content_similar'::text AS action_type,
              h.redundant_path AS source_path, h.quarantine_path AS target_path,
+             h.selected_file_id AS leader_file_id, h.leader_path,
              h.redundant_content_sha256 AS content_sha256, h.redundant_size_bytes AS size_bytes,
              r.created_at AS reviewed_at,
              jsonb_build_object('review_event_id',h.review_event_id,'group_key',h.group_key,
