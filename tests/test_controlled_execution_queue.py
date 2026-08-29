@@ -81,6 +81,12 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         self.assertIn('id="executionQueueApprove"', html)
         self.assertIn("/api/v1/workset/execution-batches", script)
         self.assertIn("data-file-id", script)
+        self.assertIn("Behouden golden record", script)
+        self.assertIn("Behouden leidende kopie", script)
+        self.assertIn("Naar quarantaine", script)
+        app = (ROOT / "dashboard/app.py").read_text("utf-8")
+        self.assertIn("h.selected_file_id AS leader_file_id", app)
+        self.assertIn("h.selected_path AS leader_path", app)
 
     def test_dashboard_image_contains_imported_queue_runtime(self):
         dockerfile = (ROOT / "Dockerfile.dashboard").read_text("utf-8")
