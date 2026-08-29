@@ -1,0 +1,10 @@
+BEGIN;
+DROP VIEW IF EXISTS public.v_pdf_content_similarity_groups;
+DROP VIEW IF EXISTS public.v_latest_pdf_content_similarity_review;
+DROP VIEW IF EXISTS public.v_latest_pdf_content_similarity_evidence;
+DROP TRIGGER IF EXISTS pdf_content_similarity_reviews_immutable ON public.pdf_content_similarity_review_events;
+DROP TRIGGER IF EXISTS pdf_content_similarity_evidence_immutable ON public.pdf_content_similarity_evidence;
+DROP TABLE IF EXISTS public.pdf_content_similarity_review_events;
+DROP TABLE IF EXISTS public.pdf_content_similarity_evidence;
+DROP FUNCTION IF EXISTS public.reject_pdf_similarity_mutation();
+COMMIT;
