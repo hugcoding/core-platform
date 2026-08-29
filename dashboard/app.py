@@ -45,7 +45,7 @@ from core.semantic.workset_llm import (
     SCHEMA_VERSION as LLM_SCHEMA_VERSION, abstention as llm_abstention,
     build_prompt as build_llm_prompt, extract_bounded_context, validate_proposal as validate_llm_proposal,
 )
-from core.execution.queue import order_candidates
+from core.execution.queue import partition_candidates
 from tools.runtime.personal_migration_executor import CANDIDATES as PERSONAL_MIGRATION_CANDIDATES
 
 
@@ -1345,7 +1345,7 @@ def create_document_lifecycle_nomination(payload: dict[str, Any] = Body(...)):
         raise HTTPException(status_code=503, detail=f"nomination unavailable: {type(exc).__name__}") from exc
 
 
-def controlled_execution_candidates(conn) -> list[dict[str, Any]]:
+def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Compose DB-revalidated candidates; the worker repeats physical checks."""
     if not query_one(conn, "SELECT to_regclass('public.controlled_execution_batches') IS NOT NULL AS available")["available"]:
         raise HTTPException(status_code=503, detail="controlled execution queue migration is not applied")
@@ -1392,21 +1392,22 @@ def controlled_execution_candidates(conn) -> list[dict[str, Any]]:
       WHERE current_status NOT IN ('blocked','failed','rolled_back')
     """)
     queued_ids = {int(row["file_id"]) for row in queued}
-    return order_candidates(item for item in [*exact, *similar, *mapped_personal]
-                            if int(item["file_id"]) not in queued_ids)
+    return partition_candidates(item for item in [*exact, *similar, *mapped_personal]
+                                if int(item["file_id"]) not in queued_ids)
 
 
 @app.get("/api/v1/workset/execution-queue")
 def controlled_execution_queue_preview():
     try:
         with db_connect() as conn:
-            candidates = controlled_execution_candidates(conn)
+            candidates, blocked = controlled_execution_candidates(conn)
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"execution queue unavailable: {type(exc).__name__}: {exc}") from exc
     return {"ready_count": len(candidates), "display_limit": 25,
             "candidates": [{key: iso(value) for key, value in item.items()} for item in candidates[:25]],
+            "blocked_count": len(blocked),
             "writes_enabled": review_writes_enabled(), "file_mutations": False}
 
 
@@ -1428,7 +1429,8 @@ def create_controlled_execution_batch(payload: dict[str, Any] = Body(...)):
             """)["active"]
             if active:
                 raise HTTPException(status_code=409, detail="another execution batch is still active")
-            available = {int(item["file_id"]): item for item in controlled_execution_candidates(conn)}
+            candidates, _blocked = controlled_execution_candidates(conn)
+            available = {int(item["file_id"]): item for item in candidates}
             if any(file_id not in available for file_id in selected_ids):
                 raise HTTPException(status_code=409, detail="one or more queue candidates changed")
             selected = [available[file_id] for file_id in selected_ids]

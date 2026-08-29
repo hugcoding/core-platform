@@ -41,6 +41,18 @@ def order_candidates(candidates: Iterable[Mapping[str, Any]]) -> list[dict[str, 
     ))
 
 
+def partition_candidates(candidates: Iterable[Mapping[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Keep invalid evidence visible without allowing it to disable the queue."""
+    valid: list[dict[str, Any]] = []
+    blocked: list[dict[str, Any]] = []
+    for candidate in candidates:
+        try:
+            valid.append(normalize_candidate(candidate))
+        except (KeyError, TypeError, ValueError) as exc:
+            blocked.append({**dict(candidate), "blocked_reason": str(exc)})
+    return order_candidates(valid), blocked
+
+
 def select_batch(candidates: Iterable[Mapping[str, Any]], limit: int = MAX_BATCH_SIZE) -> list[dict[str, Any]]:
     if not 1 <= limit <= MAX_BATCH_SIZE:
         raise ValueError("batch limit must be between 1 and 25")
