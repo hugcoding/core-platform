@@ -20,7 +20,13 @@ ALTER TABLE public.pdf_content_similarity_review_events
 
 -- PostgreSQL expands SELECT * when a view is created. Recreate the latest-event
 -- view so the newly added leader columns become visible to downstream views.
-CREATE OR REPLACE VIEW public.v_latest_pdf_content_similarity_review AS
+-- Drop only derived views (never evidence or review rows) to avoid depending on
+-- the column order of whichever earlier migration version created the view.
+DROP VIEW IF EXISTS public.v_pdf_content_similarity_quarantine_handoff;
+DROP VIEW IF EXISTS public.v_pdf_content_similarity_groups;
+DROP VIEW IF EXISTS public.v_latest_pdf_content_similarity_review;
+
+CREATE VIEW public.v_latest_pdf_content_similarity_review AS
 SELECT DISTINCT ON (group_key)
   id, idempotency_key, group_key, action, file_ids, evidence_ids,
   review_notes, reviewer, supersedes_event_id, created_at,
@@ -28,7 +34,7 @@ SELECT DISTINCT ON (group_key)
 FROM public.pdf_content_similarity_review_events
 ORDER BY group_key, created_at DESC, id DESC;
 
-CREATE OR REPLACE VIEW public.v_pdf_content_similarity_groups AS
+CREATE VIEW public.v_pdf_content_similarity_groups AS
 WITH current_evidence AS (
     SELECT e.*, f.filename, f.path, f.size_bytes, f.deleted_at
     FROM public.v_latest_pdf_content_similarity_evidence e
@@ -52,7 +58,7 @@ FROM grouped g
 LEFT JOIN public.v_latest_pdf_content_similarity_review r
   ON r.group_key = g.group_key AND r.file_ids = g.file_ids AND r.evidence_ids = g.evidence_ids;
 
-CREATE OR REPLACE VIEW public.v_pdf_content_similarity_quarantine_handoff AS
+CREATE VIEW public.v_pdf_content_similarity_quarantine_handoff AS
 SELECT r.id AS review_event_id, r.group_key, r.selected_file_id,
        duplicate.file_id AS redundant_file_id,
        leader.path AS leader_path, redundant.path AS redundant_path,

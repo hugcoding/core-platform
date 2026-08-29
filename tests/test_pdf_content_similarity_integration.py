@@ -39,10 +39,12 @@ class PdfContentSimilarityIntegrationTests(unittest.TestCase):
         self.assertIn("selected_file_id", sql)
         self.assertIn("redundant_file_ids", sql)
         self.assertIn("v_pdf_content_similarity_quarantine_handoff", sql)
-        self.assertIn("CREATE OR REPLACE VIEW public.v_latest_pdf_content_similarity_review", sql)
+        self.assertIn("DROP VIEW IF EXISTS public.v_pdf_content_similarity_groups", sql)
+        self.assertIn("DROP VIEW IF EXISTS public.v_latest_pdf_content_similarity_review", sql)
+        self.assertIn("CREATE VIEW public.v_latest_pdf_content_similarity_review", sql)
         self.assertLess(
-            sql.index("CREATE OR REPLACE VIEW public.v_latest_pdf_content_similarity_review"),
-            sql.index("CREATE OR REPLACE VIEW public.v_pdf_content_similarity_groups"),
+            sql.index("CREATE VIEW public.v_latest_pdf_content_similarity_review"),
+            sql.index("CREATE VIEW public.v_pdf_content_similarity_groups"),
         )
         self.assertIn("eligible_for_cleanup", sql)
         self.assertIn("separately approved cleanup plan", sql)
