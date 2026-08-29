@@ -28,10 +28,21 @@ class PdfContentSimilarityIntegrationTests(unittest.TestCase):
         script = (ROOT / "dashboard/static/pdf-similarity-review.js").read_text("utf-8")
         app = (ROOT / "dashboard/app.py").read_text("utf-8")
         self.assertIn('id="pdfSimilaritySection"', html)
-        self.assertIn("Zelfde documentversie", script)
         self.assertIn("Bewust apart bewaren", script)
+        self.assertIn("Leidende kopie bevestigen", script)
+        self.assertIn('type=\"radio\"', script)
         self.assertIn('@app.get("/api/v1/workset/pdf-similarity")', app)
         self.assertIn('"cleanup_handoff": False', app)
+
+    def test_leader_selection_is_append_only_and_only_creates_handoff(self):
+        sql = (ROOT / "database/migrations/20260829_add_pdf_similarity_leader_selection.sql").read_text("utf-8")
+        self.assertIn("selected_file_id", sql)
+        self.assertIn("redundant_file_ids", sql)
+        self.assertIn("v_pdf_content_similarity_quarantine_handoff", sql)
+        self.assertIn("eligible_for_cleanup", sql)
+        self.assertIn("separately approved cleanup plan", sql)
+        self.assertNotIn("UPDATE public.files", sql)
+        self.assertNotIn("DELETE FROM public.files", sql)
 
     def test_evidence_insert_stores_hashes_but_no_raw_text(self):
         evidence = {

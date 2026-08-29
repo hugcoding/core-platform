@@ -22,13 +22,21 @@ CREATE TABLE IF NOT EXISTS public.pdf_content_similarity_review_events (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     idempotency_key uuid NOT NULL UNIQUE,
     group_key text NOT NULL CHECK (group_key ~ '^[0-9a-f]{64}$'),
-    action text NOT NULL CHECK (action IN ('same_document_version', 'keep_separate', 'withdrawn')),
+    action text NOT NULL CHECK (action IN ('selected_leader', 'same_document_version', 'keep_separate', 'withdrawn')),
     file_ids bigint[] NOT NULL CHECK (cardinality(file_ids) > 1),
     evidence_ids uuid[] NOT NULL CHECK (cardinality(evidence_ids) = cardinality(file_ids)),
+    selected_file_id bigint REFERENCES public.files(id) ON DELETE RESTRICT,
+    redundant_file_ids bigint[] NOT NULL DEFAULT '{}'::bigint[],
     review_notes text NOT NULL DEFAULT '' CHECK (length(review_notes) <= 2000),
     reviewer text NOT NULL,
     supersedes_event_id uuid REFERENCES public.pdf_content_similarity_review_events(id) ON DELETE RESTRICT,
-    created_at timestamptz NOT NULL DEFAULT now()
+    created_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT pdf_similarity_leader_check CHECK (
+      (action = 'selected_leader' AND selected_file_id = ANY(file_ids)
+        AND cardinality(redundant_file_ids) = cardinality(file_ids) - 1
+        AND selected_file_id <> ALL(redundant_file_ids))
+      OR (action <> 'selected_leader')
+    )
 );
 
 CREATE OR REPLACE FUNCTION public.reject_pdf_similarity_mutation()
@@ -78,6 +86,7 @@ WITH current_evidence AS (
        AND count(DISTINCT page_text_sha256) = 1
 )
 SELECT g.*, r.id AS latest_review_id, r.action AS latest_review_action,
+       r.selected_file_id, r.redundant_file_ids,
        r.review_notes, r.reviewer, r.created_at AS reviewed_at
 FROM grouped g
 LEFT JOIN public.v_latest_pdf_content_similarity_review r

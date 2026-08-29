@@ -1548,7 +1548,7 @@ def pdf_content_similarity_reviews(
     """Expose advisory PDF similarity groups; never expose a cleanup handoff."""
     state_filter = {
         "pending": " AND (g.latest_review_id IS NULL OR g.latest_review_action = 'withdrawn')",
-        "reviewed": " AND g.latest_review_action IN ('same_document_version', 'keep_separate')",
+        "reviewed": " AND g.latest_review_action IN ('selected_leader', 'same_document_version', 'keep_separate')",
         "all": "",
     }[review_state]
     try:
@@ -1558,7 +1558,7 @@ def pdf_content_similarity_reviews(
             summary = query_one(conn, """
                 SELECT count(*) AS total,
                        count(*) FILTER (WHERE latest_review_id IS NULL OR latest_review_action = 'withdrawn') AS pending,
-                       count(*) FILTER (WHERE latest_review_action IN ('same_document_version', 'keep_separate')) AS reviewed
+                       count(*) FILTER (WHERE latest_review_action IN ('selected_leader', 'same_document_version', 'keep_separate')) AS reviewed
                 FROM public.v_pdf_content_similarity_groups
             """)
             groups = query_all(conn, """
@@ -1604,7 +1604,11 @@ def create_pdf_content_similarity_review(payload: dict[str, Any] = Body(...)):
         raise HTTPException(status_code=422, detail="valid group and idempotency key required") from exc
     action = str(payload.get("action") or "")
     notes = str(payload.get("review_notes") or "").strip()
-    if action not in {"same_document_version", "keep_separate", "withdrawn"} or len(notes) > 2000:
+    try:
+        selected_file_id = int(payload["selected_file_id"]) if action == "selected_leader" else None
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="select one leading file") from exc
+    if action not in {"selected_leader", "same_document_version", "keep_separate", "withdrawn"} or len(notes) > 2000:
         raise HTTPException(status_code=422, detail="invalid PDF similarity review")
     try:
         with db_connect() as conn:
@@ -1612,6 +1616,10 @@ def create_pdf_content_similarity_review(payload: dict[str, Any] = Body(...)):
             if not rows:
                 raise HTTPException(status_code=409, detail="similarity evidence changed")
             group = rows[0]
+            file_ids = [int(value) for value in group["file_ids"]]
+            if action == "selected_leader" and selected_file_id not in file_ids:
+                raise HTTPException(status_code=409, detail="selected file is no longer in this similarity group")
+            redundant_file_ids = sorted(value for value in file_ids if value != selected_file_id) if selected_file_id else []
             previous = query_all(conn, "SELECT * FROM public.v_latest_pdf_content_similarity_review WHERE group_key = %s", (group_key,))
             previous = previous[0] if previous else None
             if action == "withdrawn" and not previous:
@@ -1620,11 +1628,12 @@ def create_pdf_content_similarity_review(payload: dict[str, Any] = Body(...)):
                 cur.execute("""
                     INSERT INTO public.pdf_content_similarity_review_events (
                       idempotency_key, group_key, action, file_ids, evidence_ids,
-                      review_notes, reviewer, supersedes_event_id
-                    ) VALUES (%s,%s,%s,%s::bigint[],%s::uuid[],%s,%s,%s)
+                      selected_file_id, redundant_file_ids, review_notes, reviewer, supersedes_event_id
+                    ) VALUES (%s,%s,%s,%s::bigint[],%s::uuid[],%s,%s::bigint[],%s,%s,%s)
                     ON CONFLICT (idempotency_key) DO NOTHING RETURNING id, created_at
                 """, (str(payload["idempotency_key"]), group_key, action, group["file_ids"],
-                      group["evidence_ids"], notes, os.getenv("CORE_REVIEWER", "hugo"),
+                      group["evidence_ids"], selected_file_id, redundant_file_ids,
+                      notes, os.getenv("CORE_REVIEWER", "hugo"),
                       previous["id"] if previous else None))
                 created = cur.fetchone()
                 if not created:
@@ -1632,7 +1641,8 @@ def create_pdf_content_similarity_review(payload: dict[str, Any] = Body(...)):
                                 (str(payload["idempotency_key"]),))
                     created = cur.fetchone()
         return {"status": "stored", "review_event_id": str(created[0]), "created_at": iso(created[1]),
-                "automatic_deletions": False, "cleanup_handoff": False, "file_mutations": False}
+                "selected_file_id": selected_file_id, "redundant_file_ids": redundant_file_ids,
+                "automatic_deletions": False, "cleanup_handoff": action == "selected_leader", "file_mutations": False}
     except HTTPException:
         raise
     except Exception as exc:
