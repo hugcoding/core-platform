@@ -64,10 +64,16 @@ def main(argv: list[str] | None = None) -> int:
     exact, exact_blocked = exact_items(100)
     similar, similar_blocked = similar_items()
     migration, migration_blocked = migration_items(100, args.minimum_free_bytes)
-    selected = select_batch([*exact, *similar, *migration], args.limit)
-    print(json.dumps({"status": "dry_run", "ready_total_discovered": len({int(i["file_id"]) for i in [*exact,*similar,*migration]}),
+    discovered = [*exact, *similar, *migration]
+    unique_ready = {int(item["file_id"]) for item in discovered}
+    selected = select_batch(discovered, args.limit)
+    print(json.dumps({"status": "dry_run",
+      "ready_unique_files": len(unique_ready),
+      "ready_total_discovered": len(unique_ready),
+      "ready_candidate_rows": len(discovered),
+      "overlapping_candidate_rows": len(discovered) - len(unique_ready),
       "selected": selected, "selected_count": len(selected),
-      "ready_by_type": {kind: sum(i["action_type"] == kind for i in [*exact,*similar,*migration]) for kind in (
+      "ready_by_type": {kind: sum(i["action_type"] == kind for i in discovered) for kind in (
         "quarantine_exact_duplicate","quarantine_content_similar","quarantine_deletion_review","migrate_active","migrate_inactive")},
       "blocked_discovered": len(exact_blocked)+len(similar_blocked)+len(migration_blocked),
       "file_mutations": False, "database_writes": False}, ensure_ascii=False))

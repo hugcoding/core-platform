@@ -40,6 +40,8 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         self.assertIn("migration_candidates", runtime)
         self.assertIn("migration_candidates(limit, minimum_free_bytes)", runtime)
         self.assertIn('"--minimum-free-bytes"', runtime)
+        self.assertIn('"ready_unique_files"', runtime)
+        self.assertIn('"overlapping_candidate_rows"', runtime)
         self.assertIn('"file_mutations": False', runtime)
         self.assertIn("execution-queue", cli)
 
