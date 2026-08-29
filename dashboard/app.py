@@ -1539,6 +1539,106 @@ def create_exact_duplicate_review(payload: dict[str, Any] = Body(...)):
         raise HTTPException(status_code=503, detail=f"duplicate review unavailable: {type(exc).__name__}: {exc}") from exc
 
 
+@app.get("/api/v1/workset/pdf-similarity")
+def pdf_content_similarity_reviews(
+    review_state: str = Query("pending", pattern="^(pending|reviewed|all)$"),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    """Expose advisory PDF similarity groups; never expose a cleanup handoff."""
+    state_filter = {
+        "pending": " AND (g.latest_review_id IS NULL OR g.latest_review_action = 'withdrawn')",
+        "reviewed": " AND g.latest_review_action IN ('same_document_version', 'keep_separate')",
+        "all": "",
+    }[review_state]
+    try:
+        with db_connect() as conn:
+            if not query_one(conn, "SELECT to_regclass('public.v_pdf_content_similarity_groups') IS NOT NULL AS available")["available"]:
+                raise HTTPException(status_code=503, detail="PDF similarity migration is not applied")
+            summary = query_one(conn, """
+                SELECT count(*) AS total,
+                       count(*) FILTER (WHERE latest_review_id IS NULL OR latest_review_action = 'withdrawn') AS pending,
+                       count(*) FILTER (WHERE latest_review_action IN ('same_document_version', 'keep_separate')) AS reviewed
+                FROM public.v_pdf_content_similarity_groups
+            """)
+            groups = query_all(conn, """
+                SELECT * FROM public.v_pdf_content_similarity_groups g WHERE true
+            """ + state_filter + """
+                ORDER BY reviewed_at DESC NULLS LAST, available_documents DESC, group_key
+                LIMIT %s OFFSET %s
+            """, (limit, offset))
+            file_ids = sorted({int(file_id) for group in groups for file_id in group["file_ids"]})
+            members = query_all(conn, """
+                SELECT f.id AS file_id, f.filename, f.path, f.size_bytes, f.content_sha256,
+                       e.metadata_snapshot, e.pdf_document_id
+                FROM public.files f
+                JOIN public.v_latest_pdf_content_similarity_evidence e ON e.file_id = f.id
+                WHERE f.id = ANY(%s::bigint[])
+                ORDER BY lower(f.path), f.id
+            """, (file_ids,)) if file_ids else []
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"PDF similarity unavailable: {type(exc).__name__}: {exc}") from exc
+    members_by_id = {int(row["file_id"]): {key: iso(value) for key, value in row.items()} for row in members}
+    output = []
+    for group in groups:
+        item = {key: iso(value) for key, value in group.items()}
+        item["members"] = [members_by_id[int(file_id)] for file_id in group["file_ids"]]
+        output.append(item)
+    return {"review_state": review_state, "summary": {k: int(v) for k, v in summary.items()},
+            "groups": output, "review_writes_enabled": review_writes_enabled(),
+            "safety": {"automatic_deletions": False, "cleanup_handoff": False, "file_mutations": False}}
+
+
+@app.post("/api/v1/workset/pdf-similarity-reviews")
+def create_pdf_content_similarity_review(payload: dict[str, Any] = Body(...)):
+    if not review_writes_enabled():
+        raise HTTPException(status_code=403, detail="interactive reviews are disabled")
+    try:
+        group_key = str(payload["group_key"])
+        uuid.UUID(str(payload["idempotency_key"]))
+        if len(group_key) != 64:
+            raise ValueError
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=422, detail="valid group and idempotency key required") from exc
+    action = str(payload.get("action") or "")
+    notes = str(payload.get("review_notes") or "").strip()
+    if action not in {"same_document_version", "keep_separate", "withdrawn"} or len(notes) > 2000:
+        raise HTTPException(status_code=422, detail="invalid PDF similarity review")
+    try:
+        with db_connect() as conn:
+            rows = query_all(conn, "SELECT * FROM public.v_pdf_content_similarity_groups WHERE group_key = %s", (group_key,))
+            if not rows:
+                raise HTTPException(status_code=409, detail="similarity evidence changed")
+            group = rows[0]
+            previous = query_all(conn, "SELECT * FROM public.v_latest_pdf_content_similarity_review WHERE group_key = %s", (group_key,))
+            previous = previous[0] if previous else None
+            if action == "withdrawn" and not previous:
+                raise HTTPException(status_code=409, detail="there is no review to withdraw")
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO public.pdf_content_similarity_review_events (
+                      idempotency_key, group_key, action, file_ids, evidence_ids,
+                      review_notes, reviewer, supersedes_event_id
+                    ) VALUES (%s,%s,%s,%s::bigint[],%s::uuid[],%s,%s,%s)
+                    ON CONFLICT (idempotency_key) DO NOTHING RETURNING id, created_at
+                """, (str(payload["idempotency_key"]), group_key, action, group["file_ids"],
+                      group["evidence_ids"], notes, os.getenv("CORE_REVIEWER", "hugo"),
+                      previous["id"] if previous else None))
+                created = cur.fetchone()
+                if not created:
+                    cur.execute("SELECT id, created_at FROM public.pdf_content_similarity_review_events WHERE idempotency_key = %s",
+                                (str(payload["idempotency_key"]),))
+                    created = cur.fetchone()
+        return {"status": "stored", "review_event_id": str(created[0]), "created_at": iso(created[1]),
+                "automatic_deletions": False, "cleanup_handoff": False, "file_mutations": False}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"PDF similarity review unavailable: {type(exc).__name__}: {exc}") from exc
+
+
 @app.get("/api/v1/workset/{file_id}/reviews")
 def workset_review_history(file_id: int):
     try:

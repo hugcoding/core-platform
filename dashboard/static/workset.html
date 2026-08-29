@@ -119,6 +119,17 @@
       </section>
       <section id="duplicateReviewGroups" class="duplicate-groups" aria-live="polite"></section>
     </details>
+    <details id="pdfSimilaritySection" class="duplicate-review panel">
+      <summary><span>Inhoudelijk vrijwel identieke pdf's</span><b id="pdfSimilarityPendingCount">laden…</b></summary>
+      <div class="duplicate-toolbar">
+        <p>De tekst en paginaopbouw zijn gelijk, maar de bestanden verschillen byte-voor-byte. CORE verwijdert niets automatisch.</p>
+        <label>Weergave
+          <select id="pdfSimilarityState"><option value="pending">Te beoordelen</option><option value="reviewed">Beoordeeld</option><option value="all">Alles</option></select>
+        </label>
+      </div>
+      <div id="pdfSimilaritySummary" class="duplicate-summary"></div>
+      <section id="pdfSimilarityGroups" class="duplicate-groups" aria-live="polite"></section>
+    </details>
     <details id="taxonomyProposalSection" class="taxonomy-proposals panel">
       <summary><span>Taxonomievoorstellen</span><b id="taxonomyProposalCount">laden…</b></summary>
       <div class="taxonomy-toolbar">
@@ -196,6 +207,7 @@
   <script src="/coredashboard/assets/candidate-families.js"></script>
   <script src="/coredashboard/assets/workset-ai.js"></script>
   <script src="/coredashboard/assets/duplicate-review.js"></script>
+  <script src="/coredashboard/assets/pdf-similarity-review.js"></script>
   <script src="/coredashboard/assets/taxonomy-proposals.js"></script>
 </body>
 

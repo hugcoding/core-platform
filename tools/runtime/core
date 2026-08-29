@@ -80,6 +80,7 @@ show_help() {
     printf '%s\n' "  core semantic personal-classification --manifest REVIEWED_JSON --model MODEL --endpoint LOCAL_URL"
     printf '%s\n' "  core semantic classification-acc proposals REPORT_JSON --dry-run|--apply"
     printf '%s\n' "  core semantic classification-acc review REVIEW_JSON --dry-run|--apply"
+    printf '%s\n' "  core semantic pdf-content-similarity [--file-id ID] [--limit N] --dry-run|--apply"
     printf '%s\n' "  core runtime status"
     printf '%s\n' "  core runtime health"
     printf '%s\n' "  core runtime logs"
@@ -362,6 +363,10 @@ case "$command_domain" in
             classification-acc)
                 shift 2
                 sh ./tools/runtime/semantic-classification-acc "$@"
+                ;;
+            pdf-content-similarity)
+                shift 2
+                sh ./tools/runtime/pdf-content-similarity "$@"
                 ;;
             *)
                 echo "Unknown semantic command."
