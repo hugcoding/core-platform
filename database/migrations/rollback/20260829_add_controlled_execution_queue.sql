@@ -1,0 +1,11 @@
+BEGIN;
+DROP VIEW IF EXISTS public.v_controlled_execution_batch_progress;
+DROP VIEW IF EXISTS public.v_controlled_execution_item_status;
+DROP TRIGGER IF EXISTS controlled_execution_events_immutable ON public.controlled_execution_events;
+DROP TRIGGER IF EXISTS controlled_execution_items_immutable ON public.controlled_execution_batch_items;
+DROP TRIGGER IF EXISTS controlled_execution_batches_immutable ON public.controlled_execution_batches;
+DROP TABLE IF EXISTS public.controlled_execution_events;
+DROP TABLE IF EXISTS public.controlled_execution_batch_items;
+DROP TABLE IF EXISTS public.controlled_execution_batches;
+DROP FUNCTION IF EXISTS public.reject_controlled_execution_mutation();
+COMMIT;

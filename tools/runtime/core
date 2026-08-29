@@ -58,6 +58,7 @@ show_help() {
     printf '%s\n' "  core workset migrate execute PLAN_ID --confirm PLAN_ID"
     printf '%s\n' "  core workset migrate reconcile PLAN_ID"
     printf '%s\n' "  core workset migrate rollback PLAN_ID --confirm PLAN_ID"
+    printf '%s\n' "  core workset execution-queue --limit 25 --dry-run"
     printf '%s\n' "  core policy seed --environment development|acceptance|production [--source POLICY_JSON] --dry-run|--apply"
     printf '%s\n' "  core metadata date-backfill [--source PATH] [--limit N] --dry-run|--apply"
     printf '%s\n' "  core metadata temporal-impact [--as-of TIMESTAMP] [--limit N] --dry-run"
@@ -262,6 +263,10 @@ case "$command_domain" in
             migrate)
                 shift 2
                 sh ./tools/runtime/personal-migration-executor "$@"
+                ;;
+            execution-queue)
+                shift 2
+                sh ./tools/runtime/controlled-execution-queue "$@"
                 ;;
             *)
                 echo "Unknown workset command."
