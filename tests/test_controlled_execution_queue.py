@@ -58,5 +58,11 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         self.assertIn("/api/v1/workset/execution-batches", script)
         self.assertIn("data-file-id", script)
 
+    def test_dashboard_image_contains_imported_queue_runtime(self):
+        dockerfile = (ROOT / "Dockerfile.dashboard").read_text("utf-8")
+        app = (ROOT / "dashboard/app.py").read_text("utf-8")
+        self.assertIn("from tools.runtime.personal_migration_executor", app)
+        self.assertIn("COPY tools ./tools", dockerfile)
+
 
 if __name__ == "__main__": unittest.main()

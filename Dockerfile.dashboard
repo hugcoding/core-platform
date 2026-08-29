@@ -5,6 +5,7 @@ RUN pip install --no-cache-dir fastapi==0.116.1 uvicorn==0.35.0 psycopg2-binary=
 
 COPY dashboard ./dashboard
 COPY core ./core
+COPY tools ./tools
 COPY project/prompts ./project/prompts
 
 # The portal performs explicitly requested local extraction from a read-only NAS
