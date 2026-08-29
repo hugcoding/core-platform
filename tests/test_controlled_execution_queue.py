@@ -1,6 +1,7 @@
 import unittest
 from unittest import mock
 from pathlib import Path
+from datetime import datetime, timezone
 
 from core.execution.queue import partition_candidates, select_batch
 from tools.runtime import controlled_execution_queue as runtime
@@ -33,6 +34,20 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         self.assertEqual([7], [item["file_id"] for item in ready])
         self.assertEqual(8, blocked[0]["file_id"])
         self.assertIn("outside /volume1/data", blocked[0]["blocked_reason"])
+
+    def test_mixed_review_time_types_sort_deterministically(self):
+        rows = [
+            {**self.candidate(1, "migrate_active", "/volume1/data/Persoonlijk/Actief/1.pdf"),
+             "reviewed_at": datetime(2026, 8, 29, 12, 0, tzinfo=timezone.utc)},
+            {**self.candidate(2, "migrate_active", "/volume1/data/Persoonlijk/Actief/2.pdf"),
+             "reviewed_at": "2026-08-28T12:00:00+00:00"},
+            {**self.candidate(3, "migrate_active", "/volume1/data/Persoonlijk/Actief/3.pdf"),
+             "reviewed_at": None},
+        ]
+        ready, blocked = partition_candidates(rows)
+        self.assertEqual([], blocked)
+        self.assertEqual([3, 2, 1], [item["file_id"] for item in ready])
+        self.assertTrue(all(isinstance(item["reviewed_at"], str) for item in ready))
 
     def test_database_contract_is_append_only_and_bounded(self):
         sql = (ROOT / "database/migrations/20260829_add_controlled_execution_queue.sql").read_text("utf-8")

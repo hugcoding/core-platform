@@ -22,6 +22,12 @@ def normalize_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:
     item["priority"] = ACTION_PRIORITY[action]
     item["source_path"] = str(item["source_path"])
     item["target_path"] = str(item["target_path"])
+    reviewed_at = item.get("reviewed_at")
+    item["reviewed_at"] = (
+        reviewed_at.isoformat() if hasattr(reviewed_at, "isoformat")
+        else "" if reviewed_at is None
+        else str(reviewed_at)
+    )
     if not item["source_path"].startswith("/volume1/data/") or not item["target_path"].startswith("/volume1/data/"):
         raise ValueError("execution path outside /volume1/data")
     if item["source_path"] == item["target_path"]:
@@ -37,7 +43,7 @@ def order_candidates(candidates: Iterable[Mapping[str, Any]]) -> list[dict[str, 
         if current is None or (item["priority"], item["target_path"]) < (current["priority"], current["target_path"]):
             unique[item["file_id"]] = item
     return sorted(unique.values(), key=lambda item: (
-        item["priority"], item.get("reviewed_at") or "", item["target_path"].casefold(), item["file_id"]
+        item["priority"], item["reviewed_at"], item["target_path"].casefold(), item["file_id"]
     ))
 
 
