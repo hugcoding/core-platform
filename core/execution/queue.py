@@ -29,9 +29,7 @@ def normalize_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:
     return item
 
 
-def select_batch(candidates: Iterable[Mapping[str, Any]], limit: int = MAX_BATCH_SIZE) -> list[dict[str, Any]]:
-    if not 1 <= limit <= MAX_BATCH_SIZE:
-        raise ValueError("batch limit must be between 1 and 25")
+def order_candidates(candidates: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     unique: dict[int, dict[str, Any]] = {}
     for candidate in candidates:
         item = normalize_candidate(candidate)
@@ -40,4 +38,10 @@ def select_batch(candidates: Iterable[Mapping[str, Any]], limit: int = MAX_BATCH
             unique[item["file_id"]] = item
     return sorted(unique.values(), key=lambda item: (
         item["priority"], item.get("reviewed_at") or "", item["target_path"].casefold(), item["file_id"]
-    ))[:limit]
+    ))
+
+
+def select_batch(candidates: Iterable[Mapping[str, Any]], limit: int = MAX_BATCH_SIZE) -> list[dict[str, Any]]:
+    if not 1 <= limit <= MAX_BATCH_SIZE:
+        raise ValueError("batch limit must be between 1 and 25")
+    return order_candidates(candidates)[:limit]

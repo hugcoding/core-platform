@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import mimetypes
@@ -44,6 +45,8 @@ from core.semantic.workset_llm import (
     SCHEMA_VERSION as LLM_SCHEMA_VERSION, abstention as llm_abstention,
     build_prompt as build_llm_prompt, extract_bounded_context, validate_proposal as validate_llm_proposal,
 )
+from core.execution.queue import order_candidates
+from tools.runtime.personal_migration_executor import CANDIDATES as PERSONAL_MIGRATION_CANDIDATES
 
 
 APP_DIR = Path(__file__).parent
@@ -1334,6 +1337,132 @@ def create_document_lifecycle_nomination(payload: dict[str, Any] = Body(...)):
         raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"nomination unavailable: {type(exc).__name__}") from exc
+
+
+def controlled_execution_candidates(conn) -> list[dict[str, Any]]:
+    """Compose DB-revalidated candidates; the worker repeats physical checks."""
+    if not query_one(conn, "SELECT to_regclass('public.controlled_execution_batches') IS NOT NULL AS available")["available"]:
+        raise HTTPException(status_code=503, detail="controlled execution queue migration is not applied")
+    exact = query_all(conn, """
+      SELECT h.redundant_file_id AS file_id, 'quarantine_exact_duplicate'::text AS action_type,
+             h.redundant_path AS source_path, h.quarantine_path AS target_path,
+             h.content_sha256, f.size_bytes, r.created_at AS reviewed_at,
+             jsonb_build_object('review_event_id',h.review_event_id,'content_group_id',h.content_group_id,
+                                'leader_file_id',h.selected_file_id,'kind','exact_duplicate') AS evidence_snapshot
+      FROM public.v_exact_duplicate_review_handoff h
+      JOIN public.exact_duplicate_review_events r ON r.id=h.review_event_id
+      JOIN public.files f ON f.id=h.redundant_file_id
+      WHERE h.eligible_for_executor
+    """)
+    similar_available = query_one(conn, "SELECT to_regclass('public.v_pdf_content_similarity_quarantine_handoff') IS NOT NULL AS available")["available"]
+    similar = query_all(conn, """
+      SELECT h.redundant_file_id AS file_id, 'quarantine_content_similar'::text AS action_type,
+             h.redundant_path AS source_path, h.quarantine_path AS target_path,
+             h.redundant_content_sha256 AS content_sha256, h.redundant_size_bytes AS size_bytes,
+             r.created_at AS reviewed_at,
+             jsonb_build_object('review_event_id',h.review_event_id,'group_key',h.group_key,
+                                'leader_file_id',h.selected_file_id,'kind','content_similar_pdf') AS evidence_snapshot
+      FROM public.v_pdf_content_similarity_quarantine_handoff h
+      JOIN public.pdf_content_similarity_review_events r ON r.id=h.review_event_id
+      WHERE h.eligible_for_cleanup
+    """) if similar_available else []
+    personal = query_all(conn, "SELECT * FROM (" + PERSONAL_MIGRATION_CANDIDATES + ") candidate LIMIT 500")
+    mapped_personal = []
+    for row in personal:
+        lifecycle = row["effective_lifecycle"]
+        action = ("quarantine_deletion_review" if lifecycle == "deletion_review" else
+                  "migrate_active" if lifecycle == "active" else "migrate_inactive")
+        mapped_personal.append({
+            **row, "action_type": action, "reviewed_at": row.get("target_path_reviewed_at"),
+            "evidence_snapshot": {
+                "content_group_id": str(row["content_group_id"]),
+                "lifecycle_basis": row.get("lifecycle_basis"), "target_path_basis": row.get("target_path_basis"),
+                "deletion_nomination_id": str(row["deletion_nomination_id"]) if row.get("deletion_nomination_id") else None,
+                "kind": "personal_migration",
+            },
+        })
+    queued = query_all(conn, """
+      SELECT DISTINCT file_id FROM public.v_controlled_execution_item_status
+      WHERE current_status NOT IN ('blocked','failed','rolled_back')
+    """)
+    queued_ids = {int(row["file_id"]) for row in queued}
+    return order_candidates(item for item in [*exact, *similar, *mapped_personal]
+                            if int(item["file_id"]) not in queued_ids)
+
+
+@app.get("/api/v1/workset/execution-queue")
+def controlled_execution_queue_preview():
+    try:
+        with db_connect() as conn:
+            candidates = controlled_execution_candidates(conn)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"execution queue unavailable: {type(exc).__name__}: {exc}") from exc
+    return {"ready_count": len(candidates), "display_limit": 25,
+            "candidates": [{key: iso(value) for key, value in item.items()} for item in candidates[:25]],
+            "writes_enabled": review_writes_enabled(), "file_mutations": False}
+
+
+@app.post("/api/v1/workset/execution-batches")
+def create_controlled_execution_batch(payload: dict[str, Any] = Body(...)):
+    if not review_writes_enabled():
+        raise HTTPException(status_code=403, detail="interactive execution approval is disabled")
+    try:
+        selected_ids = sorted({int(value) for value in payload["file_ids"]})
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="valid file_ids required") from exc
+    if not 1 <= len(selected_ids) <= 25:
+        raise HTTPException(status_code=422, detail="select between 1 and 25 files")
+    try:
+        with db_connect() as conn:
+            active = query_one(conn, """
+              SELECT EXISTS(SELECT 1 FROM public.v_controlled_execution_batch_progress
+                WHERE batch_status IN ('approved','queued','started','paused')) AS active
+            """)["active"]
+            if active:
+                raise HTTPException(status_code=409, detail="another execution batch is still active")
+            available = {int(item["file_id"]): item for item in controlled_execution_candidates(conn)}
+            if any(file_id not in available for file_id in selected_ids):
+                raise HTTPException(status_code=409, detail="one or more queue candidates changed")
+            selected = [available[file_id] for file_id in selected_ids]
+            canonical = json.dumps(selected, sort_keys=True, default=str, separators=(",", ":"))
+            batch_key = hashlib.sha256(canonical.encode()).hexdigest()
+            batch_id = uuid.uuid4()
+            actor = os.getenv("CORE_REVIEWER", "hugo")
+            with conn.cursor() as cur:
+                cur.execute("""INSERT INTO public.controlled_execution_batches
+                  (id,contract_version,batch_key,item_count,created_by)
+                  VALUES (%s,'controlled-execution-queue-v1',%s,%s,%s) RETURNING created_at""",
+                  (str(batch_id), batch_key, len(selected), actor))
+                created_at = cur.fetchone()[0]
+                for sequence, item in enumerate(selected, 1):
+                    item_id = uuid.uuid4()
+                    cur.execute("""INSERT INTO public.controlled_execution_batch_items
+                      (id,batch_id,sequence_no,action_type,priority,file_id,source_path,target_path,
+                       content_sha256,size_bytes,evidence_snapshot)
+                      VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)""", (
+                        str(item_id), str(batch_id), sequence, item["action_type"], item["priority"],
+                        item["file_id"], item["source_path"], item["target_path"], item["content_sha256"],
+                        item["size_bytes"], json.dumps(item["evidence_snapshot"], default=str),
+                    ))
+                    for event_type in ("planned", "queued"):
+                        cur.execute("""INSERT INTO public.controlled_execution_events
+                          (batch_id,item_id,event_type,idempotency_key,actor,details)
+                          VALUES (%s,%s,%s,%s,%s,'{}'::jsonb)""",
+                          (str(batch_id), str(item_id), event_type, f"{batch_id}:{item_id}:{event_type}", actor))
+                cur.execute("""INSERT INTO public.controlled_execution_events
+                  (batch_id,item_id,event_type,idempotency_key,actor,details)
+                  VALUES (%s,NULL,'approved',%s,%s,%s::jsonb)""", (
+                    str(batch_id), f"{batch_id}:approved", actor,
+                    json.dumps({"selected_file_ids": selected_ids, "explicit_human_approval": True}),
+                ))
+        return {"status": "queued", "batch_id": str(batch_id), "item_count": len(selected),
+                "created_at": iso(created_at), "file_mutations": False}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"execution batch unavailable: {type(exc).__name__}: {exc}") from exc
 
 
 @app.get("/api/v1/workset/duplicates")

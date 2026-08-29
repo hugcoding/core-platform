@@ -44,8 +44,8 @@ def similar_items() -> tuple[list[dict], list[dict]]:
     return eligible, blocked
 
 
-def migration_items(limit: int) -> tuple[list[dict], list[dict]]:
-    eligible, blocked = migration_candidates(limit)
+def migration_items(limit: int, minimum_free_bytes: int = 0) -> tuple[list[dict], list[dict]]:
+    eligible, blocked = migration_candidates(limit, minimum_free_bytes)
     output = []
     for item in eligible:
         lifecycle = item["effective_lifecycle"]
@@ -58,11 +58,12 @@ def migration_items(limit: int) -> tuple[list[dict], list[dict]]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=25)
+    parser.add_argument("--minimum-free-bytes", type=int, default=0)
     parser.add_argument("--dry-run", action="store_true", required=True)
     args = parser.parse_args(argv)
     exact, exact_blocked = exact_items(100)
     similar, similar_blocked = similar_items()
-    migration, migration_blocked = migration_items(100)
+    migration, migration_blocked = migration_items(100, args.minimum_free_bytes)
     selected = select_batch([*exact, *similar, *migration], args.limit)
     print(json.dumps({"status": "dry_run", "ready_total_discovered": len({int(i["file_id"]) for i in [*exact,*similar,*migration]}),
       "selected": selected, "selected_count": len(selected),

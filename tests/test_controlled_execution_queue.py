@@ -1,7 +1,9 @@
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from core.execution.queue import select_batch
+from tools.runtime import controlled_execution_queue as runtime
 
 ROOT = Path(__file__).parents[1]
 
@@ -36,8 +38,23 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         self.assertIn("exact_candidates", runtime)
         self.assertIn("similar_items", runtime)
         self.assertIn("migration_candidates", runtime)
+        self.assertIn("migration_candidates(limit, minimum_free_bytes)", runtime)
+        self.assertIn('"--minimum-free-bytes"', runtime)
         self.assertIn('"file_mutations": False', runtime)
         self.assertIn("execution-queue", cli)
+
+    def test_migration_inventory_passes_free_space_safety_limit(self):
+        with mock.patch.object(runtime, "migration_candidates", return_value=([], [])) as inspect:
+            runtime.migration_items(100, 12345)
+        inspect.assert_called_once_with(100, 12345)
+
+    def test_workset_exposes_bounded_human_approval_ui(self):
+        html = (ROOT / "dashboard/static/workset.html").read_text("utf-8")
+        script = (ROOT / "dashboard/static/execution-queue.js").read_text("utf-8")
+        self.assertIn('id="executionQueueSection"', html)
+        self.assertIn('id="executionQueueApprove"', html)
+        self.assertIn("/api/v1/workset/execution-batches", script)
+        self.assertIn("data-file-id", script)
 
 
 if __name__ == "__main__": unittest.main()
