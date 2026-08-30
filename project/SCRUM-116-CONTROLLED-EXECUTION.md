@@ -44,4 +44,4 @@ docker compose -f tests/integration/controlled-execution/compose.yml \
 docker compose -f tests/integration/controlled-execution/compose.yml down -v
 ```
 
-Dezelfde roundtrip draait als verplichte GitHub Actions-workflow bij relevante PR's.
+Deze roundtrip moet vóór iedere merge van executorwijzigingen worden uitgevoerd.
