@@ -91,8 +91,12 @@ SELECT g.*, r.id AS latest_review_id, r.action AS latest_review_action,
 FROM grouped g
 LEFT JOIN public.v_latest_pdf_content_similarity_review r
   ON r.group_key = g.group_key
- AND r.file_ids = g.file_ids
- AND r.evidence_ids = g.evidence_ids;
+ -- A reviewed redundant copy may already have left the active set because a
+ -- controlled follow-up completed. That must not turn the remaining subset into a
+ -- new review group.  A genuinely new member (or refreshed evidence) is not a
+ -- subset and therefore still requires a new human review.
+ AND g.file_ids <@ r.file_ids
+ AND g.evidence_ids <@ r.evidence_ids;
 
 COMMENT ON TABLE public.pdf_content_similarity_evidence IS
   'Append-only technical PDF evidence; extracted document text is deliberately not stored.';

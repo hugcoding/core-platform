@@ -1,38 +1,6 @@
--- SCRUM-115 follow-up for databases where the initial similarity migration is already applied.
 BEGIN;
-ALTER TABLE public.pdf_content_similarity_review_events
-  DROP CONSTRAINT IF EXISTS pdf_content_similarity_review_events_action_check;
-ALTER TABLE public.pdf_content_similarity_review_events
-  ADD CONSTRAINT pdf_content_similarity_review_events_action_check
-  CHECK (action IN ('selected_leader', 'same_document_version', 'keep_separate', 'withdrawn'));
-ALTER TABLE public.pdf_content_similarity_review_events
-  ADD COLUMN IF NOT EXISTS selected_file_id bigint REFERENCES public.files(id) ON DELETE RESTRICT,
-  ADD COLUMN IF NOT EXISTS redundant_file_ids bigint[] NOT NULL DEFAULT '{}'::bigint[];
-ALTER TABLE public.pdf_content_similarity_review_events
-  DROP CONSTRAINT IF EXISTS pdf_similarity_leader_check;
-ALTER TABLE public.pdf_content_similarity_review_events
-  ADD CONSTRAINT pdf_similarity_leader_check CHECK (
-    (action = 'selected_leader' AND selected_file_id = ANY(file_ids)
-      AND cardinality(redundant_file_ids) = cardinality(file_ids) - 1
-      AND selected_file_id <> ALL(redundant_file_ids))
-    OR action <> 'selected_leader'
-  );
-
--- PostgreSQL expands SELECT * when a view is created. Recreate the latest-event
--- view so the newly added leader columns become visible to downstream views.
--- Drop only derived views (never evidence or review rows) to avoid depending on
--- the column order of whichever earlier migration version created the view.
 DROP VIEW IF EXISTS public.v_pdf_content_similarity_quarantine_handoff;
 DROP VIEW IF EXISTS public.v_pdf_content_similarity_groups;
-DROP VIEW IF EXISTS public.v_latest_pdf_content_similarity_review;
-
-CREATE VIEW public.v_latest_pdf_content_similarity_review AS
-SELECT DISTINCT ON (group_key)
-  id, idempotency_key, group_key, action, file_ids, evidence_ids,
-  review_notes, reviewer, supersedes_event_id, created_at,
-  selected_file_id, redundant_file_ids
-FROM public.pdf_content_similarity_review_events
-ORDER BY group_key, created_at DESC, id DESC;
 
 CREATE VIEW public.v_pdf_content_similarity_groups AS
 WITH current_evidence AS (
@@ -56,9 +24,7 @@ SELECT g.*, r.id AS latest_review_id, r.action AS latest_review_action,
        r.review_notes, r.reviewer, r.created_at AS reviewed_at
 FROM grouped g
 LEFT JOIN public.v_latest_pdf_content_similarity_review r
-  ON r.group_key = g.group_key
- AND g.file_ids <@ r.file_ids
- AND g.evidence_ids <@ r.evidence_ids;
+  ON r.group_key = g.group_key AND r.file_ids = g.file_ids AND r.evidence_ids = g.evidence_ids;
 
 CREATE VIEW public.v_pdf_content_similarity_quarantine_handoff AS
 SELECT r.id AS review_event_id, r.group_key, r.selected_file_id,
@@ -84,7 +50,4 @@ CROSS JOIN LATERAL unnest(r.redundant_file_ids) duplicate(file_id)
 JOIN public.files redundant ON redundant.id = duplicate.file_id
 JOIN public.v_latest_pdf_content_similarity_evidence redundant_evidence ON redundant_evidence.file_id = redundant.id
 WHERE r.action = 'selected_leader';
-
-COMMENT ON VIEW public.v_pdf_content_similarity_quarantine_handoff IS
-  'Read-only, revalidated handoff. Physical quarantine still requires a separately approved cleanup plan.';
 COMMIT;
