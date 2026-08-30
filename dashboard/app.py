@@ -345,6 +345,7 @@ def overview():
         ])
         if llm_enabled():
             services.append(heartbeat_service(client, "workset_ai_worker"))
+        services.append(heartbeat_service(client, "controlled_execution_worker"))
         metrics.update(
             polling_queue=client.xlen("scan_stream"),
             realtime_queue=client.xlen("scan_stream_realtime"),
@@ -1355,7 +1356,8 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
              h.selected_file_id AS leader_file_id, h.selected_path AS leader_path,
              h.content_sha256, f.size_bytes, r.created_at AS reviewed_at,
              jsonb_build_object('review_event_id',h.review_event_id,'content_group_id',h.content_group_id,
-                                'leader_file_id',h.selected_file_id,'kind','exact_duplicate') AS evidence_snapshot
+                                'leader_file_id',h.selected_file_id,'leader_path',h.selected_path,
+                                'kind','exact_duplicate') AS evidence_snapshot
       FROM public.v_exact_duplicate_review_handoff h
       JOIN public.exact_duplicate_review_events r ON r.id=h.review_event_id
       JOIN public.files f ON f.id=h.redundant_file_id
@@ -1427,7 +1429,7 @@ def create_controlled_execution_batch(payload: dict[str, Any] = Body(...)):
         with db_connect() as conn:
             active = query_one(conn, """
               SELECT EXISTS(SELECT 1 FROM public.v_controlled_execution_batch_progress
-                WHERE batch_status IN ('approved','queued','started','paused')) AS active
+                WHERE batch_status IN ('approved','queued','started','paused','rollback_pending')) AS active
             """)["active"]
             if active:
                 raise HTTPException(status_code=409, detail="another execution batch is still active")
@@ -1473,6 +1475,82 @@ def create_controlled_execution_batch(payload: dict[str, Any] = Body(...)):
         raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"execution batch unavailable: {type(exc).__name__}: {exc}") from exc
+
+
+@app.get("/api/v1/workset/execution-batches/current")
+def current_controlled_execution_batch():
+    try:
+        with db_connect() as conn:
+            batches = query_all(conn, """SELECT * FROM public.v_controlled_execution_batch_progress
+              ORDER BY (batch_status IN ('approved','queued','started','paused','rollback_pending')) DESC,
+                       created_at DESC LIMIT 1""")
+            if not batches:
+                return {"batch": None}
+            batch = batches[0]
+            items = query_all(conn, """SELECT id,sequence_no,action_type,file_id,source_path,target_path,
+                current_status,latest_details,status_changed_at
+              FROM public.v_controlled_execution_item_status WHERE batch_id=%s ORDER BY sequence_no""",
+              (batch["id"],))
+        completed = (int(batch.get("succeeded") or 0) + int(batch.get("rolled_back") or 0)
+                     + int(batch.get("blocked") or 0) + int(batch.get("failed") or 0))
+        return {"batch": {**{key: iso(value) for key, value in batch.items()},
+                          "completed_items": completed,
+                          "progress_percent": round(completed / int(batch["item_count"]) * 100, 1),
+                          "items": [{key: iso(value) for key, value in item.items()} for item in items]}}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"execution progress unavailable: {type(exc).__name__}: {exc}") from exc
+
+
+@app.post("/api/v1/workset/execution-batches/{batch_id}/control")
+def control_execution_batch(batch_id: uuid.UUID, payload: dict[str, Any] = Body(...)):
+    if not review_writes_enabled():
+        raise HTTPException(status_code=403, detail="interactive execution control is disabled")
+    action = str(payload.get("action") or "")
+    transitions = {
+        "pause": ({"approved", "started"}, "paused"),
+        "resume": ({"paused"}, "started"),
+        "cancel": ({"paused"}, "failed"),
+        "rollback": ({"completed", "failed"}, "rollback_pending"),
+    }
+    if action not in transitions:
+        raise HTTPException(status_code=422, detail="action must be pause, resume, cancel or rollback")
+    try:
+        with db_connect() as conn:
+            rows = query_all(conn, "SELECT batch_status FROM public.v_controlled_execution_batch_progress WHERE id=%s",
+                             (str(batch_id),))
+            if not rows:
+                raise HTTPException(status_code=404, detail="execution batch not found")
+            current = str(rows[0]["batch_status"])
+            allowed, event_type = transitions[action]
+            if current not in allowed:
+                raise HTTPException(status_code=409, detail=f"cannot {action} batch in status {current}")
+            if action == "cancel" and query_one(conn, """SELECT EXISTS(
+                SELECT 1 FROM public.v_controlled_execution_item_status
+                WHERE batch_id=%s AND current_status='started') AS active""", (str(batch_id),))["active"]:
+                raise HTTPException(status_code=409, detail="resume interrupted item before cancelling batch")
+            actor = os.getenv("CORE_REVIEWER", "hugo")
+            event_key = f"{batch_id}:{action}:{uuid.uuid4()}"
+            with conn.cursor() as cur:
+                if action == "cancel":
+                    cur.execute("""INSERT INTO public.controlled_execution_events
+                      (batch_id,item_id,event_type,idempotency_key,actor,details)
+                      SELECT %s,status.id,'failed',%s || ':' || status.id::text,%s,
+                             '{"reason":"human_cancelled_before_execution","file_mutations":false}'::jsonb
+                      FROM public.v_controlled_execution_item_status status
+                      WHERE status.batch_id=%s AND status.current_status IN ('planned','queued')
+                      ON CONFLICT (idempotency_key) DO NOTHING""",
+                      (str(batch_id), event_key, actor, str(batch_id)))
+                cur.execute("""INSERT INTO public.controlled_execution_events
+                  (batch_id,item_id,event_type,idempotency_key,actor,details)
+                  VALUES (%s,NULL,%s,%s,%s,%s::jsonb)""", (
+                    str(batch_id), event_type, event_key, actor,
+                    json.dumps({"human_control": action, "previous_status": current}),
+                ))
+        return {"status": event_type, "batch_id": str(batch_id), "action": action}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"execution control unavailable: {type(exc).__name__}: {exc}") from exc
 
 
 @app.get("/api/v1/workset/duplicates")

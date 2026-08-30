@@ -84,9 +84,15 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         self.assertIn("Behouden golden record", script)
         self.assertIn("Behouden leidende kopie", script)
         self.assertIn("Naar quarantaine", script)
+        self.assertIn("executionBatchPause", html)
+        self.assertIn("executionBatchRollback", html)
+        self.assertIn("/execution-batches/current", script)
+        self.assertIn("control('cancel')", script)
         app = (ROOT / "dashboard/app.py").read_text("utf-8")
         self.assertIn("h.selected_file_id AS leader_file_id", app)
         self.assertIn("h.selected_path AS leader_path", app)
+        self.assertIn("'leader_path',h.selected_path", app)
+        self.assertIn("resume interrupted item before cancelling batch", app)
 
     def test_dashboard_image_contains_imported_queue_runtime(self):
         dockerfile = (ROOT / "Dockerfile.dashboard").read_text("utf-8")
