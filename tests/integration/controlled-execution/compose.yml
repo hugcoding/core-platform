@@ -1,0 +1,11 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment: { POSTGRES_USER: core, POSTGRES_PASSWORD: core, POSTGRES_DB: core_test }
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U core -d core_test"], interval: 2s, timeout: 2s, retries: 20 }
+  integration:
+    build: { context: ../../.., dockerfile: tests/integration/controlled-execution/Dockerfile }
+    depends_on: { postgres: { condition: service_healthy } }
+    environment: { DB_HOST: postgres, DB_PORT: 5432, DB_USER: core, DB_PASS: core, DB_NAME: core_test }
+    volumes: ["execution_data:/volume1/data"]
+volumes: { execution_data: {} }
