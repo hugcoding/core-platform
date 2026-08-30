@@ -18,7 +18,8 @@ class PdfContentSimilarityIntegrationTests(unittest.TestCase):
         self.assertIn("reject_pdf_similarity_mutation", sql)
         self.assertIn("count(DISTINCT content_sha256) > 1", sql)
         self.assertIn("count(DISTINCT page_text_sha256) = 1", sql)
-        self.assertIn("r.evidence_ids = g.evidence_ids", sql)
+        self.assertIn("g.file_ids <@ r.file_ids", sql)
+        self.assertIn("g.evidence_ids <@ r.evidence_ids", sql)
         self.assertNotIn("UPDATE public.files", sql)
         self.assertNotIn("DELETE FROM public.files", sql)
         self.assertNotIn("quarantine", sql.lower())
@@ -55,6 +56,23 @@ class PdfContentSimilarityIntegrationTests(unittest.TestCase):
         self.assertIn("separately approved cleanup plan", sql)
         self.assertNotIn("UPDATE public.files", sql)
         self.assertNotIn("DELETE FROM public.files", sql)
+
+    def test_review_stays_effective_when_a_reviewed_redundant_copy_leaves(self):
+        migration = ROOT / "database/migrations/20260830_stabilize_pdf_similarity_review_projection.sql"
+        rollback = ROOT / "database/migrations/rollback/20260830_stabilize_pdf_similarity_review_projection.sql"
+        sql = migration.read_text("utf-8")
+        self.assertIn("g.file_ids <@ r.file_ids", sql)
+        self.assertIn("g.evidence_ids <@ r.evidence_ids", sql)
+        self.assertNotIn("UPDATE public.files", sql)
+        self.assertNotIn("DELETE FROM public.files", sql)
+        self.assertTrue(rollback.exists())
+
+    def test_new_member_or_new_evidence_does_not_inherit_old_review(self):
+        sql = (ROOT / "database/migrations/20260830_stabilize_pdf_similarity_review_projection.sql").read_text("utf-8")
+        # The subset direction is deliberate: current members/evidence must all
+        # belong to the reviewed snapshot. A newly joined member cannot match.
+        self.assertNotIn("r.file_ids <@ g.file_ids", sql)
+        self.assertNotIn("r.evidence_ids <@ g.evidence_ids", sql)
 
     def test_evidence_insert_stores_hashes_but_no_raw_text(self):
         evidence = {
