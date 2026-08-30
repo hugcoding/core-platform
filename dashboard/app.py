@@ -1507,7 +1507,7 @@ def control_execution_batch(batch_id: uuid.UUID, payload: dict[str, Any] = Body(
         raise HTTPException(status_code=403, detail="interactive execution control is disabled")
     action = str(payload.get("action") or "")
     transitions = {
-        "pause": ({"approved", "started"}, "paused"),
+        "pause": ({"approved", "queued", "started"}, "paused"),
         "resume": ({"paused"}, "started"),
         "cancel": ({"paused"}, "failed"),
         "rollback": ({"completed", "failed"}, "rollback_pending"),

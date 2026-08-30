@@ -48,6 +48,17 @@ class ControlledExecutionWorkerTests(unittest.TestCase):
             self.worker.process_forward(mock.Mock(), {"id": "batch"})
         execute.assert_not_called()
 
+    def test_resource_change_between_items_returns_batch_to_queue(self):
+        item = {"id": "item", "current_status": "queued", "action_type": "migrate_active"}
+        with mock.patch.object(self.worker, "batch_items", return_value=[item]), \
+             mock.patch.object(self.worker, "latest_batch_status", return_value="started"), \
+             mock.patch.object(self.worker, "host_resources", return_value={"available_memory_mib": 10, "load_per_cpu": 0.1}), \
+             mock.patch.object(self.worker, "stream_lag", return_value=0), \
+             mock.patch.object(self.worker, "append_event") as event:
+            self.worker.process_forward(mock.Mock(), {"id": "batch"}, mock.Mock())
+        self.assertEqual("queued", event.call_args_list[-1].args[3])
+        self.assertEqual("waiting_for_memory", event.call_args_list[-1].args[5]["waiting_reason"])
+
     def test_started_item_uses_resume_path(self):
         item = {"current_status": "started", "action_type": "migrate_active",
                 "target_path": "/volume1/data/Persoonlijk/Actief/x", "latest_details": {"mtime_ns": 1}}

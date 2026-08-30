@@ -89,7 +89,7 @@ def latest_batch_status(conn, batch_id: str) -> str | None:
 def claim_batch(conn) -> dict[str, Any] | None:
     with conn.cursor() as cur:
         cur.execute("""SELECT progress.* FROM public.v_controlled_execution_batch_progress progress
-          WHERE progress.batch_status IN ('approved','started','rollback_pending')
+          WHERE progress.batch_status IN ('approved','queued','started','rollback_pending')
           ORDER BY progress.id LIMIT 1""")
         batch = cur.fetchone()
         if not batch: return None
@@ -144,11 +144,18 @@ def rollback_item(item: dict[str, Any]) -> dict[str, Any]:
     return rollback_verified(payload, allowed_zones=zones(item))
 
 
-def process_forward(conn, batch: dict[str, Any]) -> None:
+def process_forward(conn, batch: dict[str, Any], client: redis.Redis | None = None) -> None:
     batch_id = str(batch["id"])
-    append_event(conn, batch_id, None, "started", f"{batch_id}:worker-started", {"worker": ACTOR})
+    append_event(conn, batch_id, None, "started", f"{batch_id}:worker-started:{uuid.uuid4()}", {"worker": ACTOR})
     for item in batch_items(conn, batch_id):
         if latest_batch_status(conn, batch_id) == "paused": return
+        if client is not None:
+            resources, lag = host_resources(), stream_lag(client)
+            waiting = resource_block(resources, lag)
+            if waiting:
+                append_event(conn, batch_id, None, "queued", f"{batch_id}:resource-wait:{uuid.uuid4()}",
+                             {"waiting_reason": waiting, **resources, "stream_lag": lag})
+                return
         if item["current_status"] not in ("queued", "started"): continue
         item_id = str(item["id"])
         if item["current_status"] == "queued":
@@ -195,7 +202,7 @@ def run_once(client: redis.Redis | None = None) -> bool:
         batch = claim_batch(conn)
         if not batch: return False
         if batch["batch_status"] == "rollback_pending": process_rollback(conn, batch)
-        else: process_forward(conn, batch)
+        else: process_forward(conn, batch, client)
         return True
     finally:
         conn.close()
