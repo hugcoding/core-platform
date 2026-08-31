@@ -111,6 +111,35 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertEqual("work_career", result["effective_category"])
         self.assertEqual("vacancies", result["effective_document_family"])
 
+    def test_similarity_redundant_inherits_leader_and_is_not_independently_reviewed(self):
+        row = {
+            "file_id": 3361602, "filename": "20260713-240931 1.pdf", "extension": "pdf",
+            "path": "/volume1/data/import/20260713-240931 1.pdf", "workset_status": "active",
+            "similarity_review_event_id": "39617904-f5f6-40c6-86d0-74c2da573c8c",
+            "similarity_leader_file_id": 3361604,
+            "similarity_leader_filename": "20260713-240931.pdf",
+            "similarity_inherited_category": "finance",
+            "similarity_inherited_document_family": "warranties_receipts",
+            "similarity_quarantine_phase": "awaiting_approval",
+        }
+        result = self.dashboard.enrich_workset_row(row)
+        self.assertTrue(result["is_similarity_redundant"])
+        self.assertEqual("quarantine", result["workset_status"])
+        self.assertEqual("finance", result["effective_category"])
+        self.assertEqual("warranties_receipts", result["effective_document_family"])
+        self.assertEqual("inherited_similarity_leader", result["effective_family_source"])
+        self.assertEqual("accepted", result["classification_status"])
+        self.assertIsNone(result["target_proposal"])
+        self.assertIsNone(result["review_options"])
+
+    def test_similarity_redundant_controls_are_hidden(self):
+        workset = (ROOT / "dashboard/static/workset.js").read_text(encoding="utf-8")
+        ai = (ROOT / "dashboard/static/workset-ai.js").read_text(encoding="utf-8")
+        self.assertIn("Wacht op quarantaine", workset)
+        self.assertIn("Categorie en familie overgenomen", workset)
+        self.assertIn("doc.is_similarity_redundant", workset)
+        self.assertIn("doc.is_similarity_redundant", ai)
+
     def test_portal_distinguishes_registered_and_verified_paths(self):
         script = (ROOT / "dashboard/static/workset.js").read_text(encoding="utf-8")
         self.assertIn("Geverifieerd huidig pad", script)
@@ -230,7 +259,7 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn("filesystem_mtime", result["documents"][0]["reason_code"])
         self.assertEqual(r"\\192.168.68.105\data\import\document.docx", result["documents"][0]["smb_path"])
         params = query_all.call_args.args[2]
-        self.assertEqual(("docx", "%document%", "%document%", "%document%"), params)
+        self.assertEqual(("docx", "document", "%document%", "%document%", "%document%"), params)
 
     def test_source_limits_mutation_to_append_only_review_events(self):
         source = (ROOT / "dashboard" / "app.py").read_text(encoding="utf-8")

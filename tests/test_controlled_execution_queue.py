@@ -58,6 +58,11 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         self.assertEqual([1, 2], sorted(item["file_id"] for item in blocked))
         self.assertTrue(all(item["blocked_reason"] == "batch_target_collision" for item in blocked))
 
+    def test_failed_batch_does_not_permanently_hide_unexecuted_item(self):
+        app = (ROOT / "dashboard/app.py").read_text("utf-8")
+        self.assertIn("batch.batch_status IN ('approved','queued','started','paused','rollback_pending')", app)
+        self.assertIn("status.current_status IN ('verified','completed','event_correlated')", app)
+
     def test_dashboard_completes_reviewed_directory_targets_before_partitioning(self):
         app = (ROOT / "dashboard/app.py").read_text("utf-8")
         expected = "ensure_taxonomy_subdirectory_target(complete_directory_target(dict(row)))"
