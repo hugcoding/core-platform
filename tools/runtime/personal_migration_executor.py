@@ -54,7 +54,8 @@ def copy_rows(query: str) -> List[Dict[str, str]]:
 
 
 NORMAL_CANDIDATES = """
-SELECT v.file_id, v.content_group_id, v.content_sha256, v.source_path,
+SELECT v.file_id, v.content_group_id, v.content_sha256,
+       COALESCE(location.current_path, v.source_path) AS source_path,
        CASE
          WHEN v.lifecycle_aligned_proposed_path ~ '^/volume1/data/Persoonlijk/(Actief|Inactief)/'
            THEN v.lifecycle_aligned_proposed_path
@@ -85,10 +86,11 @@ SELECT v.file_id, v.content_group_id, v.content_sha256, v.source_path,
        END AS target_path_basis
 FROM public.v_document_workset_path_review v
 JOIN public.files f ON f.id = v.file_id AND f.deleted_at IS NULL
+LEFT JOIN public.v_workset_current_physical_location location ON location.file_id = v.file_id
 JOIN public.content_groups g ON g.id = v.content_group_id
  AND g.golden_file_id = v.file_id AND g.content_sha256 = v.content_sha256
 WHERE v.effective_lifecycle IN ('active', 'archive')
-  AND v.source_path LIKE '/volume1/data/%'
+  AND COALESCE(location.current_path, v.source_path) LIKE '/volume1/data/%'
   AND NOT EXISTS (
       SELECT 1 FROM public.v_active_document_lifecycle_nominations nomination
       WHERE nomination.file_id = v.file_id AND nomination.nomination_type = 'deletion'

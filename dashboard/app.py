@@ -45,7 +45,7 @@ from core.semantic.workset_llm import (
     SCHEMA_VERSION as LLM_SCHEMA_VERSION, abstention as llm_abstention,
     build_prompt as build_llm_prompt, extract_bounded_context, validate_proposal as validate_llm_proposal,
 )
-from core.execution.queue import partition_candidates
+from core.execution.queue import exclude_already_controlled, partition_candidates
 from tools.runtime.personal_migration_executor import (
     CANDIDATES as PERSONAL_MIGRATION_CANDIDATES,
     complete_directory_target,
@@ -1427,16 +1427,20 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
                 "kind": "personal_migration",
             },
         })
-    queued = query_all(conn, """
-      SELECT DISTINCT status.file_id
+    corrective_targets = {int(row["file_id"]): row["target_path"] for row in mapped_personal}
+    exact = [{**row, "leader_correction_target": corrective_targets.get(int(row["leader_file_id"]))}
+             for row in exact]
+    similar = [{**row, "leader_correction_target": corrective_targets.get(int(row["leader_file_id"]))}
+               for row in similar]
+    controlled = query_all(conn, """
+      SELECT status.file_id, status.target_path, status.current_status, batch.batch_status
       FROM public.v_controlled_execution_item_status status
       JOIN public.v_controlled_execution_batch_progress batch ON batch.id = status.batch_id
       WHERE status.current_status IN ('verified','completed','event_correlated')
          OR batch.batch_status IN ('approved','queued','started','paused','rollback_pending')
     """)
-    queued_ids = {int(row["file_id"]) for row in queued}
-    return partition_candidates(item for item in [*exact, *similar, *mapped_personal]
-                                if int(item["file_id"]) not in queued_ids)
+    candidates = exclude_already_controlled([*exact, *similar, *mapped_personal], controlled)
+    return partition_candidates(candidates)
 
 
 @app.get("/api/v1/workset/execution-queue")
