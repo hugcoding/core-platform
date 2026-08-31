@@ -87,7 +87,9 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         app = (ROOT / "dashboard/app.py").read_text("utf-8")
         ui = (ROOT / "dashboard/static/execution-queue.js").read_text("utf-8")
         self.assertIn('"leader_correction_target": corrective_targets.get', app)
-        self.assertIn("Correctiemigratie naar:", ui)
+        self.assertIn('"WHERE candidate.file_id = ANY(%s)"', app)
+        self.assertIn("Huidige locatie:", ui)
+        self.assertIn("Nog te corrigeren naar:", ui)
 
     def test_dashboard_completes_reviewed_directory_targets_before_partitioning(self):
         app = (ROOT / "dashboard/app.py").read_text("utf-8")
