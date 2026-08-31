@@ -12,7 +12,7 @@ import subprocess
 import sys
 import uuid
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Dict, List, Optional, Tuple
 
 from core.migration.personal_executor import (
@@ -131,6 +131,7 @@ WHERE nomination.nomination_type = 'deletion'
 
 CANDIDATES = """SELECT * FROM (({}) UNION ALL ({})) candidates
 WHERE source_path <> target_path
+   OR target_path ~ '^/volume1/data/Persoonlijk/(Actief|Inactief)/[^/]+$'
 ORDER BY candidate_priority, target_path_reviewed_at, file_id""".format(
     DELETION_CANDIDATES, NORMAL_CANDIDATES
 )
@@ -161,8 +162,26 @@ def complete_directory_target(item: dict) -> dict:
     """
     raw_target = str(item["target_path"])
     if is_directory_shaped_target(item):
-        item["target_path"] = str(Path(raw_target) / Path(item["source_path"]).name)
+        item["target_path"] = str(
+            PurePosixPath(raw_target) / PurePosixPath(item["source_path"]).name
+        )
         item["target_path_completed_from_directory"] = True
+    return item
+
+
+def ensure_taxonomy_subdirectory_target(item: dict) -> dict:
+    """Never place a personal document directly below its lifecycle zone."""
+    target = PurePosixPath(str(item["target_path"]))
+    for zone in ("Actief", "Inactief"):
+        zone_root = PurePosixPath("/volume1/data/Persoonlijk") / zone
+        if target.parent == zone_root:
+            item["original_target_path"] = str(target)
+            item["target_path"] = str(
+                zone_root / "Te beoordelen" / PurePosixPath(item["source_path"]).name
+            )
+            item["target_path_basis"] = "zone_fallback"
+            item["target_path_fallback_reason"] = "missing_taxonomy_subdirectory"
+            break
     return item
 
 
@@ -181,7 +200,7 @@ def inspect_candidates(limit: int, minimum_free_bytes: int) -> Tuple[List[dict],
     for row in copy_rows("SELECT * FROM ({}) q LIMIT {}".format(CANDIDATES, limit * 5)):
         if len(eligible) >= limit:
             break
-        item = complete_directory_target(dict(row))
+        item = ensure_taxonomy_subdirectory_target(complete_directory_target(dict(row)))
         item["size_bytes"] = int(item["size_bytes"])
         available_copies = int(item["available_copies"])
         reviewed_redundant_copies = int(item["reviewed_redundant_copies"])

@@ -5,6 +5,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from core.migration import personal_executor as executor
+from tools.runtime.personal_migration_executor import (
+    complete_directory_target,
+    ensure_taxonomy_subdirectory_target,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -123,12 +127,48 @@ class PersonalMigrationExecutorTests(unittest.TestCase):
         self.assertIn("'zone_fallback'", runtime)
         self.assertIn("batch_target_collision", runtime)
         self.assertIn("WHERE source_path <> target_path", runtime)
+        self.assertIn("target_path ~ '^/volume1/data/Persoonlijk/(Actief|Inactief)/[^/]+$'", runtime)
         self.assertNotIn("AND v.lifecycle_reviewed_at IS NOT NULL", runtime)
         self.assertNotIn("AND v.target_path_decision = 'accepted'", runtime)
         self.assertIn("lifecycle_basis", migration)
         self.assertIn("target_path_basis", migration)
         self.assertIn("DROP NOT NULL", migration)
         self.assertIn("rollback blocked: policy-backed personal migration plans exist", rollback)
+
+    def test_zone_root_file_uses_explicit_review_fallback(self):
+        item = {
+            "source_path": "/volume1/data/import/document.pdf",
+            "target_path": "/volume1/data/Persoonlijk/Inactief/document.pdf",
+            "target_path_basis": "core_proposal",
+        }
+        result = ensure_taxonomy_subdirectory_target(item)
+        self.assertEqual(
+            "/volume1/data/Persoonlijk/Inactief/Te beoordelen/document.pdf",
+            result["target_path"],
+        )
+        self.assertEqual("zone_fallback", result["target_path_basis"])
+        self.assertEqual("missing_taxonomy_subdirectory", result["target_path_fallback_reason"])
+
+    def test_existing_taxonomy_path_is_preserved(self):
+        item = {
+            "source_path": "/volume1/data/import/document.pdf",
+            "target_path": "/volume1/data/Persoonlijk/Actief/Wonen/Hypotheek/document.pdf",
+            "target_path_basis": "human_review",
+        }
+        self.assertEqual(item, ensure_taxonomy_subdirectory_target(dict(item)))
+
+    def test_reviewed_directory_is_completed_before_fallback_check(self):
+        item = {
+            "source_path": "/volume1/data/import/vacature.docx",
+            "target_path": "/volume1/data/Persoonlijk/Actief/Werk & Loopbaan",
+            "target_path_basis": "human_review",
+        }
+        result = ensure_taxonomy_subdirectory_target(complete_directory_target(item))
+        self.assertEqual(
+            "/volume1/data/Persoonlijk/Actief/Werk & Loopbaan/vacature.docx",
+            result["target_path"],
+        )
+        self.assertNotIn("target_path_fallback_reason", result)
 
     def test_path_validation_rejects_escape_and_wrong_zone(self):
         with self.assertRaises(executor.MigrationSafetyError):
