@@ -45,7 +45,7 @@ from core.semantic.workset_llm import (
     SCHEMA_VERSION as LLM_SCHEMA_VERSION, abstention as llm_abstention,
     build_prompt as build_llm_prompt, extract_bounded_context, validate_proposal as validate_llm_proposal,
 )
-from core.execution.queue import exclude_already_controlled, partition_candidates
+from core.execution.queue import build_flat_file_correction, exclude_already_controlled, partition_candidates
 from tools.runtime.personal_migration_executor import (
     CANDIDATES as PERSONAL_MIGRATION_CANDIDATES,
     complete_directory_target,
@@ -1439,6 +1439,25 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
         for row in leader_candidates:
             correction = ensure_taxonomy_subdirectory_target(complete_directory_target(dict(row)))
             corrective_targets[int(correction["file_id"])] = correction["target_path"]
+    flat_files = query_all(conn, """
+      SELECT f.id AS file_id, f.filename, f.content_sha256, f.size_bytes,
+             COALESCE(location.current_path, f.path) AS source_path,
+             location.status_changed_at AS location_changed_at, f.updated_at
+      FROM public.files f
+      LEFT JOIN public.v_workset_current_physical_location location ON location.file_id = f.id
+      WHERE f.deleted_at IS NULL
+        AND COALESCE(location.current_path, f.path)
+            ~ '^/volume1/data/Persoonlijk/(Actief|Inactief)/[^/]+$'
+    """)
+    direct_corrections: dict[int, dict[str, Any]] = {}
+    for file_row in flat_files:
+        file_id = int(file_row["file_id"])
+        if file_id in corrective_targets:
+            continue
+        correction = build_flat_file_correction(file_row)
+        if correction:
+            corrective_targets[file_id] = correction["target_path"]
+            direct_corrections[file_id] = correction
     exact = [{**row, "leader_correction_target": corrective_targets.get(int(row["leader_file_id"]))}
              for row in exact]
     similar = [{**row, "leader_correction_target": corrective_targets.get(int(row["leader_file_id"]))}
@@ -1450,7 +1469,9 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
       WHERE status.current_status IN ('verified','completed','event_correlated')
          OR batch.batch_status IN ('approved','queued','started','paused','rollback_pending')
     """)
-    candidates = exclude_already_controlled([*exact, *similar, *mapped_personal], controlled)
+    candidates = exclude_already_controlled(
+        [*exact, *similar, *mapped_personal, *direct_corrections.values()], controlled
+    )
     return partition_candidates(candidates)
 
 

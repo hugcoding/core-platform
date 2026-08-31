@@ -1,7 +1,8 @@
 """Pure queue ordering and bounded selection for SCRUM-116."""
 from __future__ import annotations
 
-from typing import Iterable, Mapping, Any
+from typing import Iterable, Mapping, Any, Optional, Tuple
+from pathlib import PurePosixPath
 
 MAX_BATCH_SIZE = 25
 ACTION_PRIORITY = {
@@ -14,6 +15,68 @@ ACTION_PRIORITY = {
 
 SUCCESSFUL_ITEM_STATUSES = {"verified", "completed", "event_correlated"}
 ACTIVE_BATCH_STATUSES = {"approved", "queued", "started", "paused", "rollback_pending"}
+
+
+def flat_personal_correction(path: str) -> Optional[Tuple[str, str]]:
+    """Return the safe corrective action/target for a file flat in a lifecycle zone."""
+    source = PurePosixPath(str(path))
+    for zone, action in (("Actief", "migrate_active"), ("Inactief", "migrate_inactive")):
+        root = PurePosixPath("/volume1/data/Persoonlijk") / zone
+        if source.parent == root:
+            return action, str(root / "Te beoordelen" / source.name)
+    return None
+
+
+def build_flat_golden_correction(
+    duplicate: Mapping[str, Any], metadata: Mapping[str, Any]
+) -> Optional[dict]:
+    """Build an executable correction even when the leader left the Workset projection."""
+    correction = flat_personal_correction(str(duplicate["leader_path"]))
+    if not correction:
+        return None
+    action_type, target_path = correction
+    return {
+        "file_id": int(duplicate["leader_file_id"]),
+        "action_type": action_type,
+        "source_path": str(duplicate["leader_path"]),
+        "target_path": target_path,
+        "content_sha256": metadata["content_sha256"],
+        "size_bytes": metadata["size_bytes"],
+        "reviewed_at": duplicate.get("reviewed_at"),
+        "target_path_basis": "zone_fallback",
+        "target_path_fallback_reason": "missing_taxonomy_subdirectory",
+        "evidence_snapshot": {
+            "kind": "flat_golden_record_correction",
+            "duplicate_file_id": int(duplicate["file_id"]),
+            "original_target_path": str(duplicate["leader_path"]),
+            "target_path_fallback_reason": "missing_taxonomy_subdirectory",
+        },
+    }
+
+
+def build_flat_file_correction(file_row: Mapping[str, Any]) -> Optional[dict]:
+    """Build a controlled fallback move for every file flat below a lifecycle root."""
+    source_path = str(file_row["source_path"])
+    correction = flat_personal_correction(source_path)
+    if not correction:
+        return None
+    action_type, target_path = correction
+    return {
+        "file_id": int(file_row["file_id"]),
+        "action_type": action_type,
+        "source_path": source_path,
+        "target_path": target_path,
+        "content_sha256": file_row["content_sha256"],
+        "size_bytes": file_row["size_bytes"],
+        "reviewed_at": file_row.get("location_changed_at") or file_row.get("updated_at"),
+        "target_path_basis": "zone_fallback",
+        "target_path_fallback_reason": "missing_taxonomy_subdirectory",
+        "evidence_snapshot": {
+            "kind": "flat_personal_root_correction",
+            "original_target_path": source_path,
+            "target_path_fallback_reason": "missing_taxonomy_subdirectory",
+        },
+    }
 
 
 def normalize_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:

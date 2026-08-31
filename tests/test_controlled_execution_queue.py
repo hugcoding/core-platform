@@ -3,7 +3,10 @@ from unittest import mock
 from pathlib import Path
 from datetime import datetime, timezone
 
-from core.execution.queue import exclude_already_controlled, partition_candidates, select_batch
+from core.execution.queue import (
+    build_flat_file_correction, build_flat_golden_correction, exclude_already_controlled,
+    flat_personal_correction, partition_candidates, select_batch,
+)
 from tools.runtime import controlled_execution_queue as runtime
 
 ROOT = Path(__file__).parents[1]
@@ -82,6 +85,53 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         migration = (ROOT / "tools/runtime/personal_migration_executor.py").read_text("utf-8")
         self.assertIn("COALESCE(location.current_path, v.source_path) AS source_path", migration)
         self.assertIn("LEFT JOIN public.v_workset_current_physical_location location", migration)
+
+    def test_flat_golden_record_gets_independent_fallback_correction(self):
+        self.assertEqual(
+            ("migrate_inactive", "/volume1/data/Persoonlijk/Inactief/Te beoordelen/payroll.pdf"),
+            flat_personal_correction("/volume1/data/Persoonlijk/Inactief/payroll.pdf"),
+        )
+        self.assertEqual(
+            ("migrate_active", "/volume1/data/Persoonlijk/Actief/Te beoordelen/cv.pdf"),
+            flat_personal_correction("/volume1/data/Persoonlijk/Actief/cv.pdf"),
+        )
+        self.assertIsNone(flat_personal_correction("/volume1/data/Persoonlijk/Inactief/Werk/payroll.pdf"))
+
+    def test_dashboard_queues_flat_golden_record_outside_workset_projection(self):
+        app = (ROOT / "dashboard/app.py").read_text("utf-8")
+        self.assertIn("build_flat_file_correction(file_row)", app)
+        self.assertIn("^/volume1/data/Persoonlijk/(Actief|Inactief)/[^/]+$", app)
+        self.assertIn("*direct_corrections.values()", app)
+
+    def test_duplicate_review_builds_executable_flat_golden_correction(self):
+        candidate = build_flat_golden_correction({
+            "file_id": 3362590,
+            "leader_file_id": 3361628,
+            "leader_path": "/volume1/data/Persoonlijk/Inactief/payroll.pdf",
+            "reviewed_at": "2026-08-31T12:00:00+00:00",
+        }, {"content_sha256": "a" * 64, "size_bytes": 123})
+        self.assertEqual(3361628, candidate["file_id"])
+        self.assertEqual("migrate_inactive", candidate["action_type"])
+        self.assertEqual(
+            "/volume1/data/Persoonlijk/Inactief/Te beoordelen/payroll.pdf",
+            candidate["target_path"],
+        )
+        self.assertEqual("flat_golden_record_correction", candidate["evidence_snapshot"]["kind"])
+
+    def test_every_flat_personal_file_gets_controlled_review_fallback(self):
+        candidate = build_flat_file_correction({
+            "file_id": 42,
+            "source_path": "/volume1/data/Persoonlijk/Actief/los.pdf",
+            "content_sha256": "b" * 64,
+            "size_bytes": 456,
+            "updated_at": "2026-08-31T12:00:00+00:00",
+        })
+        self.assertEqual("migrate_active", candidate["action_type"])
+        self.assertEqual(
+            "/volume1/data/Persoonlijk/Actief/Te beoordelen/los.pdf",
+            candidate["target_path"],
+        )
+        self.assertEqual("flat_personal_root_correction", candidate["evidence_snapshot"]["kind"])
 
     def test_duplicate_card_exposes_pending_golden_record_correction(self):
         app = (ROOT / "dashboard/app.py").read_text("utf-8")
