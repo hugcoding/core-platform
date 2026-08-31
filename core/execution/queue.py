@@ -56,7 +56,18 @@ def partition_candidates(candidates: Iterable[Mapping[str, Any]]) -> tuple[list[
             valid.append(normalize_candidate(candidate))
         except (KeyError, TypeError, ValueError) as exc:
             blocked.append({**dict(candidate), "blocked_reason": str(exc)})
-    return order_candidates(valid), blocked
+    ordered = order_candidates(valid)
+    target_counts: dict[str, int] = {}
+    for item in ordered:
+        key = item["target_path"].casefold()
+        target_counts[key] = target_counts.get(key, 0) + 1
+    ready: list[dict[str, Any]] = []
+    for item in ordered:
+        if target_counts[item["target_path"].casefold()] > 1:
+            blocked.append({**item, "blocked_reason": "batch_target_collision"})
+        else:
+            ready.append(item)
+    return ready, blocked
 
 
 def select_batch(candidates: Iterable[Mapping[str, Any]], limit: int = MAX_BATCH_SIZE) -> list[dict[str, Any]]:

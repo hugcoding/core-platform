@@ -46,7 +46,10 @@ from core.semantic.workset_llm import (
     build_prompt as build_llm_prompt, extract_bounded_context, validate_proposal as validate_llm_proposal,
 )
 from core.execution.queue import partition_candidates
-from tools.runtime.personal_migration_executor import CANDIDATES as PERSONAL_MIGRATION_CANDIDATES
+from tools.runtime.personal_migration_executor import (
+    CANDIDATES as PERSONAL_MIGRATION_CANDIDATES,
+    complete_directory_target,
+)
 
 
 APP_DIR = Path(__file__).parent
@@ -1379,6 +1382,7 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
     personal = query_all(conn, "SELECT * FROM (" + PERSONAL_MIGRATION_CANDIDATES + ") candidate LIMIT 500")
     mapped_personal = []
     for row in personal:
+        row = complete_directory_target(dict(row))
         lifecycle = row["effective_lifecycle"]
         action = ("quarantine_deletion_review" if lifecycle == "deletion_review" else
                   "migrate_active" if lifecycle == "active" else "migrate_inactive")
@@ -1438,6 +1442,12 @@ def create_controlled_execution_batch(payload: dict[str, Any] = Body(...)):
             if any(file_id not in available for file_id in selected_ids):
                 raise HTTPException(status_code=409, detail="one or more queue candidates changed")
             selected = [available[file_id] for file_id in selected_ids]
+            selected_targets = [str(item["target_path"]).casefold() for item in selected]
+            if len(selected_targets) != len(set(selected_targets)):
+                raise HTTPException(
+                    status_code=409,
+                    detail="selected candidates share a target path; refresh the execution queue",
+                )
             canonical = json.dumps(selected, sort_keys=True, default=str, separators=(",", ":"))
             batch_key = hashlib.sha256(canonical.encode()).hexdigest()
             batch_id = uuid.uuid4()
