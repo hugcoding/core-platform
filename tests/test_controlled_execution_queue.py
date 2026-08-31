@@ -3,7 +3,7 @@ from unittest import mock
 from pathlib import Path
 from datetime import datetime, timezone
 
-from core.execution.queue import partition_candidates, select_batch
+from core.execution.queue import exclude_already_controlled, partition_candidates, select_batch
 from tools.runtime import controlled_execution_queue as runtime
 
 ROOT = Path(__file__).parents[1]
@@ -62,6 +62,32 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         app = (ROOT / "dashboard/app.py").read_text("utf-8")
         self.assertIn("batch.batch_status IN ('approved','queued','started','paused','rollback_pending')", app)
         self.assertIn("status.current_status IN ('verified','completed','event_correlated')", app)
+
+    def test_successful_old_target_allows_corrective_migration(self):
+        candidate = self.candidate(7, "migrate_inactive", "/volume1/data/Persoonlijk/Inactief/Te beoordelen/7.pdf")
+        controlled = [{"file_id": 7, "target_path": "/volume1/data/Persoonlijk/Inactief/7.pdf",
+                       "current_status": "verified", "batch_status": "completed"}]
+        self.assertEqual([candidate], exclude_already_controlled([candidate], controlled))
+
+    def test_reached_target_and_active_file_are_suppressed(self):
+        candidate = self.candidate(7, "migrate_inactive", "/volume1/data/Persoonlijk/Inactief/Te beoordelen/7.pdf")
+        reached = [{"file_id": 7, "target_path": candidate["target_path"],
+                    "current_status": "verified", "batch_status": "completed"}]
+        active = [{"file_id": 7, "target_path": "/volume1/data/elders/7.pdf",
+                   "current_status": "planned", "batch_status": "started"}]
+        self.assertEqual([], exclude_already_controlled([candidate], reached))
+        self.assertEqual([], exclude_already_controlled([candidate], active))
+
+    def test_corrective_migration_uses_verified_current_location(self):
+        migration = (ROOT / "tools/runtime/personal_migration_executor.py").read_text("utf-8")
+        self.assertIn("COALESCE(location.current_path, v.source_path) AS source_path", migration)
+        self.assertIn("LEFT JOIN public.v_workset_current_physical_location location", migration)
+
+    def test_duplicate_card_exposes_pending_golden_record_correction(self):
+        app = (ROOT / "dashboard/app.py").read_text("utf-8")
+        ui = (ROOT / "dashboard/static/execution-queue.js").read_text("utf-8")
+        self.assertIn('"leader_correction_target": corrective_targets.get', app)
+        self.assertIn("Correctiemigratie naar:", ui)
 
     def test_dashboard_completes_reviewed_directory_targets_before_partitioning(self):
         app = (ROOT / "dashboard/app.py").read_text("utf-8")

@@ -12,6 +12,9 @@ ACTION_PRIORITY = {
     "migrate_inactive": 50,
 }
 
+SUCCESSFUL_ITEM_STATUSES = {"verified", "completed", "event_correlated"}
+ACTIVE_BATCH_STATUSES = {"approved", "queued", "started", "paused", "rollback_pending"}
+
 
 def normalize_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:
     item = dict(candidate)
@@ -74,3 +77,27 @@ def select_batch(candidates: Iterable[Mapping[str, Any]], limit: int = MAX_BATCH
     if not 1 <= limit <= MAX_BATCH_SIZE:
         raise ValueError("batch limit must be between 1 and 25")
     return order_candidates(candidates)[:limit]
+
+
+def exclude_already_controlled(
+    candidates: Iterable[Mapping[str, Any]],
+    controlled_items: Iterable[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Suppress active work and already reached targets, not a file forever.
+
+    A previously successful move to another target must remain eligible for a
+    later corrective migration when policy now resolves a safer target.
+    """
+    active_file_ids: set[int] = set()
+    completed_targets: set[tuple[int, str]] = set()
+    for row in controlled_items:
+        file_id = int(row["file_id"])
+        if str(row.get("batch_status") or "") in ACTIVE_BATCH_STATUSES:
+            active_file_ids.add(file_id)
+        if str(row.get("current_status") or "") in SUCCESSFUL_ITEM_STATUSES:
+            completed_targets.add((file_id, str(row.get("target_path") or "").casefold()))
+    return [
+        dict(candidate) for candidate in candidates
+        if int(candidate["file_id"]) not in active_file_ids
+        and (int(candidate["file_id"]), str(candidate["target_path"]).casefold()) not in completed_targets
+    ]
