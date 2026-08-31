@@ -74,6 +74,19 @@ class PdfContentSimilarityIntegrationTests(unittest.TestCase):
         self.assertNotIn("r.file_ids <@ g.file_ids", sql)
         self.assertNotIn("r.evidence_ids <@ g.evidence_ids", sql)
 
+    def test_redundant_workset_projection_inherits_leader_without_writes(self):
+        migration = ROOT / "database/migrations/20260831_add_similarity_redundant_workset_projection.sql"
+        rollback = ROOT / "database/migrations/rollback/20260831_add_similarity_redundant_workset_projection.sql"
+        sql = migration.read_text("utf-8")
+        self.assertIn("v_pdf_similarity_redundant_workset", sql)
+        self.assertIn("review.selected_file_id AS leader_file_id", sql)
+        self.assertIn("inherited_category", sql)
+        self.assertIn("inherited_document_family", sql)
+        self.assertIn("quarantine_phase", sql)
+        self.assertNotIn("UPDATE public.files", sql)
+        self.assertNotIn("DELETE FROM public.files", sql)
+        self.assertTrue(rollback.exists())
+
     def test_evidence_insert_stores_hashes_but_no_raw_text(self):
         evidence = {
             "content_sha256": "a" * 64, "normalized_text_sha256": "b" * 64,

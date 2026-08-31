@@ -535,6 +535,18 @@ WORKSET_SELECT = """
         c.suggested_path,
         c.sensitivity,
         c.confidence AS classification_confidence,
+        similarity.similarity_review_event_id,
+        similarity.leader_file_id AS similarity_leader_file_id,
+        similarity.leader_filename AS similarity_leader_filename,
+        similarity.leader_registered_path AS similarity_leader_path,
+        similarity.inherited_category AS similarity_inherited_category,
+        similarity.inherited_document_family AS similarity_inherited_document_family,
+        similarity.inherited_target_path AS similarity_inherited_target_path,
+        similarity.inheritance_source AS similarity_inheritance_source,
+        similarity.execution_item_status AS similarity_execution_item_status,
+        similarity.execution_batch_status AS similarity_execution_batch_status,
+        similarity.execution_batch_id AS similarity_execution_batch_id,
+        similarity.quarantine_phase AS similarity_quarantine_phase,
         pe.classification AS content_privacy_classification,
         pe.confidence AS content_privacy_confidence,
         pe.signals AS content_privacy_signals,
@@ -546,6 +558,8 @@ WORKSET_SELECT = """
         ON c.file_id = w.file_id
     LEFT JOIN public.v_workset_current_physical_location location
         ON location.file_id = w.file_id
+    LEFT JOIN public.v_pdf_similarity_redundant_workset similarity
+        ON similarity.file_id = w.file_id
     LEFT JOIN LATERAL (
         SELECT
             p.classification,
@@ -669,11 +683,12 @@ def effective_privacy_proposal(row: dict[str, Any]) -> dict[str, Any]:
 
 def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
     item = {key: iso(value) for key, value in row.items()}
+    item["is_similarity_redundant"] = bool(row.get("similarity_review_event_id"))
     item["calculated_workset_status"] = row.get("workset_status")
     item["smb_path"] = smb_path(str(row["path"]))
     item["classification_status"] = (
         "accepted"
-        if row.get("category") or (
+        if row.get("category") or row.get("similarity_inherited_category") or (
             row.get("latest_review_decision") == "accepted"
             and row.get("latest_review_category")
             and row.get("latest_review_family")
@@ -723,6 +738,12 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
         item["workset_status"] = "quarantine"
         item["lifecycle_source"] = "verified_deletion_quarantine"
         item["restore_lifecycle"] = proposal_lifecycle
+    if item["is_similarity_redundant"]:
+        item["effective_lifecycle"] = "quarantine"
+        item["workset_status"] = "quarantine"
+        item["lifecycle_source"] = "selected_similarity_leader"
+        item["restore_lifecycle"] = proposal_lifecycle
+        item["latest_review_id"] = item.get("latest_review_id") or item["similarity_review_event_id"]
     item["nominations"] = {
         "archive": ({
             "id": str(row["archive_nomination_id"]),
@@ -758,13 +779,20 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
         row.get("latest_review_category")
         if row.get("latest_review_decision") == "accepted" else None
     )
-    item["effective_category"] = reviewed_category or row.get("category")
-    item["effective_document_family"] = reviewed_family or row.get("document_family")
+    item["effective_category"] = (
+        row.get("similarity_inherited_category") if item["is_similarity_redundant"]
+        else reviewed_category or row.get("category")
+    )
+    item["effective_document_family"] = (
+        row.get("similarity_inherited_document_family") if item["is_similarity_redundant"]
+        else reviewed_family or row.get("document_family")
+    )
     item["effective_family_source"] = (
+        "inherited_similarity_leader" if item["is_similarity_redundant"] else
         "accepted_portal_review" if reviewed_family else
         "accepted_classification" if row.get("document_family") else "core_proposal"
     )
-    if item.get("workset_status") in CLASSIFIABLE_WORKSET_STATUSES:
+    if item.get("workset_status") in CLASSIFIABLE_WORKSET_STATUSES and not item["is_similarity_redundant"]:
         proposal = propose_target({
             **row,
             "accepted_category": item["effective_category"],
@@ -1021,7 +1049,8 @@ def workset(
     learning_context_rules = build_learning_context_rules(trajectory_reviews)
     for item in enriched:
         rule = matching_learning_context_rule(item, learning_context_rules)
-        if not rule or item.get("workset_status") not in CLASSIFIABLE_WORKSET_STATUSES:
+        if (not rule or item.get("is_similarity_redundant")
+                or item.get("workset_status") not in CLASSIFIABLE_WORKSET_STATUSES):
             continue
         row = next(row for row in rows if int(row["file_id"]) == int(item["file_id"]))
         proposal = propose_target({
@@ -1399,8 +1428,11 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
             },
         })
     queued = query_all(conn, """
-      SELECT DISTINCT file_id FROM public.v_controlled_execution_item_status
-      WHERE current_status NOT IN ('blocked','failed','rolled_back')
+      SELECT DISTINCT status.file_id
+      FROM public.v_controlled_execution_item_status status
+      JOIN public.v_controlled_execution_batch_progress batch ON batch.id = status.batch_id
+      WHERE status.current_status IN ('verified','completed','event_correlated')
+         OR batch.batch_status IN ('approved','queued','started','paused','rollback_pending')
     """)
     queued_ids = {int(row["file_id"]) for row in queued}
     return partition_candidates(item for item in [*exact, *similar, *mapped_personal]
@@ -2222,6 +2254,11 @@ def create_workset_ai_job(payload: dict[str, Any] = Body(...)):
             if not rows:
                 raise HTTPException(status_code=409, detail="file is no longer a workset candidate")
             row = rows[0]
+            if row.get("similarity_review_event_id"):
+                raise HTTPException(
+                    status_code=409,
+                    detail="reviewed redundant copy inherits its leader and is awaiting quarantine",
+                )
             status = effective_lifecycle_for_file(conn, row)["workset_status"]
             cur.execute("""
                 INSERT INTO public.workset_ai_jobs
@@ -2283,6 +2320,11 @@ def create_workset_ocr_job(payload: dict[str, Any] = Body(...)):
             if not rows:
                 raise HTTPException(status_code=409, detail="file is no longer a workset candidate")
             row = rows[0]
+            if row.get("similarity_review_event_id"):
+                raise HTTPException(
+                    status_code=409,
+                    detail="reviewed redundant copy inherits its leader and is awaiting quarantine",
+                )
             if str(row.get("extension") or "").casefold().lstrip(".") != "pdf":
                 raise HTTPException(status_code=409, detail="OCR MVP supports PDF only")
             cur.execute("""
@@ -2759,6 +2801,11 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
             if not matches:
                 raise HTTPException(status_code=409, detail="file is no longer a workset candidate")
             row = matches[0]
+            if row.get("similarity_review_event_id"):
+                raise HTTPException(
+                    status_code=409,
+                    detail="reviewed redundant copy inherits its leader and cannot be reviewed independently",
+                )
             if (
                 review_type == "target_path"
                 and row.get("physical_location_kind") == "deletion_quarantine"
