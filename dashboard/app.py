@@ -49,6 +49,7 @@ from core.execution.queue import partition_candidates
 from tools.runtime.personal_migration_executor import (
     CANDIDATES as PERSONAL_MIGRATION_CANDIDATES,
     complete_directory_target,
+    ensure_taxonomy_subdirectory_target,
 )
 
 
@@ -1382,7 +1383,7 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
     personal = query_all(conn, "SELECT * FROM (" + PERSONAL_MIGRATION_CANDIDATES + ") candidate LIMIT 500")
     mapped_personal = []
     for row in personal:
-        row = complete_directory_target(dict(row))
+        row = ensure_taxonomy_subdirectory_target(complete_directory_target(dict(row)))
         lifecycle = row["effective_lifecycle"]
         action = ("quarantine_deletion_review" if lifecycle == "deletion_review" else
                   "migrate_active" if lifecycle == "active" else "migrate_inactive")
@@ -1391,6 +1392,8 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
             "evidence_snapshot": {
                 "content_group_id": str(row["content_group_id"]),
                 "lifecycle_basis": row.get("lifecycle_basis"), "target_path_basis": row.get("target_path_basis"),
+                "target_path_fallback_reason": row.get("target_path_fallback_reason"),
+                "original_target_path": row.get("original_target_path"),
                 "deletion_nomination_id": str(row["deletion_nomination_id"]) if row.get("deletion_nomination_id") else None,
                 "kind": "personal_migration",
             },

@@ -60,10 +60,10 @@ class ControlledExecutionQueueTests(unittest.TestCase):
 
     def test_dashboard_completes_reviewed_directory_targets_before_partitioning(self):
         app = (ROOT / "dashboard/app.py").read_text("utf-8")
-        self.assertIn("complete_directory_target", app)
-        self.assertIn("row = complete_directory_target(dict(row))", app)
+        expected = "ensure_taxonomy_subdirectory_target(complete_directory_target(dict(row)))"
+        self.assertIn(expected, app)
         self.assertLess(
-            app.index("row = complete_directory_target(dict(row))"),
+            app.index(expected),
             app.index("return partition_candidates", app.index("def controlled_execution_candidates")),
         )
 
@@ -102,6 +102,7 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         self.assertIn("Behouden golden record", script)
         self.assertIn("Behouden leidende kopie", script)
         self.assertIn("Naar quarantaine", script)
+        self.assertIn("Geen bruikbaar categorie-/familiepad; daarom onder Te beoordelen.", script)
         self.assertIn("executionBatchPause", html)
         self.assertIn("executionBatchRollback", html)
         self.assertIn("/execution-batches/current", script)
