@@ -49,6 +49,24 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         self.assertEqual([3, 2, 1], [item["file_id"] for item in ready])
         self.assertTrue(all(isinstance(item["reviewed_at"], str) for item in ready))
 
+    def test_duplicate_batch_target_is_blocked_before_approval(self):
+        target = "/volume1/data/Persoonlijk/Actief/Werk/zelfde.pdf"
+        rows = [self.candidate(1, "migrate_active", target),
+                self.candidate(2, "migrate_active", target)]
+        ready, blocked = partition_candidates(rows)
+        self.assertEqual([], ready)
+        self.assertEqual([1, 2], sorted(item["file_id"] for item in blocked))
+        self.assertTrue(all(item["blocked_reason"] == "batch_target_collision" for item in blocked))
+
+    def test_dashboard_completes_reviewed_directory_targets_before_partitioning(self):
+        app = (ROOT / "dashboard/app.py").read_text("utf-8")
+        self.assertIn("complete_directory_target", app)
+        self.assertIn("row = complete_directory_target(dict(row))", app)
+        self.assertLess(
+            app.index("row = complete_directory_target(dict(row))"),
+            app.index("return partition_candidates", app.index("def controlled_execution_candidates")),
+        )
+
     def test_database_contract_is_append_only_and_bounded(self):
         sql = (ROOT / "database/migrations/20260829_add_controlled_execution_queue.sql").read_text("utf-8")
         self.assertIn("item_count BETWEEN 1 AND 25", sql)
