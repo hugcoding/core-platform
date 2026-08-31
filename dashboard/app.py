@@ -1428,6 +1428,17 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
             },
         })
     corrective_targets = {int(row["file_id"]): row["target_path"] for row in mapped_personal}
+    leader_ids = sorted({int(row["leader_file_id"]) for row in [*exact, *similar]})
+    if leader_ids:
+        leader_candidates = query_all(
+            conn,
+            "SELECT * FROM (" + PERSONAL_MIGRATION_CANDIDATES + ") candidate "
+            "WHERE candidate.file_id = ANY(%s)",
+            (leader_ids,),
+        )
+        for row in leader_candidates:
+            correction = ensure_taxonomy_subdirectory_target(complete_directory_target(dict(row)))
+            corrective_targets[int(correction["file_id"])] = correction["target_path"]
     exact = [{**row, "leader_correction_target": corrective_targets.get(int(row["leader_file_id"]))}
              for row in exact]
     similar = [{**row, "leader_correction_target": corrective_targets.get(int(row["leader_file_id"]))}
