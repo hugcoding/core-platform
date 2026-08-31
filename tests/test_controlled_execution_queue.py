@@ -87,7 +87,9 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         app = (ROOT / "dashboard/app.py").read_text("utf-8")
         ui = (ROOT / "dashboard/static/execution-queue.js").read_text("utf-8")
         self.assertIn('"leader_correction_target": corrective_targets.get', app)
-        self.assertIn('"WHERE candidate.file_id = ANY(%s)"', app)
+        self.assertIn('leader_id_sql = ",".join(str(file_id) for file_id in leader_ids)', app)
+        self.assertIn('"WHERE candidate.file_id IN (" + leader_id_sql + ")"', app)
+        self.assertNotIn('"WHERE candidate.file_id = ANY(%s)"', app)
         self.assertIn("Huidige locatie:", ui)
         self.assertIn("Nog te corrigeren naar:", ui)
 
