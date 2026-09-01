@@ -33,6 +33,14 @@ def test_dashboard_frontend_uses_relative_api_and_refreshes():
     assert "setInterval(refresh,10000)" in source
 
 
+def test_dashboard_supports_hash_and_string_heartbeats():
+    source = (ROOT / "dashboard" / "app.py").read_text(encoding="utf-8")
+    assert 'if key_type == "hash"' in source
+    assert "values = client.hgetall(key)" in source
+    assert "heartbeat = client.get(key)" in source
+    assert 'redis_key_size(client, "scanner:dirty_roots")' in source
+
+
 def test_core_cli_exposes_dashboard_lifecycle():
     source = (ROOT / "tools" / "runtime" / "core").read_text(encoding="utf-8")
     assert 'core dashboard deploy' in source
