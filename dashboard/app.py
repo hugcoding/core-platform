@@ -197,12 +197,34 @@ def target_path_reference_data(file_id: int) -> tuple[str, list[str]]:
 
 
 def heartbeat_service(client, name: str, *, intentionally_paused: bool = False) -> dict[str, Any]:
-    heartbeat = client.get(f"{name}:heartbeat")
-    status = client.get(f"{name}:heartbeat:status")
+    key = f"{name}:heartbeat"
+    key_type = client.type(key)
+    key_type = key_type.decode() if isinstance(key_type, bytes) else str(key_type)
+    if key_type == "hash":
+        values = client.hgetall(key)
+        heartbeat = values.get("updated_at") or values.get(b"updated_at")
+        status = values.get("status") or values.get(b"status")
+    else:
+        heartbeat = client.get(key)
+        status = client.get(f"{name}:heartbeat:status")
     if intentionally_paused and not heartbeat:
         return {"name": name, "state": "paused", "detail": "Paused by policy"}
     state = "healthy" if heartbeat else "attention"
     return {"name": name, "state": state, "detail": status or ("heartbeat active" if heartbeat else "heartbeat missing"), "heartbeat": heartbeat}
+
+
+def redis_key_size(client, key: str) -> int:
+    """Measure a Redis collection without assuming a historic key type."""
+    key_type = client.type(key)
+    key_type = key_type.decode() if isinstance(key_type, bytes) else str(key_type)
+    counters = {
+        "stream": client.xlen,
+        "hash": client.hlen,
+        "set": client.scard,
+        "zset": client.zcard,
+        "list": client.llen,
+    }
+    return int(counters[key_type](key)) if key_type in counters else 0
 
 
 def latest_classifier_progress() -> dict[str, Any]:
@@ -351,10 +373,10 @@ def overview():
             services.append(heartbeat_service(client, "workset_ai_worker"))
         services.append(heartbeat_service(client, "controlled_execution_worker"))
         metrics.update(
-            polling_queue=client.xlen("scan_stream"),
-            realtime_queue=client.xlen("scan_stream_realtime"),
-            dlq=client.xlen("scan_stream_dlq"),
-            dirty_roots=client.hlen("scanner:dirty_roots"),
+            polling_queue=redis_key_size(client, "scan_stream"),
+            realtime_queue=redis_key_size(client, "scan_stream_realtime"),
+            dlq=redis_key_size(client, "scan_stream_dlq"),
+            dirty_roots=redis_key_size(client, "scanner:dirty_roots"),
         )
     except Exception as exc:
         errors.append(f"redis: {type(exc).__name__}")
