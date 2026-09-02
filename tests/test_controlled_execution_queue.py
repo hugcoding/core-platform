@@ -198,6 +198,19 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         self.assertIn("'leader_path',h.selected_path", app)
         self.assertIn("resume interrupted item before cancelling batch", app)
 
+    def test_execution_document_links_are_separate_from_selection(self):
+        script = (ROOT / "dashboard/static/execution-queue.js").read_text("utf-8")
+        self.assertIn('/api/v1/workset/${Number(fileId)}/content', script)
+        self.assertIn('target="_blank" rel="noopener noreferrer"', script)
+        self.assertIn('documentLink(candidate.file_id,candidate.source_path)', script)
+        self.assertIn('documentLink(candidate.leader_file_id,candidate.leader_path)', script)
+        self.assertIn('return `<div class="execution-queue-item"><label><input', script)
+        self.assertIn('checked></label><span>', script)
+        self.assertNotIn('<label class="execution-queue-item">', script)
+        self.assertNotIn('documentLink(candidate.file_id,candidate.target_path)', script)
+        self.assertIn('Quarantainepad: ${esc(candidate.target_path)}', script)
+        self.assertIn('Nog te corrigeren naar: ${esc(candidate.leader_correction_target)}', script)
+
     def test_dashboard_image_contains_imported_queue_runtime(self):
         dockerfile = (ROOT / "Dockerfile.dashboard").read_text("utf-8")
         app = (ROOT / "dashboard/app.py").read_text("utf-8")
