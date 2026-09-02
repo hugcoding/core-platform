@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from core.execution.queue import (
     build_flat_file_correction, build_flat_golden_correction, exclude_already_controlled,
-    flat_personal_correction, partition_candidates, select_batch,
+    flat_personal_correction, partition_candidates, select_batch, check_source_availability,
 )
 from tools.runtime import controlled_execution_queue as runtime
 
@@ -29,6 +29,26 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         self.assertIn("item_count BETWEEN 1 AND 50", sql)
         self.assertIn("sequence_no BETWEEN 1 AND 50", sql)
         self.assertIn("maximaal 50 bestanden", (ROOT / "dashboard/static/workset.html").read_text("utf-8"))
+
+    def test_missing_source_stays_blocked_until_repaired(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.pdf"
+            candidate = {"file_id": 1, "source_path": str(source)}
+            for _ in range(2):
+                ready, blocked = check_source_availability([candidate])
+                self.assertEqual([], ready)
+                self.assertEqual("source_missing", blocked[0]["blocked_reason"])
+            source.touch()
+            self.assertEqual(([candidate], []), check_source_availability([candidate]))
+            self.assertEqual("source_not_regular_file", check_source_availability([
+                {"file_id": 2, "source_path": directory}])[1][0]["blocked_reason"])
+
+    def test_deletion_candidates_use_current_location_for_selection_and_exclusion(self):
+        from tools.runtime.personal_migration_executor import DELETION_CANDIDATES
+        self.assertIn("COALESCE(location.current_path, file.path) AS source_path", DELETION_CANDIDATES)
+        self.assertIn("location ON location.file_id = file.id", DELETION_CANDIDATES)
+        self.assertIn("COALESCE(location.current_path, file.path) NOT LIKE '/volume1/data/.core/quarantaine/%'", DELETION_CANDIDATES)
 
     def test_priority_and_limit_are_deterministic(self):
         rows = [self.candidate(1, "migrate_active", "/volume1/data/Persoonlijk/Actief/1.pdf"),
@@ -162,7 +182,7 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         self.assertIn(expected, app)
         self.assertLess(
             app.index(expected),
-            app.index("return partition_candidates", app.index("def controlled_execution_candidates")),
+            app.index("ready, blocked = partition_candidates", app.index("def controlled_execution_candidates")),
         )
 
     def test_database_contract_is_append_only_and_bounded(self):

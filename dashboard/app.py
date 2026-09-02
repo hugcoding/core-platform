@@ -45,7 +45,7 @@ from core.semantic.workset_llm import (
     SCHEMA_VERSION as LLM_SCHEMA_VERSION, abstention as llm_abstention,
     build_prompt as build_llm_prompt, extract_bounded_context, validate_proposal as validate_llm_proposal,
 )
-from core.execution.queue import MAX_BATCH_SIZE, build_flat_file_correction, exclude_already_controlled, partition_candidates
+from core.execution.queue import MAX_BATCH_SIZE, build_flat_file_correction, check_source_availability, exclude_already_controlled, partition_candidates
 from tools.runtime.personal_migration_executor import (
     CANDIDATES as PERSONAL_MIGRATION_CANDIDATES,
     complete_directory_target,
@@ -1504,7 +1504,9 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
     candidates = exclude_already_controlled(
         [*exact, *similar, *mapped_personal, *direct_corrections.values()], controlled
     )
-    return partition_candidates(candidates)
+    ready, blocked = partition_candidates(candidates)
+    ready, unavailable = check_source_availability(ready)
+    return ready, blocked + unavailable
 
 
 @app.get("/api/v1/workset/execution-queue")

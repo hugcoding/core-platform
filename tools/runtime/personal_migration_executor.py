@@ -99,7 +99,7 @@ WHERE v.effective_lifecycle IN ('active', 'archive')
 
 DELETION_CANDIDATES = """
 SELECT nomination.file_id, nomination.content_group_id, nomination.content_sha256,
-       file.path AS source_path,
+       COALESCE(location.current_path, file.path) AS source_path,
        '/volume1/data/.core/quarantaine/verwijderreview/' || nomination.id::text || '/'
          || file.id::text || '-' || file.filename AS target_path,
        file.size_bytes, 'deletion_review'::text AS effective_lifecycle,
@@ -116,6 +116,7 @@ SELECT nomination.file_id, nomination.content_group_id, nomination.content_sha25
        'deletion_quarantine'::text AS target_path_basis
 FROM public.v_active_document_lifecycle_nominations nomination
 JOIN public.files file ON file.id = nomination.file_id AND file.deleted_at IS NULL
+LEFT JOIN public.v_workset_current_physical_location location ON location.file_id = file.id
 JOIN public.content_group_members member
   ON member.content_group_id = nomination.content_group_id AND member.file_id = file.id
 LEFT JOIN LATERAL (
@@ -127,8 +128,8 @@ LEFT JOIN LATERAL (
 ) previous_cleanup ON true
 WHERE nomination.nomination_type = 'deletion'
   AND file.content_sha256 = nomination.content_sha256
-  AND file.path LIKE '/volume1/data/%'
-  AND file.path NOT LIKE '/volume1/data/.core/quarantaine/%'
+  AND COALESCE(location.current_path, file.path) LIKE '/volume1/data/%'
+  AND COALESCE(location.current_path, file.path) NOT LIKE '/volume1/data/.core/quarantaine/%'
 """
 
 CANDIDATES = """SELECT * FROM (({}) UNION ALL ({})) candidates
