@@ -52,6 +52,27 @@ class DashboardWorksetTests(unittest.TestCase):
         with mock.patch.dict(sys.modules, modules):
             cls.dashboard = importlib.import_module("dashboard.app")
 
+    def test_host_memory_accounts_for_cache_on_older_kernels(self):
+        cases = [
+            ("MemTotal: 1000 kB\nMemAvailable: 600 kB\nMemFree: 10 kB", 400, False),
+            ("MemTotal: 1000 kB\nMemAvailable: 0 kB\nMemFree: 100 kB", 1000, False),
+            ("MemTotal: 1000 kB\nMemFree: 100 kB\nBuffers: 50 kB\nCached: 400 kB\nSReclaimable: 100 kB\nShmem: 50 kB", 400, True),
+            ("MemTotal: 1000 kB\nMemFree: 100 kB", 900, True),
+            ("MemTotal: 1000 kB\nMemFree: 100 kB\nCached: 2000 kB", 0, True),
+            ("MemTotal: 1000 kB\nMemFree: 100 kB\nShmem: 200 kB", 900, True),
+        ]
+        for data, used, estimated in cases:
+            with self.subTest(data=data), mock.patch.object(Path, "read_text", side_effect=[data, "0.5 0.2 0.1"]):
+                result = self.dashboard.host_metrics()
+                self.assertEqual(used * 1024, result["memory_used"])
+                self.assertEqual(estimated, result["memory_estimated"])
+                self.assertEqual(1000 * 1024, result["memory_available"] + result["memory_used"])
+
+    def test_host_memory_missing_or_invalid_is_not_reported_as_zero(self):
+        for data in ("", "MemTotal: 0 kB", "MemTotal: bad kB", "MemTotal: 1000 kB", "MemTotal:"):
+            with self.subTest(data=data), mock.patch.object(Path, "read_text", side_effect=[data, "0.5 0.2 0.1"]):
+                self.assertNotIn("memory_used", self.dashboard.host_metrics())
+
     def test_ai_status_uses_narrow_query_and_preserves_relocated_job(self):
         jobs = [{"file_id": 1, "content_sha256": "abc", "status": "ready",
                  "category_code": "work_career", "family_code": "resumes",
