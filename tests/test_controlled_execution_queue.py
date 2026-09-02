@@ -17,6 +17,19 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         return {"file_id": file_id, "action_type": action,
                 "source_path": f"/volume1/data/source/{file_id}.pdf", "target_path": target}
 
+    def test_fifty_item_limit(self):
+        rows = [self.candidate(i, "migrate_active", f"/volume1/data/target/{i}.pdf") for i in range(60)]
+        self.assertEqual(50, len(select_batch(rows)))
+        self.assertEqual(50, len(select_batch(rows, 50)))
+        self.assertEqual(25, len(select_batch(rows, 25)))
+        for limit in (0, 51):
+            with self.assertRaises(ValueError):
+                select_batch(rows, limit)
+        sql = (ROOT / "database/migrations/20260902_expand_controlled_execution_batches.sql").read_text("utf-8")
+        self.assertIn("item_count BETWEEN 1 AND 50", sql)
+        self.assertIn("sequence_no BETWEEN 1 AND 50", sql)
+        self.assertIn("maximaal 50 bestanden", (ROOT / "dashboard/static/workset.html").read_text("utf-8"))
+
     def test_priority_and_limit_are_deterministic(self):
         rows = [self.candidate(1, "migrate_active", "/volume1/data/Persoonlijk/Actief/1.pdf"),
                 self.candidate(2, "quarantine_exact_duplicate", "/volume1/data/.core/quarantaine/duplicaten/2.pdf"),

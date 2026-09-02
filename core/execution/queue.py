@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Iterable, Mapping, Any, Optional, Tuple
 from pathlib import PurePosixPath
 
-MAX_BATCH_SIZE = 25
+MAX_BATCH_SIZE = 50
 ACTION_PRIORITY = {
     "quarantine_exact_duplicate": 10,
     "quarantine_content_similar": 20,
@@ -138,7 +138,7 @@ def partition_candidates(candidates: Iterable[Mapping[str, Any]]) -> tuple[list[
 
 def select_batch(candidates: Iterable[Mapping[str, Any]], limit: int = MAX_BATCH_SIZE) -> list[dict[str, Any]]:
     if not 1 <= limit <= MAX_BATCH_SIZE:
-        raise ValueError("batch limit must be between 1 and 25")
+        raise ValueError(f"batch limit must be between 1 and {MAX_BATCH_SIZE}")
     return order_candidates(candidates)[:limit]
 
 
