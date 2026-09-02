@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from typing import Iterable, Mapping, Any, Optional, Tuple
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
+import stat
 
 MAX_BATCH_SIZE = 50
 ACTION_PRIORITY = {
@@ -140,6 +141,30 @@ def select_batch(candidates: Iterable[Mapping[str, Any]], limit: int = MAX_BATCH
     if not 1 <= limit <= MAX_BATCH_SIZE:
         raise ValueError(f"batch limit must be between 1 and {MAX_BATCH_SIZE}")
     return order_candidates(candidates)[:limit]
+
+
+def check_source_availability(candidates: Iterable[Mapping[str, Any]]) -> tuple[list[dict], list[dict]]:
+    """Cheap preflight: do not offer missing sources as ready on every retry.
+
+    No hashing here. The executor still verifies content before any mutation.
+    Rechecking allows a repaired source to become eligible without clearing audit.
+    """
+    ready, blocked = [], []
+    for candidate in candidates:
+        item = dict(candidate)
+        try:
+            mode = Path(item["source_path"]).lstat().st_mode
+            reason = None if stat.S_ISREG(mode) else "source_not_regular_file"
+        except FileNotFoundError:
+            reason = "source_missing"
+        except OSError:
+            reason = "source_unavailable"
+        if reason:
+            item["blocked_reason"] = reason
+            blocked.append(item)
+        else:
+            ready.append(item)
+    return ready, blocked
 
 
 def exclude_already_controlled(
