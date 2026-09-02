@@ -52,6 +52,26 @@ class DashboardWorksetTests(unittest.TestCase):
         with mock.patch.dict(sys.modules, modules):
             cls.dashboard = importlib.import_module("dashboard.app")
 
+    def test_ai_status_uses_narrow_query_and_preserves_relocated_job(self):
+        jobs = [{"file_id": 1, "content_sha256": "abc", "status": "ready",
+                 "category_code": "work_career", "family_code": "resumes",
+                 "lifecycle": "active", "filename": "old.pdf"}]
+        candidates = [{"file_id": 2, "content_sha256": "abc", "filename": "new.pdf",
+                       "path": "/volume1/data/Persoonlijk/Actief/new.pdf",
+                       "extension": "pdf", "workset_status": "active"}]
+        with mock.patch.object(self.dashboard, "db_connect"), \
+             mock.patch.object(self.dashboard, "query_all", side_effect=[jobs, candidates, []]) as query, \
+             mock.patch.object(self.dashboard, "query_one", return_value={"count": 1}):
+            result = self.dashboard.workset_ai_jobs("all")
+        sql = query.call_args_list[1].args[1]
+        self.assertNotIn("JOIN", sql)
+        self.assertNotIn("location", sql)
+        self.assertIn("w.content_sha256=ANY(%s)", sql)
+        self.assertEqual(2, result["jobs"][0]["file_id"])
+        self.assertEqual(1, result["jobs"][0]["requested_file_id"])
+        self.assertTrue(result["jobs"][0]["workset_available"])
+        self.assertNotIn("content_sha256", result["jobs"][0])
+
     def test_smb_path_maps_only_data_share(self):
         self.assertEqual(
             r"\\192.168.68.105\data\import\document.docx",
