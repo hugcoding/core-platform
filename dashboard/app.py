@@ -1444,7 +1444,20 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
       JOIN public.pdf_content_similarity_review_events r ON r.id=h.review_event_id
       WHERE h.eligible_for_cleanup
     """) if similar_available else []
-    personal = query_all(conn, "SELECT * FROM (" + PERSONAL_MIGRATION_CANDIDATES + ") candidate LIMIT 500")
+    leader_ids = sorted({int(row["leader_file_id"]) for row in [*exact, *similar]})
+    # Evaluate the inventory once for the first 500 candidates AND their leaders.
+    inventory = query_all(conn, """
+      SELECT * FROM (
+        SELECT candidate.*, row_number() OVER (
+          ORDER BY candidate_priority, target_path_reviewed_at, file_id
+        ) AS queue_rank FROM (
+    """ + PERSONAL_MIGRATION_CANDIDATES.replace("%", "%%") + """
+        ) candidate
+      ) ranked WHERE queue_rank <= 500 OR file_id = ANY(%s)
+      ORDER BY queue_rank
+    """, (leader_ids,))
+    personal = [{key: value for key, value in row.items() if key != "queue_rank"}
+                for row in inventory if row["queue_rank"] <= 500]
     mapped_personal = []
     for row in personal:
         row = ensure_taxonomy_subdirectory_target(complete_directory_target(dict(row)))
@@ -1463,24 +1476,26 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
             },
         })
     corrective_targets = {int(row["file_id"]): row["target_path"] for row in mapped_personal}
-    leader_ids = sorted({int(row["leader_file_id"]) for row in [*exact, *similar]})
     if leader_ids:
-        leader_id_sql = ",".join(str(file_id) for file_id in leader_ids)
-        leader_candidates = query_all(
-            conn,
-            "SELECT * FROM (" + PERSONAL_MIGRATION_CANDIDATES + ") candidate "
-            "WHERE candidate.file_id IN (" + leader_id_sql + ")",
-        )
+        leader_candidates = [row for row in inventory if int(row["file_id"]) in leader_ids]
         for row in leader_candidates:
             correction = ensure_taxonomy_subdirectory_target(complete_directory_target(dict(row)))
             corrective_targets[int(correction["file_id"])] = correction["target_path"]
     flat_files = query_all(conn, """
+      WITH current_locations AS MATERIALIZED (
+        SELECT * FROM public.v_workset_current_physical_location
+      )
       SELECT f.id AS file_id, f.filename, f.content_sha256, f.size_bytes,
              COALESCE(location.current_path, f.path) AS source_path,
              location.status_changed_at AS location_changed_at, f.updated_at
       FROM public.files f
-      LEFT JOIN public.v_workset_current_physical_location location ON location.file_id = f.id
+      LEFT JOIN current_locations location ON location.file_id = f.id
       WHERE f.deleted_at IS NULL
+        AND f.id IN (
+          SELECT id FROM public.files WHERE path LIKE '/volume1/data/Persoonlijk/%'
+          UNION
+          SELECT file_id FROM current_locations WHERE current_path LIKE '/volume1/data/Persoonlijk/%'
+        )
         AND COALESCE(location.current_path, f.path)
             ~ '^/volume1/data/Persoonlijk/(Actief|Inactief)/[^/]+$'
     """)
