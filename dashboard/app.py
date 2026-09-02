@@ -250,9 +250,19 @@ def host_metrics() -> dict[str, Any]:
     try:
         lines = (HOST_PROC / "meminfo").read_text().splitlines()
         values = {line.split(":", 1)[0]: int(line.split()[1]) * 1024 for line in lines}
-        result["memory_total"] = values["MemTotal"]
-        result["memory_used"] = values["MemTotal"] - values.get("MemAvailable", values.get("MemFree", 0))
-    except (OSError, KeyError, ValueError):
+        total = values["MemTotal"]
+        if total <= 0:
+            raise ValueError("Invalid memory total")
+        estimated = "MemAvailable" not in values
+        # Older NAS kernels lack MemAvailable. This is an estimate, not
+        # the kernel's watermark-aware available-memory calculation.
+        cache = max(0, values.get("Buffers", 0) + values.get("Cached", 0)
+                    + values.get("SReclaimable", 0) - values.get("Shmem", 0))
+        available = values["MemFree"] + cache if estimated else values["MemAvailable"]
+        available = min(total, max(0, available))
+        result.update(memory_total=total, memory_used=total - available,
+                      memory_available=available, memory_estimated=estimated)
+    except (OSError, KeyError, ValueError, IndexError):
         pass
     try:
         usage = shutil.disk_usage(STORAGE_PATH)
