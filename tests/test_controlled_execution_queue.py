@@ -17,6 +17,24 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         return {"file_id": file_id, "action_type": action,
                 "source_path": f"/volume1/data/source/{file_id}.pdf", "target_path": target}
 
+    def test_materialized_handoff_preserves_all_safety_conditions(self):
+        original = (ROOT / "database/migrations/20260821_add_exact_duplicate_review.sql").read_text("utf-8")
+        updated = (ROOT / "database/migrations/20260902_optimize_exact_duplicate_handoff.sql").read_text("utf-8")
+        original_select = original.split("CREATE OR REPLACE VIEW public.v_exact_duplicate_review_handoff AS\n", 1)[1].split(";", 1)[0]
+        updated_select = updated.split(")\nSELECT\n", 1)[1].split(";", 1)[0]
+        updated_select = "SELECT\n" + updated_select.replace("JOIN groups_snapshot groups", "JOIN public.v_exact_duplicate_review_groups groups")
+        self.assertEqual(original_select.strip(), updated_select.strip())
+        self.assertIn("AS MATERIALIZED", updated)
+
+    def test_flat_candidate_prefilter_keeps_both_registered_and_migrated_paths(self):
+        source = (ROOT / "dashboard/app.py").read_text("utf-8")
+        query = source.split('flat_files = query_all(conn, """', 1)[1].split('""")', 1)[0]
+        self.assertIn("current_locations AS MATERIALIZED", query)
+        self.assertIn("SELECT id FROM public.files WHERE path LIKE", query)
+        self.assertIn("UNION", query)
+        self.assertIn("SELECT file_id FROM current_locations WHERE current_path LIKE", query)
+        self.assertIn("COALESCE(location.current_path, f.path)", query)
+
     def test_fifty_item_limit(self):
         rows = [self.candidate(i, "migrate_active", f"/volume1/data/target/{i}.pdf") for i in range(60)]
         self.assertEqual(50, len(select_batch(rows)))
@@ -170,9 +188,9 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         app = (ROOT / "dashboard/app.py").read_text("utf-8")
         ui = (ROOT / "dashboard/static/execution-queue.js").read_text("utf-8")
         self.assertIn('"leader_correction_target": corrective_targets.get', app)
-        self.assertIn('leader_id_sql = ",".join(str(file_id) for file_id in leader_ids)', app)
-        self.assertIn('"WHERE candidate.file_id IN (" + leader_id_sql + ")"', app)
-        self.assertNotIn('"WHERE candidate.file_id = ANY(%s)"', app)
+        self.assertIn('leader_candidates = [row for row in inventory', app)
+        self.assertIn('queue_rank <= 500 OR file_id = ANY(%s)', app)
+        self.assertIn('PERSONAL_MIGRATION_CANDIDATES.replace("%", "%%")', app)
         self.assertIn("Huidige locatie:", ui)
         self.assertIn("Nog te corrigeren naar:", ui)
 

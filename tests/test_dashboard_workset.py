@@ -91,6 +91,29 @@ class DashboardWorksetTests(unittest.TestCase):
         connection.rollback.assert_called_once()
         connection.close.assert_called_once()
 
+    def test_queue_inventory_is_shared_and_keeps_leaders_beyond_window(self):
+        exact = {"file_id": 2, "leader_file_id": 900, "leader_path": "/volume1/data/old.pdf"}
+        primary = {"file_id": 1, "queue_rank": 1, "effective_lifecycle": "active",
+                   "target_path": "/volume1/data/Persoonlijk/Actief/Test/1.pdf",
+                   "content_group_id": "g", "deletion_nomination_id": None}
+        leader = {**primary, "file_id": 900, "queue_rank": 501,
+                  "target_path": "/volume1/data/Persoonlijk/Actief/Test/900.pdf"}
+        with mock.patch.object(self.dashboard, "query_one", side_effect=[{"available": True}, {"available": False}]), \
+             mock.patch.object(self.dashboard, "query_all", side_effect=[[exact], [primary, leader], [], []]) as query, \
+             mock.patch.object(self.dashboard, "complete_directory_target", side_effect=lambda row: row), \
+             mock.patch.object(self.dashboard, "ensure_taxonomy_subdirectory_target", side_effect=lambda row: row), \
+             mock.patch.object(self.dashboard, "exclude_already_controlled", side_effect=lambda rows, controlled: rows), \
+             mock.patch.object(self.dashboard, "partition_candidates", side_effect=lambda rows: (rows, [])), \
+             mock.patch.object(self.dashboard, "check_source_availability", side_effect=lambda rows: (rows, [])):
+            ready, blocked = self.dashboard.controlled_execution_candidates(mock.Mock())
+        self.assertEqual([2, 1], [row["file_id"] for row in ready])
+        self.assertEqual(leader["target_path"], ready[0]["leader_correction_target"])
+        self.assertNotIn("queue_rank", ready[1])
+        self.assertEqual([], blocked)
+        self.assertEqual(4, query.call_count)
+        self.assertIn("queue_rank <= 500 OR file_id = ANY(%s)", query.call_args_list[1].args[1])
+        self.assertEqual(([900],), query.call_args_list[1].args[2])
+
     def test_host_memory_accounts_for_cache_on_older_kernels(self):
         cases = [
             ("MemTotal: 1000 kB\nMemAvailable: 600 kB\nMemFree: 10 kB", 400, False),
