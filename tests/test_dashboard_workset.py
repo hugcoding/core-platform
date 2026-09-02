@@ -52,6 +52,45 @@ class DashboardWorksetTests(unittest.TestCase):
         with mock.patch.dict(sys.modules, modules):
             cls.dashboard = importlib.import_module("dashboard.app")
 
+    def test_dashboard_connection_disables_jit_without_changing_transaction_mode(self):
+        with mock.patch.object(self.dashboard.psycopg2, "connect") as connect:
+            connection = self.dashboard.db_connect()
+        self.assertIs(connection, connect.return_value)
+        self.assertEqual("-c jit=off", connect.call_args.kwargs["options"])
+        self.assertEqual(3, connect.call_args.kwargs["connect_timeout"])
+        connection.set_session.assert_not_called()
+        connection.cursor.assert_not_called()
+
+    def test_workset_benchmark_is_read_only_and_cleans_up(self):
+        with mock.patch.dict(sys.modules, {"dashboard": types.SimpleNamespace(app=self.dashboard)}):
+            from tools.runtime import benchmark_workset_reads as benchmark
+        connection = mock.MagicMock()
+        def response(**kwargs):
+            benchmark.app.query_all(connection, "SELECT w.content_group_id, latest_review_id")
+            return {"filtered_total": 1, "documents": [{"file_id": 1}]}
+        with mock.patch.object(self.dashboard, "db_connect", return_value=connection), \
+             mock.patch.object(self.dashboard, "query_all", return_value=[{"file_id": 1}]), \
+             mock.patch.object(self.dashboard, "workset", side_effect=response), \
+             mock.patch("builtins.print"):
+            self.assertEqual(0, benchmark.main())
+        connection.set_session.assert_called_once_with(readonly=True, isolation_level="REPEATABLE READ")
+        connection.rollback.assert_called_once()
+        connection.close.assert_called_once()
+        connection.commit.assert_not_called()
+
+    def test_workset_benchmark_rejects_different_results(self):
+        with mock.patch.dict(sys.modules, {"dashboard": types.SimpleNamespace(app=self.dashboard)}):
+            from tools.runtime import benchmark_workset_reads as benchmark
+        connection = mock.MagicMock()
+        with mock.patch.object(self.dashboard, "db_connect", return_value=connection), \
+             mock.patch.object(self.dashboard, "workset", side_effect=[
+                 {"filtered_total": 1, "documents": [{"file_id": 1}]},
+                 {"filtered_total": 1, "documents": [{"file_id": 2}]},
+             ]), mock.patch("builtins.print"):
+            self.assertEqual(1, benchmark.main())
+        connection.rollback.assert_called_once()
+        connection.close.assert_called_once()
+
     def test_host_memory_accounts_for_cache_on_older_kernels(self):
         cases = [
             ("MemTotal: 1000 kB\nMemAvailable: 600 kB\nMemFree: 10 kB", 400, False),

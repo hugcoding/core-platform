@@ -74,6 +74,9 @@ def db_connect():
         host=os.getenv("DB_HOST"), port=os.getenv("DB_PORT", "5432"),
         user=os.getenv("DB_USER"), password=os.getenv("DB_PASS"),
         dbname=os.getenv("DB_NAME"), connect_timeout=3,
+        # Expanded Workset views trigger expensive JIT compilation on the NAS.
+        # Apply only to these short-lived UI sessions, never ALTER SYSTEM.
+        options="-c jit=off",
     )
 
 
