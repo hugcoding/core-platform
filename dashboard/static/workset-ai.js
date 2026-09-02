@@ -3,12 +3,41 @@ const aiQueue={
   jobs:new Map(),
   summary:{},
   refreshTimer:null,
+  inFlight:null,
   loaded:false
 };
 const ocrQueue={jobs:new Map(),loaded:false};
 function aiStatusLabel(status){return({pending:'Wachtend',running:'Bezig',ready:'Voorstel gereed',failed:'Mislukt',abstained:'Onvoldoende bewijs',cancelled:'Vervallen'})[status]||status}
 function aiReasonInDutch(reason){const known={waiting_for_cpu:'Wacht op lagere CPU-belasting',waiting_for_memory:'Wacht op voldoende vrij geheugen',core_pipeline_priority:'CORE-verwerking heeft voorrang',ai_worker_busy:'De lokale AI-worker is bezig',provider_unavailable:'De lokale AI-provider is niet bereikbaar',ocr_required_from_existing_evidence:'OCR was al door CORE vastgesteld voor deze bestandsinhoud',ocr_recommended_no_extractable_text:'Geen herkenbare tekst gevonden; OCR wordt aanbevolen',no_extractable_text:'Geen uitleesbare tekst gevonden'};return known[reason]||reason||''}
-async function refreshAiQueue(){try{const [response,ocrResponse]=await Promise.all([fetch('/api/v1/workset/ai-jobs',{cache:'no-store'}),fetch('/api/v1/workset/ocr-jobs',{cache:'no-store'})]);if(!response.ok)throw Error(response.status);const data=await response.json();aiQueue.summary=data.summary;aiQueue.jobs=new Map(data.jobs.map(job=>[Number(job.file_id),job]));aiQueue.loaded=true;if(ocrResponse.ok){const ocr=await ocrResponse.json();ocrQueue.jobs=new Map(ocr.jobs.map(job=>[Number(job.file_id),job]));ocrQueue.loaded=true}renderAiBell(data.jobs);decorateAiActions()}catch(error){const bell=document.querySelector('.ai-notification');if(bell)bell.title='AI- of OCR-wachtrij niet beschikbaar'}}
+function refreshAiQueue(){
+  if(aiQueue.inFlight)return aiQueue.inFlight;
+  clearTimeout(aiQueue.refreshTimer);
+  if(document.hidden)return Promise.resolve();
+  aiQueue.inFlight=(async()=>{
+    try{
+      // Wait for both requests, even if one fails, before allowing a new cycle.
+      const results=await Promise.allSettled([
+        fetch('/api/v1/workset/ai-jobs',{cache:'no-store'}),
+        fetch('/api/v1/workset/ocr-jobs',{cache:'no-store'})
+      ]);
+      if(results[0].status!=='fulfilled')throw results[0].reason;
+      const response=results[0].value;
+      if(!response.ok)throw Error(response.status);
+      const data=await response.json();
+      aiQueue.summary=data.summary;aiQueue.jobs=new Map(data.jobs.map(job=>[Number(job.file_id),job]));aiQueue.loaded=true;
+      if(results[1].status==='fulfilled'&&results[1].value.ok){
+        const ocr=await results[1].value.json();
+        ocrQueue.jobs=new Map(ocr.jobs.map(job=>[Number(job.file_id),job]));ocrQueue.loaded=true;
+      }
+      renderAiBell(data.jobs);decorateAiActions();
+    }catch(error){const bell=document.querySelector('.ai-notification');if(bell)bell.title='AI- of OCR-wachtrij niet beschikbaar'}
+    finally{
+      aiQueue.inFlight=null;
+      if(!document.hidden)aiQueue.refreshTimer=setTimeout(refreshAiQueue,15000);
+    }
+  })();
+  return aiQueue.inFlight;
+}
 function ensureAiBell(){let bell=document.querySelector('.ai-notification');if(bell)return bell;bell=document.createElement('div');bell.className='ai-notification';bell.innerHTML=`<button type="button" class="ai-bell" aria-expanded="false" aria-label="AI-voorstellen"><span aria-hidden="true">&#128276;</span><b>0</b></button><section class="ai-ready-list" hidden><strong>AI-voorstellen gereed</strong><div></div></section>`;document.querySelector('.workset-page header').append(bell);bell.querySelector('.ai-bell').addEventListener('click',()=>{const list=bell.querySelector('.ai-ready-list'),open=list.hidden;list.hidden=!open;bell.querySelector('.ai-bell').setAttribute('aria-expanded',String(open))});bell.addEventListener('click',event=>{const item=event.target.closest('[data-ai-ready-file]');if(!item)return;ws('worksetSearch').value=item.dataset.filename;bell.querySelector('.ai-ready-list').hidden=true;loadWorkset(true)});return bell}
 function isOcrAdvice(job){return job?.status==='abstained'&&['ocr_required_from_existing_evidence','ocr_recommended_no_extractable_text'].includes(job.reason)}
 function latestAiJobsByFile(jobs){const latest=new Map();for(const job of jobs){const fileId=Number(job.file_id),current=latest.get(fileId),jobTime=Date.parse(job.requested_at||0),currentTime=Date.parse(current?.requested_at||0);if(!current||jobTime>currentTime||(jobTime===currentTime&&String(job.id)>String(current.id)))latest.set(fileId,job)}return[...latest.values()]}
@@ -133,8 +162,11 @@ document.addEventListener('workset:rendered', () => {
 // Meteen AI-status ophalen zodra het script geladen is.
 refreshAiQueue();
 
-// Daarna periodiek verversen.
-aiQueue.refreshTimer = setInterval(refreshAiQueue, 15000);
+// Suspend polling in background tabs; resume with one shared request.
+document.addEventListener('visibilitychange',()=>{
+  clearTimeout(aiQueue.refreshTimer);
+  if(!document.hidden)refreshAiQueue();
+});
 
 async function applyAiProposalToForm(dialog) {
   const jobId = dialog.dataset.jobId;

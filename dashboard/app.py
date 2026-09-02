@@ -2258,7 +2258,13 @@ def workset_ai_jobs(status: str = Query("all", pattern="^(all|pending|running|re
             """ + where + " ORDER BY j.priority DESC,j.requested_at,j.id LIMIT 200", params)
             ready_hashes = [row["content_sha256"] for row in rows if row["status"] == "ready"]
             candidates = query_all(
-                conn, WORKSET_SELECT + " WHERE w.content_sha256=ANY(%s)", (ready_hashes,),
+                conn, """
+                SELECT w.file_id, w.content_sha256, w.filename, w.path,
+                       w.extension, w.workset_status
+                FROM public.v_active_document_workset w
+                WHERE w.content_sha256=ANY(%s)
+                ORDER BY w.file_id
+                """, (list(set(ready_hashes)),),
             ) if ready_hashes else []
             candidates_by_hash = {str(item["content_sha256"]): item for item in candidates}
             for item in rows:
