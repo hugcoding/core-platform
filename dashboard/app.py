@@ -45,7 +45,7 @@ from core.semantic.workset_llm import (
     SCHEMA_VERSION as LLM_SCHEMA_VERSION, abstention as llm_abstention,
     build_prompt as build_llm_prompt, extract_bounded_context, validate_proposal as validate_llm_proposal,
 )
-from core.execution.queue import build_flat_file_correction, exclude_already_controlled, partition_candidates
+from core.execution.queue import MAX_BATCH_SIZE, build_flat_file_correction, exclude_already_controlled, partition_candidates
 from tools.runtime.personal_migration_executor import (
     CANDIDATES as PERSONAL_MIGRATION_CANDIDATES,
     complete_directory_target,
@@ -1516,8 +1516,8 @@ def controlled_execution_queue_preview():
         raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"execution queue unavailable: {type(exc).__name__}: {exc}") from exc
-    return {"ready_count": len(candidates), "display_limit": 25,
-            "candidates": [{key: iso(value) for key, value in item.items()} for item in candidates[:25]],
+    return {"ready_count": len(candidates), "display_limit": MAX_BATCH_SIZE,
+            "candidates": [{key: iso(value) for key, value in item.items()} for item in candidates[:MAX_BATCH_SIZE]],
             "blocked_count": len(blocked),
             "writes_enabled": review_writes_enabled(), "file_mutations": False}
 
@@ -1530,8 +1530,8 @@ def create_controlled_execution_batch(payload: dict[str, Any] = Body(...)):
         selected_ids = sorted({int(value) for value in payload["file_ids"]})
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail="valid file_ids required") from exc
-    if not 1 <= len(selected_ids) <= 25:
-        raise HTTPException(status_code=422, detail="select between 1 and 25 files")
+    if not 1 <= len(selected_ids) <= MAX_BATCH_SIZE:
+        raise HTTPException(status_code=422, detail=f"select between 1 and {MAX_BATCH_SIZE} files")
     try:
         with db_connect() as conn:
             active = query_one(conn, """

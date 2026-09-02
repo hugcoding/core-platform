@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path: sys.path.insert(0, str(ROOT))
 
-from core.execution.queue import select_batch
+from core.execution.queue import MAX_BATCH_SIZE, select_batch
 from core.migration.personal_executor import sha256_file
 from tools.runtime.duplicate_cleanup_executor import inspect_candidates as exact_candidates
 from tools.runtime.personal_migration_executor import copy_rows, inspect_candidates as migration_candidates
@@ -57,7 +57,7 @@ def migration_items(limit: int, minimum_free_bytes: int = 0) -> tuple[list[dict]
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--limit", type=int, default=25)
+    parser.add_argument("--limit", type=int, default=MAX_BATCH_SIZE)
     parser.add_argument("--minimum-free-bytes", type=int, default=0)
     parser.add_argument("--dry-run", action="store_true", required=True)
     args = parser.parse_args(argv)
