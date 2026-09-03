@@ -1,0 +1,27 @@
+{
+  "schema_version": "active-document-workset-policy-v1",
+  "policy_code": "active_document_workset",
+  "policy_version": "active-document-workset-v2",
+  "effective_from": "2026-09-03T00:00:00+02:00",
+  "change_reason": "Keep personal golden records in the Workset after migration, including review fallback folders",
+  "created_by": "core-policy-seed",
+  "approved_by": "hugo",
+  "approved_at": "2026-09-03T00:00:00+02:00",
+  "configuration": {
+    "activity_window_months": 9,
+    "extensions": ["pdf", "docx", "xlsx"],
+    "golden_records_only": true,
+    "source_roots": [
+      "/volume1/data/import/cloud/onedrive/current/Documenten",
+      "/volume1/data/Persoonlijk/Actief",
+      "/volume1/data/Persoonlijk/Inactief",
+      "/volume1/data/Persoonlijk/Te beoordelen"
+    ],
+    "activity_sources": ["source_metadata_modified", "source_metadata_created", "filesystem_mtime"],
+    "excluded_activity_sources": ["core_first_observed_at", "filesystem_atime", "filesystem_birthtime"],
+    "temporal_conflict_action": "needs_review",
+    "missing_golden_action": "needs_review",
+    "minimum_confidence": "low",
+    "review_limit": 100
+  }
+}
