@@ -17,6 +17,34 @@ def payload():
 
 
 class PolicyRegistryContractTests(unittest.TestCase):
+    def test_personal_scope_preserves_other_policy_settings(self):
+        current = json.loads(policy_config.DEFAULT_SOURCE.read_text(encoding="utf-8"))
+        plan = build_seed_plan(current, environment="acceptance")
+        old = build_seed_plan(payload(), environment="acceptance")
+        self.assertNotEqual(plan["id"], old["id"])
+        self.assertEqual("active-document-workset-v2", plan["policy_version"])
+        self.assertEqual(
+            {k: v for k, v in old["configuration"].items() if k != "source_roots"},
+            {k: v for k, v in plan["configuration"].items() if k != "source_roots"},
+        )
+        roots = plan["configuration"]["source_roots"]
+        def included(path):
+            return any(path == root or path.startswith(root + "/") for root in roots)
+        for path in (
+            "/volume1/data/import/cloud/onedrive/current/Documenten/example.pdf",
+            "/volume1/data/Persoonlijk/Actief/Wonen/example.pdf",
+            "/volume1/data/Persoonlijk/Inactief/Te beoordelen/example.pdf",
+            "/volume1/data/Persoonlijk/Actief/Te beoordelen/example.pdf",
+            "/volume1/data/Persoonlijk/Te beoordelen/example.pdf",
+        ):
+            self.assertTrue(included(path), path)
+        for path in (
+            "/volume1/data/.core/quarantaine/example.pdf",
+            "/volume1/data/Persoonlijk/Actief-extra/example.pdf",
+            "/volume1/data/Other/example.pdf",
+        ):
+            self.assertFalse(included(path), path)
+
     def test_seed_contract_is_normalized_and_stable(self):
         first = build_seed_plan(payload(), environment="acceptance")
         second = build_seed_plan(payload(), environment="acceptance")

@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
 from core.policies.registry import build_seed_plan, render_seed_sql
 
 
-DEFAULT_SOURCE = ROOT / "project/policies/active-document-workset-v1.json"
+DEFAULT_SOURCE = ROOT / "project/policies/active-document-workset-v2.json"
 
 
 def apply_sql(sql: str) -> None:
