@@ -869,6 +869,12 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
         }
 
         item["review_options"] = contextual_options(row, proposal)
+        ai = item.get("ai_proposal")
+        if ai and ai["status"] == "ready" and item["workset_status"] == "active":
+            ai["suggested_target_path"] = propose_target({
+                **row, "accepted_category": ai["category_code"],
+                "accepted_document_family": ai["family_code"], "accepted_lifecycle": "active",
+            })["suggested_target_path"]
 
     else:
         item["target_proposal"] = None
@@ -977,6 +983,8 @@ def workset(
             """ if ai_storage else ""
             ai_join = """
                 LEFT JOIN public.v_latest_workset_ai_proposal a ON a.file_id = w.file_id
+                  AND NOT EXISTS (SELECT 1 FROM public.workset_ai_jobs aj
+                      WHERE aj.proposal_id=a.id AND aj.dismissed_at IS NOT NULL)
             """ if ai_storage else ""
             nomination_storage = bool(query_one(
                 conn, "SELECT to_regclass('public.v_active_document_lifecycle_nominations') IS NOT NULL AS available"

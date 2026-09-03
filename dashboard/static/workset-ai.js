@@ -24,7 +24,7 @@ function refreshAiQueue(){
       const response=results[0].value;
       if(!response.ok)throw Error(response.status);
       const data=await response.json();
-      aiQueue.summary=data.summary;aiQueue.jobs=new Map(data.jobs.map(job=>[Number(job.file_id),job]));aiQueue.loaded=true;
+      aiQueue.summary=data.summary;aiQueue.jobs=new Map(latestAiJobsByFile(data.jobs).map(job=>[Number(job.file_id),job]));aiQueue.loaded=true;
       if(results[1].status==='fulfilled'&&results[1].value.ok){
         const ocr=await results[1].value.json();
         ocrQueue.jobs=new Map(ocr.jobs.map(job=>[Number(job.file_id),job]));ocrQueue.loaded=true;
@@ -52,10 +52,46 @@ function decorateAiActions(){document.querySelectorAll('.document-card').forEach
 
 const job = aiQueue.jobs.get(Number(doc.file_id));
 const ocrJob = ocrQueue.jobs.get(Number(doc.file_id));
+prefillBackgroundAi(card, doc, job);
 
 actions.innerHTML = !aiQueue.loaded
   ? `<span class="ai-job-status">AI laden…</span>`
   : aiAction(job, doc, ocrJob);})}
+function prefillBackgroundAi(card, doc, job) {
+  const panel = card.querySelector('.review-panel');
+  if (!panel || panel.dataset.userEdited || panel.dataset.aiProposalId ||
+      doc.workset_status !== 'active' || doc.latest_review_decision ||
+      doc.classification_status === 'accepted' || doc.is_similarity_redundant ||
+      doc.is_deletion_quarantined ||
+      (doc.target_proposal?.category_code && doc.target_proposal.category_code !== 'needs_review')) return;
+  if (job && (job.dismissed_at || job.awaiting_human_review === false)) return;
+  const ai = job?.status === 'ready' && job.workset_available === true ? job : doc.ai_proposal;
+  if (!ai || ai.status !== 'ready') return;
+  const category = state.taxonomy.categories.find(item => item.code === ai.category_code);
+  const family = state.taxonomy.families.find(item => item.code === ai.family_code && item.categories.includes(ai.category_code));
+  if (!category || !family) return;
+  const categorySelect = panel.querySelector('.review-category'), familySelect = panel.querySelector('.review-family');
+  if (!categorySelect || !familySelect) return;
+  categorySelect.value = category.code;
+  familySelect.innerHTML = state.taxonomy.families.filter(item => item.categories.includes(category.code))
+    .map(item => `<option value="${wsEsc(item.code)}">${wsEsc(item.label)}</option>`).join('');
+  familySelect.value = family.code;
+  panel.dataset.aiProposalId = ai.proposal_id || ai.id;
+  const explanation = document.createElement('div');
+  explanation.className = 'ai-prefill-notice';
+  explanation.innerHTML = `<strong>AI-voorstel — nog niet beoordeeld</strong> ${aiInfo(ai)}<p>${wsEsc(ai.reason)}</p><small>Betrouwbaarheid: ${wsEsc(ai.confidence)}. Controleer categorie en familie en bevestig zelf.</small>`;
+  panel.prepend(explanation);
+  const target = card.querySelector('.target-proposal');
+  if (target && ai.suggested_target_path) {
+    target.querySelector('span').innerHTML = '<i class="source-badge">AI-voorstel — niet bevestigd</i>';
+    target.querySelector('code').textContent = ai.suggested_target_path;
+  }
+}
+// Never replace edits during background polling, including a manually cleared field.
+for (const name of ['input', 'change']) document.addEventListener(name, event => {
+  const panel = event.target.closest?.('.review-panel');
+  if (panel && event.isTrusted) panel.dataset.userEdited = 'true';
+}, true);
 async function requestAi(fileId,actions){const message=actions.querySelector('.ai-job-message');message.textContent='Aanvraag toevoegen...';actions.querySelectorAll('button').forEach(button=>button.disabled=true);try{const response=await fetch('/api/v1/workset/ai-jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_id:Number(fileId),idempotency_key:reviewId()})});const data=await response.json();if(!response.ok)throw Error(data.detail||response.status);message.textContent='AI-aanvraag staat in de wachtrij';await refreshAiQueue()}catch(error){message.textContent=`Aanvraag mislukt: ${error.message}`;actions.querySelectorAll('button').forEach(button=>button.disabled=false)}}
 async function requestOcr(fileId,actions){const message=actions.querySelector('.ai-job-message');message.textContent='OCR-aanvraag toevoegen...';actions.querySelectorAll('button').forEach(button=>button.disabled=true);try{const response=await fetch('/api/v1/workset/ocr-jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file_id:Number(fileId),idempotency_key:reviewId()})});const body=await response.text();let data={};try{data=body?JSON.parse(body):{}}catch(parseError){data={detail:body||`HTTP ${response.status}`}}if(!response.ok)throw Error(data.detail||response.status);message.textContent='OCR staat in de wachtrij';await refreshAiQueue()}catch(error){message.textContent=`OCR-aanvraag mislukt: ${error.message}`;actions.querySelectorAll('button').forEach(button=>button.disabled=false)}}
 function ensureAiDialog(){
