@@ -156,7 +156,12 @@ def process_forward(conn, batch: dict[str, Any], client: redis.Redis | None = No
                 append_event(conn, batch_id, None, "queued", f"{batch_id}:resource-wait:{uuid.uuid4()}",
                              {"waiting_reason": waiting, **resources, "stream_lag": lag})
                 return
-        if item["current_status"] not in ("queued", "started"): continue
+        if item["current_status"] in ("verified", "completed", "event_correlated", "blocked", "failed", "rolled_back"):
+            continue
+        if item["current_status"] not in ("queued", "started"):
+            append_event(conn, batch_id, None, "paused", f"{batch_id}:invalid-state:{uuid.uuid4()}",
+                         {"reason": "item_not_queued", "item_id": str(item["id"])})
+            return
         item_id = str(item["id"])
         if item["current_status"] == "queued":
             try:
@@ -179,6 +184,13 @@ def process_forward(conn, batch: dict[str, Any], client: redis.Redis | None = No
                          f"{batch_id}:worker-paused:{uuid.uuid4()}",
                          {"reason": "interrupted_move_requires_resume", "item_id": item_id})
             return
+    final_items = batch_items(conn, batch_id)
+    terminal = {"verified", "completed", "event_correlated", "blocked", "failed", "rolled_back"}
+    if (len(final_items) != int(batch.get("item_count", len(final_items))) or not final_items
+            or any(item["current_status"] not in terminal for item in final_items)):
+        append_event(conn, batch_id, None, "paused", f"{batch_id}:incomplete:{uuid.uuid4()}",
+                     {"reason": "unfinished_items_require_review"})
+        return
     append_event(conn, batch_id, None, "completed", f"{batch_id}:completed", {"worker": ACTOR})
 
 
