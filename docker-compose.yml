@@ -31,7 +31,8 @@ services:
 
   workset_ai_worker:
     build: { context: ., dockerfile: Dockerfile.workset-ai-worker }
-    cpus: "0.50"
+    # Synology kernel lacks CPU CFS quota support; use relative priority.
+    cpu_shares: 128
     restart: unless-stopped
     depends_on: { redis: { condition: service_healthy } }
     environment:
