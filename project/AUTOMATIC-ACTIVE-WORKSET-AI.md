@@ -26,8 +26,9 @@ decisions or file moves are performed by automatic prefilling.
 - Discovery is worker-only: no enqueue or inference in Workset HTTP requests.
 - One worker processes one inference at a time, with a cooldown for automatic jobs.
 - CPU/load, available memory and scanner lag gates apply to automatic jobs.
-- Worker container capped at 0.5 CPU; existing inference endpoint remains external
-  to this NAS worker. This cap does not cap PostgreSQL or the model server.
+- Worker uses low relative CPU priority (`cpu_shares: 128`); the Synology kernel
+  rejects hard CFS CPU quotas. This is not a hard CPU cap. Existing inference
+  endpoint remains external to this NAS worker; PostgreSQL is not capped.
 - Database sessions disable JIT and use 5s statement/500ms lock timeouts;
   discovery has a stricter 2s statement timeout and a five-minute retry interval.
 - Scan diagnostics: Redis hash `workset_ai_worker:auto`; timeout/errors are visible.
