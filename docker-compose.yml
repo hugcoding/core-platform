@@ -31,6 +31,7 @@ services:
 
   workset_ai_worker:
     build: { context: ., dockerfile: Dockerfile.workset-ai-worker }
+    cpus: "0.50"
     restart: unless-stopped
     depends_on: { redis: { condition: service_healthy } }
     environment:
@@ -47,6 +48,8 @@ services:
       - CORE_AI_MIN_AVAILABLE_MIB=${CORE_AI_MIN_AVAILABLE_MIB:-3072}
       - CORE_AI_MAX_STREAM_LAG=${CORE_AI_MAX_STREAM_LAG:-1000}
       - CORE_AI_POLL_SECONDS=${CORE_AI_POLL_SECONDS:-10}
+      - CORE_AI_AUTO_ACTIVE_ENABLED=${CORE_AI_AUTO_ACTIVE_ENABLED:-false}
+      - CORE_AI_AUTO_INTERVAL_SECONDS=${CORE_AI_AUTO_INTERVAL_SECONDS:-300}
     volumes:
       - "/proc:/host/proc:ro"
       - "/volume1:/volume1:ro"

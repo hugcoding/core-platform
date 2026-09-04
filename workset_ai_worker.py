@@ -15,6 +15,7 @@ import psycopg2.extras
 import redis
 
 from core.semantic.rag import GenerationRequest, OpenAICompatibleLocalProvider
+from core.semantic.automatic_workset_ai import REQUESTED_BY, PAGE_SQL, eligible, enqueue_page
 from core.semantic.workset_llm import (
     PROMPT_VERSION, SCHEMA_VERSION, abstention, build_prompt, enforce_core_lifecycle,
     extract_bounded_context, validate_proposal,
@@ -28,6 +29,8 @@ MAX_STREAM_LAG = int(os.getenv("CORE_AI_MAX_STREAM_LAG", "1000"))
 MODEL = os.getenv("CORE_LLM_MODEL", "qwen3.6:latest")
 ENDPOINT = os.getenv("CORE_LLM_ENDPOINT", "http://192.168.68.107:11434/v1")
 PROMPT_PATH = Path("project/prompts/scrum-101-workset-llm-v2.json")
+AUTO_ENABLED = os.getenv("CORE_AI_AUTO_ACTIVE_ENABLED", "false").lower() == "true"
+AUTO_INTERVAL = max(60, int(os.getenv("CORE_AI_AUTO_INTERVAL_SECONDS", "300")))
 
 
 def db_connect():
@@ -35,6 +38,7 @@ def db_connect():
         host=os.getenv("DB_HOST", "postgres"), port=os.getenv("DB_PORT", "5432"),
         user=os.environ["DB_USER"], password=os.environ["DB_PASS"],
         dbname=os.environ["DB_NAME"], cursor_factory=psycopg2.extras.RealDictCursor,
+        options="-c jit=off -c statement_timeout=5000 -c lock_timeout=500",
     )
 
 
@@ -89,7 +93,7 @@ def resource_gate(
 ) -> str | None:
     # Een expliciet aangevraagde AI-job mag gewone CPU-druk passeren.
     # Zonder pending job blijft de normale CPU-beveiliging actief.
-    if job is None and resources["cpu_load_percent"] > CPU_LIMIT_PERCENT:
+    if (job is None or job.get("requested_by") == REQUESTED_BY) and resources["cpu_load_percent"] > CPU_LIMIT_PERCENT:
         return "waiting_for_cpu"
 
     # Geheugen blijft altijd een harde veiligheidsgrens.
@@ -209,6 +213,15 @@ def process_job(job: dict[str, Any]) -> None:
     )
     started = time.monotonic()
     with db_connect() as conn, conn.cursor() as cur:
+        if job.get("requested_by") == REQUESTED_BY:
+            cur.execute(PAGE_SQL.replace("file_id > %s", "file_id = %s"), (job["file_id"], 1))
+            current = cur.fetchone()
+            if not current or not eligible(current):
+                cur.execute("""
+                    UPDATE public.workset_ai_jobs SET status='cancelled', error_code='no_longer_eligible',
+                        finished_at=now(), updated_at=now() WHERE id=%s
+                """, (job["id"],))
+                return
         cur.execute("""
             SELECT w.*, c.category, c.document_family
             FROM public.v_active_document_workset w
@@ -311,9 +324,23 @@ def fail_or_retry(job: dict[str, Any], exc: Exception) -> None:
 
 def main() -> int:
     client = redis.Redis(host=os.getenv("REDIS_HOST", "redis"), decode_responses=True)
+    next_discovery, after_id = 0.0, 0
     while True:
         try:
             resources = host_resources()
+            if AUTO_ENABLED and time.monotonic() >= next_discovery:
+                next_discovery = time.monotonic() + AUTO_INTERVAL
+                if resource_gate(resources, stream_lag(client)) is None:
+                    try:
+                        with db_connect() as conn, conn.cursor() as cur:
+                            cur.execute("SET LOCAL statement_timeout='2000ms'")
+                            after_id, added = enqueue_page(cur, after_id, MODEL, PROMPT_VERSION)
+                        client.hset("workset_ai_worker:auto", mapping={
+                            "last_scan": datetime.now(timezone.utc).isoformat(),
+                            "after_id": after_id, "added": added, "error": "",
+                        })
+                    except Exception as exc:
+                        client.hset("workset_ai_worker:auto", "error", type(exc).__name__)
             pending_job = peek_job()
             reason = resource_gate(resources, stream_lag(client), pending_job)
             client.set("workset_ai_worker:heartbeat", datetime.now(timezone.utc).isoformat(), ex=90)
@@ -332,6 +359,8 @@ def main() -> int:
                 process_job(job)
             except Exception as exc:  # worker boundary; error code remains auditable
                 fail_or_retry(job, exc)
+            if job.get("requested_by") == REQUESTED_BY:
+                time.sleep(POLL_SECONDS)
         except Exception:
             time.sleep(POLL_SECONDS)
 

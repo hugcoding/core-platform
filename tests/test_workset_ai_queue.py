@@ -29,6 +29,10 @@ class WorksetAiQueueTests(unittest.TestCase):
 
     def test_resource_gate_protects_cpu_memory_and_core_pipeline(self):
         self.assertEqual("waiting_for_cpu", self.worker.resource_gate(
+            {"cpu_load_percent": 80, "available_memory_mib": 8000}, 0,
+            {"requested_by": "core-auto-active-v1"},
+        ))
+        self.assertEqual("waiting_for_cpu", self.worker.resource_gate(
             {"cpu_load_percent": 71, "available_memory_mib": 8000}, 0,
         ))
         self.assertEqual("waiting_for_memory", self.worker.resource_gate(
@@ -48,6 +52,18 @@ class WorksetAiQueueTests(unittest.TestCase):
         self.assertIn("MAX_STREAM_LAG", source)
         self.assertIn("workset_ai_worker:heartbeat", source)
         self.assertIn('row["workset_status"] = job["workset_status_snapshot"]', source)
+
+    def test_auto_job_rechecks_eligibility_before_extraction(self):
+        cursor = mock.MagicMock()
+        cursor.fetchone.return_value = None
+        connection = mock.MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with mock.patch.object(self.worker, 'db_connect', return_value=connection), mock.patch.object(
+            self.worker, 'extract_bounded_context'
+        ) as extract:
+            self.worker.process_job({'id':'job', 'file_id':42, 'requested_by':'core-auto-active-v1'})
+        extract.assert_not_called()
+        self.assertIn("no_longer_eligible", cursor.execute.call_args.args[0])
 
     def test_enqueue_uses_effective_human_lifecycle_status(self):
         source = (ROOT / "dashboard" / "app.py").read_text(encoding="utf-8")
