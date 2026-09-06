@@ -4,6 +4,18 @@ Een menselijke selectie van maximaal 25 bestanden wordt immutable vastgelegd. De
 `controlled_execution_worker` voert uitsluitend goedgekeurde batches uit en
 gebruikt de bestaande geverifieerde move-primitives.
 
+## Automatisch herstel van gewijzigd bronbestand
+
+Wanneer de preflight `source_size_changed` vaststelt, verplaatst CORE niets.
+De executor zet precies dat bestand atomisch en idempotent in de bestaande
+`scan_stream`. De metadataworker bepaalt opnieuw grootte, mtime en SHA-256 en
+werkt alleen via zijn bestaande inventarisatiecontract. Na actuele evidence
+verschijnt een nieuw migratievoorstel dat opnieuw menselijke goedkeuring
+vereist. Een tijdelijke enqueuefout wordt zichtbaar en kan vanuit de Werkset
+met **Opnieuw inventariseren** worden hervat. De deduplicatiesleutel bevat
+file-ID, pad en actuele bestandssignatuur; refreshes en workerrestarts maken
+daarom geen dubbele herstelopdracht.
+
 ## Veiligheidscontract
 
 - bron en doel liggen onder `/volume1/data`;

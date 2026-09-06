@@ -6,6 +6,7 @@ from pathlib import Path
 
 import psycopg2
 import psycopg2.extras
+import redis
 
 import controlled_execution_worker as worker
 
@@ -62,4 +63,40 @@ assert source.is_file() and not target.exists() and hashlib.sha256(source.read_b
 with conn, conn.cursor() as cur:
     cur.execute("SELECT current_status FROM public.v_controlled_execution_item_status WHERE id=%s", (item_id,))
     assert cur.fetchone()["current_status"] == "rolled_back"
+
+# A source changed after approval is never moved. It is queued exactly once for
+# targeted reinventory so the normal metadata pipeline can produce fresh evidence.
+changed_source = Path("/volume1/data/import/changed.docx")
+changed_target = Path("/volume1/data/Persoonlijk/Actief/Te beoordelen/changed.docx")
+changed_source.write_bytes(b"changed after approval")
+changed_batch, changed_item = str(uuid.uuid4()), str(uuid.uuid4())
+with conn, conn.cursor() as cur:
+    cur.execute("INSERT INTO public.files(id) VALUES (2)")
+    cur.execute("""INSERT INTO public.controlled_execution_batches
+      (id,contract_version,batch_key,item_count,created_by) VALUES (%s,'controlled-execution-queue-v1',%s,1,'integration')""",
+      (changed_batch, "b" * 64))
+    cur.execute("""INSERT INTO public.controlled_execution_batch_items
+      (id,batch_id,sequence_no,action_type,priority,file_id,source_path,target_path,content_sha256,size_bytes,evidence_snapshot)
+      VALUES (%s,%s,1,'migrate_active',40,2,%s,%s,%s,1,'{}')""",
+      (changed_item, changed_batch, str(changed_source), str(changed_target), "c" * 64))
+    cur.execute("""INSERT INTO public.controlled_execution_events(batch_id,item_id,event_type,idempotency_key,actor)
+      VALUES (%s,%s,'queued',%s,'integration'),(%s,NULL,'approved',%s,'integration')""",
+      (changed_batch, changed_item, changed_item + ":queued", changed_batch, changed_batch + ":approved"))
+
+redis_client = redis.Redis(host=os.environ["REDIS_HOST"], decode_responses=True)
+assert worker.run_once(redis_client) is True
+assert changed_source.is_file() and not changed_target.exists()
+events = redis_client.xrange("scan_stream")
+assert len(events) == 1
+assert events[0][1]["event"] == "UPSERT"
+assert events[0][1]["path"] == str(changed_source)
+with conn, conn.cursor() as cur:
+    cur.execute("SELECT current_status,latest_details FROM public.v_controlled_execution_item_status WHERE id=%s", (changed_item,))
+    blocked = cur.fetchone()
+    assert blocked["current_status"] == "blocked"
+    assert blocked["latest_details"]["reinventory_status"] == "queued"
+
+item = {"id": changed_item, "batch_id": changed_batch, "file_id": 2, "source_path": str(changed_source)}
+assert worker.enqueue_source_reinventory(redis_client, item)["reinventory_status"] == "already_queued"
+assert redis_client.xlen("scan_stream") == 1
 print("controlled execution integration: PASS")
