@@ -255,6 +255,7 @@ class ControlledExecutionQueueTests(unittest.TestCase):
     def test_workset_exposes_bounded_human_approval_ui(self):
         html = (ROOT / "dashboard/static/workset.html").read_text("utf-8")
         script = (ROOT / "dashboard/static/execution-queue.js").read_text("utf-8")
+        app = (ROOT / "dashboard/app.py").read_text("utf-8")
         self.assertIn('id="executionQueueSection"', html)
         self.assertIn('id="executionQueueApprove"', html)
         self.assertIn("/api/v1/workset/execution-batches", script)
@@ -267,6 +268,9 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         self.assertIn("executionBatchRollback", html)
         self.assertIn("/execution-batches/current", script)
         self.assertIn("control('cancel')", script)
+        self.assertIn("execution-reinventory", script)
+        self.assertIn("Nieuw voorstel gereed na automatische herinventarisatie", script)
+        self.assertIn("enqueue_source_reinventory", app)
         app = (ROOT / "dashboard/app.py").read_text("utf-8")
         self.assertIn("h.selected_file_id AS leader_file_id", app)
         self.assertIn("h.selected_path AS leader_path", app)

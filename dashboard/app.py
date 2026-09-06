@@ -46,6 +46,7 @@ from core.semantic.workset_llm import (
     build_prompt as build_llm_prompt, extract_bounded_context, validate_proposal as validate_llm_proposal,
 )
 from core.execution.queue import MAX_BATCH_SIZE, build_flat_file_correction, check_source_availability, exclude_already_controlled, partition_candidates, hold_previous_failures
+from core.execution.reinventory import enqueue_source_reinventory
 from tools.runtime.personal_migration_executor import (
     CANDIDATES as PERSONAL_MIGRATION_CANDIDATES,
     complete_directory_target,
@@ -1521,7 +1522,8 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
     similar = [{**row, "leader_correction_target": corrective_targets.get(int(row["leader_file_id"]))}
                for row in similar]
     controlled = query_all(conn, """
-      SELECT status.file_id, status.source_path, status.target_path, status.current_status, batch.batch_status,
+      SELECT status.id AS controlled_item_id, status.batch_id, status.file_id,
+             status.source_path, status.target_path, status.current_status, batch.batch_status,
              status.content_sha256, status.size_bytes, status.latest_details
       FROM public.v_controlled_execution_item_status status
       JOIN public.v_controlled_execution_batch_progress batch ON batch.id = status.batch_id
@@ -1534,6 +1536,23 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
     ready, blocked = partition_candidates(candidates)
     ready, unavailable = check_source_availability(ready)
     ready, held = hold_previous_failures(ready, controlled)
+    changed_history = {
+        int(row["file_id"]): row for row in controlled
+        if row.get("current_status") == "blocked"
+        and (row.get("latest_details") or {}).get("reason") == "source_size_changed"
+    }
+    for item in ready:
+        previous = changed_history.get(int(item["file_id"]))
+        if previous and (
+            int(item.get("size_bytes") or 0) != int(previous.get("size_bytes") or 0)
+            or str(item.get("content_sha256") or "") != str(previous.get("content_sha256") or "")
+        ):
+            item["reinventory_status"] = "new_proposal_ready"
+    for item in unavailable:
+        previous = changed_history.get(int(item["file_id"]))
+        if previous:
+            item["reinventory_status"] = (previous.get("latest_details") or {}).get("reinventory_status")
+            item["controlled_item_id"] = previous.get("controlled_item_id")
     return ready, blocked + unavailable + held
 
 
@@ -1550,10 +1569,48 @@ def controlled_execution_queue_preview():
             "candidates": [{key: iso(value) for key, value in item.items()} for item in candidates[:MAX_BATCH_SIZE]],
             "blocked_count": len(blocked),
             "blocked_candidates": [{"file_id": item.get("file_id"),
-                "source_path": item.get("source_path", ""), "blocked_reason": item.get("blocked_reason", "unknown")}
+                "source_path": item.get("source_path", ""), "blocked_reason": item.get("blocked_reason", "unknown"),
+                "reinventory_status": item.get("reinventory_status"),
+                "controlled_item_id": str(item.get("controlled_item_id")) if item.get("controlled_item_id") else None}
                 for item in blocked if item.get("blocked_reason") in
                 ("target_collision", "source_size_changed", "source_missing", "source_unavailable", "previous_execution_blocked")][:50],
             "writes_enabled": review_writes_enabled(), "file_mutations": False}
+
+
+@app.post("/api/v1/workset/execution-reinventory/{item_id}")
+def retry_controlled_execution_reinventory(item_id: str):
+    if not review_writes_enabled():
+        raise HTTPException(status_code=403, detail="interactive execution recovery is disabled")
+    try:
+        uuid.UUID(item_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="valid controlled execution item id required") from exc
+    try:
+        with db_connect() as conn:
+            rows = query_all(conn, """
+              SELECT status.* FROM public.v_controlled_execution_item_status status
+              WHERE status.id=%s AND status.current_status='blocked'
+                AND status.latest_details->>'reason'='source_size_changed'
+            """, (item_id,))
+            if not rows:
+                raise HTTPException(status_code=409, detail="item is not blocked by a changed source")
+            item = rows[0]
+            result = enqueue_source_reinventory(redis_connect(), item)
+            with conn.cursor() as cur:
+                cur.execute("""INSERT INTO public.controlled_execution_events
+                  (batch_id,item_id,event_type,idempotency_key,actor,details)
+                  VALUES (%s,%s,'blocked',%s,%s,%s::jsonb)
+                  ON CONFLICT (idempotency_key) DO NOTHING""", (
+                    str(item["batch_id"]), item_id,
+                    f"{item_id}:manual-reinventory:{result.get('reinventory_key', 'unavailable')}",
+                    os.getenv("CORE_REVIEWER", "hugo"),
+                    json.dumps({"reason": "source_size_changed", **result}, default=str),
+                ))
+        return {**result, "item_id": item_id, "file_mutations": False}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"reinventory unavailable: {type(exc).__name__}") from exc
 
 
 @app.post("/api/v1/workset/execution-batches")

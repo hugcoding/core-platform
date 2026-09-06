@@ -14,6 +14,7 @@ class ControlledExecutionWorkerTests(unittest.TestCase):
         sys.modules.setdefault("psycopg2", types.SimpleNamespace(connect=mock.Mock(), extras=types.SimpleNamespace(RealDictCursor=object)))
         sys.modules.setdefault("psycopg2.extras", sys.modules["psycopg2"].extras)
         redis_module = types.SimpleNamespace(Redis=mock.Mock, ResponseError=RuntimeError)
+        redis_module.RedisError = RuntimeError
         sys.modules.setdefault("redis", redis_module)
         cls.worker = importlib.import_module("controlled_execution_worker")
 
@@ -93,6 +94,36 @@ class ControlledExecutionWorkerTests(unittest.TestCase):
             self.worker.process_forward(mock.Mock(), {"id": "batch"})
         self.assertEqual("started", event.call_args_list[-2].args[3])
         self.assertEqual("paused", event.call_args_list[-1].args[3])
+
+    def test_source_size_change_is_atomically_queued_for_reinventory(self):
+        item = {"id": "item", "batch_id": "batch", "file_id": 42,
+                "source_path": "/volume1/data/source.docx", "size_bytes": 10}
+        client = mock.Mock()
+        client.eval.return_value = "1-0"
+        source_stat = mock.Mock(st_mode=0o100644, st_size=11, st_mtime_ns=12, st_ino=13)
+        with mock.patch("core.execution.reinventory.Path") as path:
+            path.return_value.lstat.return_value = source_stat
+            result = self.worker.enqueue_source_reinventory(client, item)
+        self.assertEqual("queued", result["reinventory_status"])
+        self.assertEqual(11, result["observed_size_bytes"])
+        self.assertEqual("scan_stream", client.eval.call_args.args[3])
+        self.assertIn("UPSERT", client.eval.call_args.args[0])
+
+    def test_source_size_block_records_reinventory_status(self):
+        item = {"id": "item", "batch_id": "batch", "file_id": 42,
+                "source_path": "/volume1/data/source.docx", "current_status": "queued",
+                "action_type": "migrate_active"}
+        with mock.patch.object(self.worker, "batch_items", side_effect=[[item], [{**item, "current_status": "blocked"}]]), \
+             mock.patch.object(self.worker, "latest_batch_status", return_value="started"), \
+             mock.patch.object(self.worker, "host_resources", return_value={"available_memory_mib": 9000, "load_per_cpu": 0.1}), \
+             mock.patch.object(self.worker, "stream_lag", return_value=0), \
+             mock.patch.object(self.worker, "start_details", side_effect=self.worker.MigrationSafetyError("source_size_changed")), \
+             mock.patch.object(self.worker, "enqueue_source_reinventory", return_value={"reinventory_status": "queued"}) as enqueue, \
+             mock.patch.object(self.worker, "append_event") as event:
+            self.worker.process_forward(mock.Mock(), {"id": "batch"}, mock.Mock())
+        enqueue.assert_called_once()
+        blocked = [call for call in event.call_args_list if call.args[3] == "blocked"][0]
+        self.assertEqual("queued", blocked.args[5]["reinventory_status"])
 
     def test_rollback_is_reverse_order_and_append_only(self):
         items = [{"id": "one", "current_status": "verified"}, {"id": "two", "current_status": "verified"}]

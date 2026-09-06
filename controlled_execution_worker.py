@@ -19,6 +19,7 @@ from core.migration.personal_executor import (
     MigrationSafetyError, inspect_preconditions, move_verified, resume_verified_move,
     rollback_verified,
 )
+from core.execution.reinventory import enqueue_source_reinventory
 
 POLL_SECONDS = int(os.getenv("CORE_EXECUTION_POLL_SECONDS", "5"))
 MIN_AVAILABLE_MIB = int(os.getenv("CORE_EXECUTION_MIN_AVAILABLE_MIB", "1024"))
@@ -169,8 +170,16 @@ def process_forward(conn, batch: dict[str, Any], client: redis.Redis | None = No
                 append_event(conn, batch_id, item_id, "started", f"{item_id}:started", details)
                 item = {**item, "current_status": "started", "latest_details": details}
             except (MigrationSafetyError, OSError, ValueError, KeyError) as exc:
+                recovery = {}
+                if str(exc) == "source_size_changed":
+                    try:
+                        recovery = enqueue_source_reinventory(client, item)
+                    except (OSError, ValueError, KeyError, redis.RedisError) as recovery_exc:
+                        recovery = {"reinventory_status": "failed",
+                                    "reinventory_error": type(recovery_exc).__name__}
                 append_event(conn, batch_id, item_id, "blocked", f"{item_id}:blocked",
-                             {"reason": str(exc), "exception": type(exc).__name__, "file_mutations": False})
+                             {"reason": str(exc), "exception": type(exc).__name__,
+                              "file_mutations": False, **recovery})
                 continue
         try:
             result = execute_item(item)
