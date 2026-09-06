@@ -62,6 +62,30 @@ class ControlledExecutionQueueTests(unittest.TestCase):
             self.assertEqual("source_not_regular_file", check_source_availability([
                 {"file_id": 2, "source_path": directory}])[1][0]["blocked_reason"])
 
+    def test_changed_size_and_existing_target_are_not_offered_repeatedly(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            source, target = Path(directory)/'source', Path(directory)/'target'
+            source.write_bytes(b'changed')
+            item={'file_id':1,'source_path':str(source),'target_path':str(target),'size_bytes':1}
+            for _ in range(2):
+                ready,blocked=check_source_availability([item])
+                self.assertFalse(ready)
+                self.assertEqual('source_size_changed',blocked[0]['blocked_reason'])
+            item['size_bytes']=source.stat().st_size
+            target.write_bytes(b'different')
+            for _ in range(2):
+                self.assertEqual('target_collision',check_source_availability([item])[1][0]['blocked_reason'])
+            target.unlink()
+            self.assertEqual(([item],[]),check_source_availability([item]))
+
+    def test_hash_failure_is_held_until_plan_evidence_changes(self):
+        from core.execution.queue import hold_previous_failures
+        item={'file_id':1,'source_path':'/source','target_path':'/target','content_sha256':'a','size_bytes':1}
+        history=[{**item,'current_status':'blocked','latest_details':{'reason':'source_hash_changed'}}]
+        self.assertFalse(hold_previous_failures([item],history)[0])
+        self.assertEqual([{**item,'content_sha256':'b'}],hold_previous_failures([{**item,'content_sha256':'b'}],history)[0])
+
     def test_deletion_candidates_use_current_location_for_selection_and_exclusion(self):
         from tools.runtime.personal_migration_executor import DELETION_CANDIDATES
         self.assertIn("COALESCE(location.current_path, file.path) AS source_path", DELETION_CANDIDATES)
@@ -115,7 +139,7 @@ class ControlledExecutionQueueTests(unittest.TestCase):
     def test_failed_batch_does_not_permanently_hide_unexecuted_item(self):
         app = (ROOT / "dashboard/app.py").read_text("utf-8")
         self.assertIn("batch.batch_status IN ('approved','queued','started','paused','rollback_pending')", app)
-        self.assertIn("status.current_status IN ('verified','completed','event_correlated')", app)
+        self.assertIn("status.current_status IN ('verified','completed','event_correlated','blocked')", app)
 
     def test_successful_old_target_allows_corrective_migration(self):
         candidate = self.candidate(7, "migrate_inactive", "/volume1/data/Persoonlijk/Inactief/Te beoordelen/7.pdf")

@@ -153,8 +153,16 @@ def check_source_availability(candidates: Iterable[Mapping[str, Any]]) -> tuple[
     for candidate in candidates:
         item = dict(candidate)
         try:
-            mode = Path(item["source_path"]).lstat().st_mode
-            reason = None if stat.S_ISREG(mode) else "source_not_regular_file"
+            source_stat = Path(item["source_path"]).lstat()
+            reason = None if stat.S_ISREG(source_stat.st_mode) else "source_not_regular_file"
+            if not reason and item.get("size_bytes") is not None and source_stat.st_size != int(item["size_bytes"]):
+                reason = "source_size_changed"
+            if not reason and item.get("target_path"):
+                try:
+                    Path(item["target_path"]).lstat()
+                    reason = "target_collision"
+                except FileNotFoundError:
+                    pass
         except FileNotFoundError:
             reason = "source_missing"
         except OSError:
@@ -162,6 +170,26 @@ def check_source_availability(candidates: Iterable[Mapping[str, Any]]) -> tuple[
         if reason:
             item["blocked_reason"] = reason
             blocked.append(item)
+        else:
+            ready.append(item)
+    return ready, blocked
+
+
+def hold_previous_failures(candidates, controlled_items):
+    """Unknown/content failures require changed evidence, not a blind repeat."""
+    recalculated = {"target_collision", "source_size_changed", "source_missing", "source_unavailable", "source_not_regular_file"}
+    held = set()
+    def key(row):
+        return tuple(str(row.get(field) or "") for field in
+                     ("file_id", "source_path", "target_path", "content_sha256", "size_bytes"))
+    for row in controlled_items:
+        reason = (row.get("latest_details") or {}).get("reason")
+        if row.get("current_status") == "blocked" and reason and reason not in recalculated:
+            held.add(key(row))
+    ready, blocked = [], []
+    for item in candidates:
+        if key(item) in held:
+            blocked.append({**item, "blocked_reason": "previous_execution_blocked"})
         else:
             ready.append(item)
     return ready, blocked

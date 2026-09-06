@@ -28,7 +28,7 @@ class ControlledExecutionWorkerTests(unittest.TestCase):
     def test_forward_batch_records_started_and_verified(self):
         item = {"id": "item", "current_status": "queued", "action_type": "migrate_active"}
         conn = mock.Mock()
-        with mock.patch.object(self.worker, "batch_items", return_value=[item]), \
+        with mock.patch.object(self.worker, "batch_items", side_effect=[[item], [{**item, "current_status":"verified"}]]), \
              mock.patch.object(self.worker, "latest_batch_status", return_value="started"), \
              mock.patch.object(self.worker, "start_details", return_value={"mtime_ns": 1}) as preflight, \
              mock.patch.object(self.worker, "execute_item", return_value={"content_sha256": "a" * 64}) as execute, \
@@ -47,6 +47,22 @@ class ControlledExecutionWorkerTests(unittest.TestCase):
              mock.patch.object(self.worker, "append_event"):
             self.worker.process_forward(mock.Mock(), {"id": "batch"})
         execute.assert_not_called()
+
+    def test_planned_item_pauses_instead_of_silent_completion(self):
+        with mock.patch.object(self.worker, 'batch_items', return_value=[{'id':'item','current_status':'planned'}]), \
+             mock.patch.object(self.worker, 'latest_batch_status', return_value='started'), \
+             mock.patch.object(self.worker, 'append_event') as events, \
+             mock.patch.object(self.worker, 'execute_item') as execute:
+            self.worker.process_forward(mock.Mock(), {'id':'batch'})
+        execute.assert_not_called()
+        self.assertEqual('paused', events.call_args.args[3])
+        self.assertNotIn('completed',[call.args[3] for call in events.call_args_list])
+
+    def test_completion_requires_all_items_terminal(self):
+        with mock.patch.object(self.worker, 'batch_items', side_effect=[[],[{'current_status':'queued'}]]), \
+             mock.patch.object(self.worker, 'append_event') as events:
+            self.worker.process_forward(mock.Mock(), {'id':'batch','item_count':1})
+        self.assertEqual('paused', events.call_args.args[3])
 
     def test_resource_change_between_items_returns_batch_to_queue(self):
         item = {"id": "item", "current_status": "queued", "action_type": "migrate_active"}

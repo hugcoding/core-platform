@@ -45,7 +45,7 @@ from core.semantic.workset_llm import (
     SCHEMA_VERSION as LLM_SCHEMA_VERSION, abstention as llm_abstention,
     build_prompt as build_llm_prompt, extract_bounded_context, validate_proposal as validate_llm_proposal,
 )
-from core.execution.queue import MAX_BATCH_SIZE, build_flat_file_correction, check_source_availability, exclude_already_controlled, partition_candidates
+from core.execution.queue import MAX_BATCH_SIZE, build_flat_file_correction, check_source_availability, exclude_already_controlled, partition_candidates, hold_previous_failures
 from tools.runtime.personal_migration_executor import (
     CANDIDATES as PERSONAL_MIGRATION_CANDIDATES,
     complete_directory_target,
@@ -1521,10 +1521,11 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
     similar = [{**row, "leader_correction_target": corrective_targets.get(int(row["leader_file_id"]))}
                for row in similar]
     controlled = query_all(conn, """
-      SELECT status.file_id, status.target_path, status.current_status, batch.batch_status
+      SELECT status.file_id, status.source_path, status.target_path, status.current_status, batch.batch_status,
+             status.content_sha256, status.size_bytes, status.latest_details
       FROM public.v_controlled_execution_item_status status
       JOIN public.v_controlled_execution_batch_progress batch ON batch.id = status.batch_id
-      WHERE status.current_status IN ('verified','completed','event_correlated')
+      WHERE status.current_status IN ('verified','completed','event_correlated','blocked')
          OR batch.batch_status IN ('approved','queued','started','paused','rollback_pending')
     """)
     candidates = exclude_already_controlled(
@@ -1532,7 +1533,8 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
     )
     ready, blocked = partition_candidates(candidates)
     ready, unavailable = check_source_availability(ready)
-    return ready, blocked + unavailable
+    ready, held = hold_previous_failures(ready, controlled)
+    return ready, blocked + unavailable + held
 
 
 @app.get("/api/v1/workset/execution-queue")
@@ -1547,6 +1549,10 @@ def controlled_execution_queue_preview():
     return {"ready_count": len(candidates), "display_limit": MAX_BATCH_SIZE,
             "candidates": [{key: iso(value) for key, value in item.items()} for item in candidates[:MAX_BATCH_SIZE]],
             "blocked_count": len(blocked),
+            "blocked_candidates": [{"file_id": item.get("file_id"),
+                "source_path": item.get("source_path", ""), "blocked_reason": item.get("blocked_reason", "unknown")}
+                for item in blocked if item.get("blocked_reason") in
+                ("target_collision", "source_size_changed", "source_missing", "source_unavailable", "previous_execution_blocked")][:50],
             "writes_enabled": review_writes_enabled(), "file_mutations": False}
 
 
@@ -1634,7 +1640,13 @@ def current_controlled_execution_batch():
               (batch["id"],))
         completed = (int(batch.get("succeeded") or 0) + int(batch.get("rolled_back") or 0)
                      + int(batch.get("blocked") or 0) + int(batch.get("failed") or 0))
+        remaining = max(0, int(batch["item_count"]) - completed)
+        display_status = ("Onvolledig — nieuwe beoordeling nodig" if batch["batch_status"] == "completed" and remaining
+                          else "Afgerond met blokkades" if batch["batch_status"] == "completed" and
+                          (int(batch.get("blocked") or 0) + int(batch.get("failed") or 0))
+                          else "Afgerond" if batch["batch_status"] == "completed" else str(batch["batch_status"]))
         return {"batch": {**{key: iso(value) for key, value in batch.items()},
+                          "display_status": display_status, "remaining_items": remaining,
                           "completed_items": completed,
                           "progress_percent": round(completed / int(batch["item_count"]) * 100, 1),
                           "items": [{key: iso(value) for key, value in item.items()} for item in items]}}
