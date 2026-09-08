@@ -139,7 +139,7 @@ def category_options(
         "/"
         + " ".join(
             str(row.get(key) or "")
-            for key in ("path", "filename")
+            for key in ("path", "source_context_path", "filename")
         )
         .replace("\\", "/")
         .casefold()
@@ -260,7 +260,7 @@ def taxonomy_fallback_proposal(
 
     evidence = " ".join(
         str(row.get(key) or "")
-        for key in ("filename", "path", "document_family")
+        for key in ("filename", "path", "source_context_path", "document_family")
     ).casefold()
 
     matches: list[tuple[int, int, dict[str, Any], list[str]]] = []
@@ -299,7 +299,9 @@ def taxonomy_fallback_proposal(
     if len(categories) != 1:
         category_scores: Counter[str] = Counter()
 
-        path_evidence = "/" + str(row.get("path") or "").replace("\\", "/").casefold()
+        path_evidence = "/" + " ".join(str(row.get(key) or "") for key in (
+            "path", "source_context_path"
+        )).replace("\\", "/").casefold()
 
         for category in categories:
             for signal in CATEGORY_SIGNALS.get(category, ()):
@@ -326,7 +328,9 @@ def taxonomy_fallback_proposal(
 
 def contextual_options(row: dict[str, Any], proposal: dict[str, Any], maximum: int = 5) -> dict[str, Any]:
     """Return a small explained family shortlist plus the full searchable contract."""
-    evidence = " ".join(str(row.get(key) or "") for key in ("filename", "path", "document_family")).casefold()
+    evidence = " ".join(str(row.get(key) or "") for key in (
+        "filename", "path", "source_context_path", "document_family"
+    )).casefold()
     category = str(proposal.get("category_code") or "needs_review")
     current = str(proposal.get("document_family_code") or "general")
     scored = []

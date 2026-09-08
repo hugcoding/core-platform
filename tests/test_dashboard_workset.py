@@ -248,6 +248,24 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn("Geverifieerd huidig pad", script)
         self.assertIn("Geregistreerd pad; geen geverifieerde migratielocatie", script)
 
+    def test_portal_exposes_historical_path_as_classification_evidence_only(self):
+        self.assertIn("v_workset_source_context", self.dashboard.WORKSET_SELECT)
+        row = {
+            "file_id": 24, "filename": "hypotheek.pdf", "extension": "pdf",
+            "path": "/volume1/data/Persoonlijk/Inactief/Te beoordelen/hypotheek.pdf",
+            "workset_status": "inactive",
+            "source_context_path": "/volume1/data/import/cloud/onedrive/current/Documenten/Woning/hypotheek.pdf",
+            "source_context_relative_path": "Woning/hypotheek.pdf",
+            "source_context_event_id": "22222222-2222-2222-2222-222222222222",
+            "source_context_selection_reason": "earliest_onedrive_documents_path",
+        }
+        result = self.dashboard.enrich_workset_row(row)
+        self.assertTrue(result["source_context"]["classification_evidence_only"])
+        self.assertEqual("home_living", result["target_proposal"]["category_code"])
+        script = (ROOT / "dashboard/static/workset.js").read_text(encoding="utf-8")
+        self.assertIn("Classificatiebewijs uit oorspronkelijk pad", script)
+        self.assertIn("Dit pad wordt niet als uitvoeringsdoel gebruikt", script)
+
     def test_bulk_classification_includes_underlying_review_status_for_quarantine(self):
         source = (ROOT / "dashboard/app.py").read_text(encoding="utf-8")
         self.assertIn("w.workset_status IN ('active', 'inactive', 'needs_review')", source)
