@@ -565,6 +565,10 @@ WORKSET_SELECT = """
         w.filesystem_modified_at,
         w.policy_version,
         w.policy_checksum,
+        w.effective_workset_status AS projected_workset_status,
+        w.review_family AS projected_review_family,
+        w.review_category AS projected_review_category,
+        w.review_state AS projected_review_state,
         c.category,
         c.document_family,
         c.lifecycle,
@@ -589,7 +593,7 @@ WORKSET_SELECT = """
         pe.rule_version AS content_privacy_rule_version,
         pe.extractor_version AS content_privacy_extractor_version,
         pe.created_at AS content_privacy_created_at
-    FROM public.v_active_document_workset w
+    FROM public.v_effective_document_workset w
     LEFT JOIN public.v_current_file_classification c
         ON c.file_id = w.file_id
     LEFT JOIN public.v_workset_current_physical_location location
@@ -828,6 +832,18 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
         "accepted_portal_review" if reviewed_family else
         "accepted_classification" if row.get("document_family") else "core_proposal"
     )
+    # This bucket is deliberately database-backed so SQL clients and the
+    # portal apply the same family filter. Richer learned suggestions remain
+    # visible in target_proposal, but do not silently redefine the Workset.
+    item["review_family"] = (
+        row.get("projected_review_family")
+        or item["effective_document_family"]
+        or "general"
+    )
+    item["review_category"] = (
+        row.get("projected_review_category")
+        or item["effective_category"]
+    )
     if item.get("workset_status") in CLASSIFIABLE_WORKSET_STATUSES and not item["is_similarity_redundant"]:
         proposal = propose_target({
             **row,
@@ -1036,9 +1052,9 @@ def workset(
                 AND r.corrected_document_family_code IS NOT NULL
             """) if review_storage else []
             rows = query_all(conn, WORKSET_SELECT.replace(
-                "FROM public.v_active_document_workset w",
+                "FROM public.v_effective_document_workset w",
                 review_select + privacy_select + lifecycle_select + ai_select + nomination_select
-                + " FROM public.v_active_document_workset w"
+                + " FROM public.v_effective_document_workset w"
             ) + review_join + privacy_join + lifecycle_join + ai_join + nomination_join + where + workset_order_by(
                 sort, review_state, review_decision, review_storage,
             ),
@@ -1198,14 +1214,15 @@ def workset(
     families: dict[str, dict[str, Any]] = {}
     for item in enriched:
         proposal = item.get("target_proposal") or {}
-        code = str(proposal.get("document_family_code") or item.get("document_family") or "unknown")
-        label = str(proposal.get("folder_label") or item.get("document_family") or "Nog te bepalen")
+        code = str(item.get("review_family") or "general")
+        label = str(
+            family_labels.get(code)
+            or (proposal.get("folder_label") if proposal.get("document_family_code") == code else None)
+            or code
+        )
         families.setdefault(code, {"code": code, "label": label, "count": 0})["count"] += 1
     if family != "all":
-        enriched = [item for item in enriched if str(
-            (item.get("target_proposal") or {}).get("document_family_code")
-            or item.get("document_family") or "unknown"
-        ) == family]
+        enriched = [item for item in enriched if str(item.get("review_family") or "general") == family]
     count = len(enriched)
     documents = enriched[offset:offset + limit]
     return {
