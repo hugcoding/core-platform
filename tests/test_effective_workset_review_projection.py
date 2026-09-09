@@ -24,11 +24,12 @@ class EffectiveWorksetReviewProjectionTests(unittest.TestCase):
         self.assertIn("public.core_normalized_document_identity", sql)
         self.assertIn("identity_consensus", sql)
 
-    def test_dashboard_uses_database_family_bucket(self):
+    def test_dashboard_refines_database_family_bucket_with_visible_proposal(self):
         source = (ROOT / "dashboard/app.py").read_text("utf-8")
         self.assertIn("FROM public.v_effective_document_workset w", source)
         self.assertIn('item["review_family"]', source)
-        self.assertIn('item.get("review_family") or "general"', source)
+        self.assertIn('item["effective_review_family"]', source)
+        self.assertIn('item.get("effective_review_family") or "general"', source)
 
     def test_rollback_removes_only_new_projection_objects(self):
         sql = (ROOT / "database/migrations/rollback/20260907_add_effective_workset_review_projection.sql").read_text("utf-8")
