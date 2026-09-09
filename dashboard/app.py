@@ -915,6 +915,37 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
         item["target_proposal"] = None
         item["review_options"] = None
 
+    # Pending items may already have a concrete proposal even though the
+    # database-backed review projection still (correctly) says ``general``.
+    # The portal filter must describe what is currently shown in the review
+    # form, without turning that proposal into an accepted classification.
+    persisted_family = item.get("effective_document_family")
+    persisted_source = item.get("effective_family_source")
+    has_persisted_classification = bool(
+        item["is_similarity_redundant"]
+        or reviewed_family
+        or row.get("document_family")
+    )
+    ai = item.get("ai_proposal") or {}
+    proposal = item.get("target_proposal") or {}
+    if has_persisted_classification:
+        filter_family = persisted_family or "general"
+        filter_family_source = persisted_source
+    elif ai.get("status") == "ready" and ai.get("family_code") not in (None, "", "general"):
+        filter_family = ai["family_code"]
+        filter_family_source = "ai_proposal"
+    elif proposal.get("document_family_code") not in (None, "", "general"):
+        filter_family = proposal["document_family_code"]
+        filter_family_source = "core_proposal"
+    elif item.get("review_family") not in (None, "", "general"):
+        filter_family = item["review_family"]
+        filter_family_source = "projected_review_family"
+    else:
+        filter_family = "general"
+        filter_family_source = "no_concrete_proposal"
+    item["effective_review_family"] = filter_family
+    item["effective_review_family_source"] = filter_family_source
+
     return item
 
 
@@ -1235,7 +1266,7 @@ def workset(
     families: dict[str, dict[str, Any]] = {}
     for item in enriched:
         proposal = item.get("target_proposal") or {}
-        code = str(item.get("review_family") or "general")
+        code = str(item.get("effective_review_family") or "general")
         label = str(
             family_labels.get(code)
             or (proposal.get("folder_label") if proposal.get("document_family_code") == code else None)
@@ -1243,7 +1274,10 @@ def workset(
         )
         families.setdefault(code, {"code": code, "label": label, "count": 0})["count"] += 1
     if family != "all":
-        enriched = [item for item in enriched if str(item.get("review_family") or "general") == family]
+        enriched = [
+            item for item in enriched
+            if str(item.get("effective_review_family") or "general") == family
+        ]
     count = len(enriched)
     documents = enriched[offset:offset + limit]
     return {

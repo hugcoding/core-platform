@@ -262,9 +262,37 @@ class DashboardWorksetTests(unittest.TestCase):
         result = self.dashboard.enrich_workset_row(row)
         self.assertTrue(result["source_context"]["classification_evidence_only"])
         self.assertEqual("home_living", result["target_proposal"]["category_code"])
+        self.assertEqual("housing_contracts", result["effective_review_family"])
+        self.assertEqual("core_proposal", result["effective_review_family_source"])
         script = (ROOT / "dashboard/static/workset.js").read_text(encoding="utf-8")
         self.assertIn("Classificatiebewijs uit oorspronkelijk pad", script)
         self.assertIn("Dit pad wordt niet als uitvoeringsdoel gebruikt", script)
+
+    def test_ready_ai_family_replaces_general_only_for_filtering(self):
+        row = {
+            "file_id": 25, "filename": "verklaring.pdf", "extension": "pdf",
+            "path": "/volume1/data/Persoonlijk/Inactief/Te beoordelen/verklaring.pdf",
+            "workset_status": "inactive", "projected_review_family": "general",
+            "ai_proposal_id": "33333333-3333-3333-3333-333333333333",
+            "ai_run_id": "44444444-4444-4444-4444-444444444444",
+            "ai_status": "ready", "ai_category_code": "finance",
+            "ai_family_code": "income_statements", "ai_lifecycle": "archive",
+        }
+        result = self.dashboard.enrich_workset_row(row)
+        self.assertEqual("general", result["review_family"])
+        self.assertEqual("income_statements", result["effective_review_family"])
+        self.assertEqual("ai_proposal", result["effective_review_family_source"])
+
+    def test_explicitly_accepted_general_remains_general_filter_family(self):
+        row = {
+            "file_id": 26, "filename": "hypotheek.pdf", "extension": "pdf",
+            "path": "/volume1/data/import/Documenten/Woning/hypotheek.pdf",
+            "workset_status": "inactive", "latest_review_decision": "accepted",
+            "latest_review_category": "general", "latest_review_family": "general",
+        }
+        result = self.dashboard.enrich_workset_row(row)
+        self.assertEqual("general", result["effective_review_family"])
+        self.assertEqual("accepted_portal_review", result["effective_review_family_source"])
 
     def test_bulk_classification_includes_underlying_review_status_for_quarantine(self):
         source = (ROOT / "dashboard/app.py").read_text(encoding="utf-8")
