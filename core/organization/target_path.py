@@ -9,9 +9,10 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from core.organization.review_taxonomy import taxonomy
+from core.organization.classification_rules import RULESET_VERSION, classify_weighted
 
 
-CONTRACT_VERSION = "canonical-dutch-target-path-v7"
+CONTRACT_VERSION = "canonical-dutch-target-path-v8"
 TARGET_ROOT = "/volume1/data/Persoonlijk"
 ZONE_LABELS = {
     "active": "Actief",
@@ -70,7 +71,8 @@ def contract_checksum() -> str:
                "categories": CATEGORY_LABELS, "rules": KEYWORD_RULES, "families": FAMILY_RULES,
                "family_labels": FAMILY_LABELS,
                "secret_terms": SECRET_TERMS,
-               "classification_context": "historical-source-path-v1"}
+               "classification_context": "historical-source-path-v1",
+               "classification_rules": RULESET_VERSION}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
@@ -96,6 +98,11 @@ def canonical_category(row: dict[str, Any]) -> tuple[str, str, str]:
         return accepted, "accepted_human_classification", "high"
     if accepted and str(row.get("accepted_category_label") or "").strip():
         return accepted, "accepted_human_taxonomy_extension", "high"
+    weighted = classify_weighted(row)
+    if weighted["status"] == "proposed":
+        return weighted["category_code"], weighted["reason_code"], weighted["confidence"]
+    if weighted["status"] == "conflict":
+        return "needs_review", weighted["reason_code"], "low"
     evidence = _evidence(row)
     normalized_path = _classification_path(row).casefold()
     course_signals = (
@@ -159,6 +166,12 @@ def document_family(row: dict[str, Any]) -> tuple[str, str]:
     accepted_label = str(row.get("accepted_document_family_label") or "").strip()
     if accepted and accepted_label:
         return accepted, safe_component(accepted_label)
+    weighted = classify_weighted(row)
+    if weighted["status"] == "proposed":
+        code = weighted["document_family_code"]
+        return code, FAMILY_LABELS.get(code, safe_component(code))
+    if weighted["status"] == "conflict":
+        return "general", "Algemeen"
     evidence = " " + _evidence(row).replace("-", " ") + " "
     filename_stem = PurePosixPath(str(row.get("filename") or "")).stem.casefold()
     filename_tokens = {token for token in re.split(r"[^a-z0-9]+", filename_stem) if token}
@@ -228,6 +241,7 @@ def application_trajectory(row: dict[str, Any]) -> tuple[str, str]:
 
 
 def propose_target(row: dict[str, Any]) -> dict[str, Any]:
+    weighted = classify_weighted(row)
     category, reason, confidence = canonical_category(row)
     category_label = CATEGORY_LABELS.get(category) or safe_component(
         str(row.get("accepted_category_label") or ""), fallback="Te beoordelen"
@@ -292,7 +306,14 @@ def propose_target(row: dict[str, Any]) -> dict[str, Any]:
         "document_family_code": family_code, "folder_label": family,
         "suggested_target_path": str(PurePosixPath(*parts)),
         "proposal_reason_code": reason, "proposal_confidence": confidence,
-        "proposal_evidence": source_context_evidence(row),
+        "proposal_evidence": {
+            **source_context_evidence(row),
+            "classification_ruleset_version": weighted["ruleset_version"],
+            "classification_status": weighted["status"],
+            "classification_reason_code": weighted["reason_code"],
+            "matched_classification_signals": weighted.get("matched_signals", []),
+            "competing_classification_candidates": weighted.get("competing_candidates", []),
+        },
         "path_reduction_reason_codes": path_reductions,
         "database_writes": False, "file_mutations": False,
     }

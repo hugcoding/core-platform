@@ -255,9 +255,18 @@ function allFamilyOptions(category, query = '', current = '') { const needle = q
 function privacyCard(doc) { const proposal = doc.privacy_proposal; if (!proposal) return ''; const labels = { low: 'Laag', medium: 'Middel', high: 'Hoog' }, current = doc.effective_privacy_classification || proposal.classification, reviewed = doc.latest_privacy_review_id ? `<span class="privacy-reviewed">Vastgesteld: ${wsEsc(labels[doc.current_privacy_classification])} · ${wsDt(doc.latest_privacy_review_at)}</span>` : ''; const controls = state.privacyReviewEnabled ? `<div class="privacy-controls"><select class="privacy-classification" aria-label="Privacyclassificatie"><option value="low"${selected('low', current)}>Laag</option><option value="medium"${selected('medium', current)}>Middel</option><option value="high"${selected('high', current)}>Hoog</option></select><button type="button" data-privacy-decision="accepted" class="privacy-save">Privacy bevestigen</button><button type="button" data-privacy-decision="needs_review" class="privacy-later">Later</button></div><span class="privacy-message" aria-live="polite"></span>` : ''; return `<div class="privacy-review privacy-${wsEsc(proposal.classification)}" data-file-id="${doc.file_id}"><div class="privacy-summary"><span class="privacy-shield">◆</span><div><span class="privacy-title">Privacy <b>${wsEsc(labels[proposal.classification])}</b><em>${wsEsc(proposal.confidence)} confidence</em></span><small>${wsEsc(privacyReasonLabels[proposal.reason_code] || proposal.reason_code)}</small>${reviewed}</div></div>${controls}</div>` }
 function sourceContextHint(proposal) {
   const evidence = proposal?.proposal_evidence;
-  if (!evidence?.source_context_used) return '';
+  if (!evidence) return '';
+  const sourceLabels = { filename: 'bestandsnaam', source_context_path: 'oorspronkelijk pad', path: 'huidig pad', metadata: 'metadata' };
+  const ruleSignals = (evidence.matched_classification_signals || []).slice(0, 3);
+  const rules = ruleSignals.length
+    ? `<small class="proposal-evidence">Regelbewijs: ${ruleSignals.map(item => `<strong>${wsEsc(item.term)}</strong> (${wsEsc(sourceLabels[item.source] || item.source)}, gewicht ${Number(item.weight)})`).join(' · ')}. Confidence: ${wsEsc(proposal.proposal_confidence)}.</small>`
+    : '';
+  const conflict = evidence.classification_status === 'conflict'
+    ? '<small class="proposal-evidence proposal-conflict">Tegenstrijdige categorieÃ«n gevonden; CORE laat dit bewust ter beoordeling.</small>'
+    : '';
+  if (!evidence.source_context_used) return rules + conflict;
   const signals = (evidence.matched_path_signals || []).join(' / ');
-  return `<small class="proposal-evidence">Classificatiebewijs uit oorspronkelijk pad${signals ? `: <strong>${wsEsc(signals)}</strong>` : ''}. Dit pad wordt niet als uitvoeringsdoel gebruikt.</small>`;
+  return `${rules}${conflict}<small class="proposal-evidence">Classificatiebewijs uit oorspronkelijk pad${signals ? `: <strong>${wsEsc(signals)}</strong>` : ''}. Dit pad wordt niet als uitvoeringsdoel gebruikt.</small>`;
 }
 function documentCard(doc) {
   const inherited = doc.is_similarity_redundant ? `<div class="human-refinement-summary"><b>${doc.similarity_quarantine_phase==='quarantined'?'In quarantaine':'Wacht op quarantaine'}</b><span>Leidende kopie: <strong>${wsEsc(doc.similarity_leader_filename)}</strong> (File ID ${Number(doc.similarity_leader_file_id)})</span><span>Categorie en familie overgenomen: <strong>${wsEsc(doc.effective_category || 'onbekend')} · ${wsEsc(doc.effective_document_family || 'onbekend')}</strong></span></div>` : '';

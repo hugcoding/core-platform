@@ -267,6 +267,9 @@ class DashboardWorksetTests(unittest.TestCase):
         script = (ROOT / "dashboard/static/workset.js").read_text(encoding="utf-8")
         self.assertIn("Classificatiebewijs uit oorspronkelijk pad", script)
         self.assertIn("Dit pad wordt niet als uitvoeringsdoel gebruikt", script)
+        self.assertIn("Regelbewijs:", script)
+        self.assertIn("gewicht", script)
+        self.assertIn("Tegenstrijdige categorie", script)
 
     def test_ready_ai_family_replaces_general_only_for_filtering(self):
         row = {
@@ -404,7 +407,7 @@ class DashboardWorksetTests(unittest.TestCase):
             result["documents"][0]["target_proposal"]["document_family_code"],
         )
         self.assertLessEqual(len(result["documents"][0]["review_options"]["compact_families"]), 5)
-        self.assertEqual("document-taxonomy-v1", result["review_taxonomy"]["version"])
+        self.assertEqual("document-taxonomy-v2", result["review_taxonomy"]["version"])
         self.assertIn("filesystem_mtime", result["documents"][0]["reason_code"])
         self.assertEqual(r"\\192.168.68.105\data\import\document.docx", result["documents"][0]["smb_path"])
         params = query_all.call_args.args[2]
