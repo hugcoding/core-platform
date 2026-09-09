@@ -11,7 +11,7 @@ from typing import Any
 from core.organization.review_taxonomy import taxonomy
 
 
-CONTRACT_VERSION = "canonical-dutch-target-path-v6"
+CONTRACT_VERSION = "canonical-dutch-target-path-v7"
 TARGET_ROOT = "/volume1/data/Persoonlijk"
 ZONE_LABELS = {
     "active": "Actief",
@@ -69,7 +69,8 @@ def contract_checksum() -> str:
     payload = {"version": CONTRACT_VERSION, "root": TARGET_ROOT, "zones": ZONE_LABELS,
                "categories": CATEGORY_LABELS, "rules": KEYWORD_RULES, "families": FAMILY_RULES,
                "family_labels": FAMILY_LABELS,
-               "secret_terms": SECRET_TERMS}
+               "secret_terms": SECRET_TERMS,
+               "classification_context": "historical-source-path-v1"}
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
@@ -95,9 +96,8 @@ def canonical_category(row: dict[str, Any]) -> tuple[str, str, str]:
         return accepted, "accepted_human_classification", "high"
     if accepted and str(row.get("accepted_category_label") or "").strip():
         return accepted, "accepted_human_taxonomy_extension", "high"
-    evidence = " ".join(str(row.get(key) or "") for key in
-                        ("filename", "path", "accepted_document_family")).casefold()
-    normalized_path = str(row.get("path") or "").replace("\\", "/").casefold()
+    evidence = _evidence(row)
+    normalized_path = _classification_path(row).casefold()
     course_signals = (
         ("notebook" in normalized_path and any(term in evidence for term in ("python", "data science", "jupyter")))
         or ("introductie" in evidence and any(term in evidence for term in ("python", "data science", "cursus")))
@@ -112,7 +112,33 @@ def canonical_category(row: dict[str, Any]) -> tuple[str, str, str]:
 
 def _evidence(row: dict[str, Any]) -> str:
     return " ".join(str(row.get(key) or "") for key in
-                    ("filename", "path", "accepted_document_family")).casefold()
+                    ("filename", "path", "source_context_path",
+                     "accepted_document_family")).casefold()
+
+
+def _classification_path(row: dict[str, Any]) -> str:
+    """Prefer provenance for classification, never for physical execution."""
+    return str(row.get("source_context_path") or row.get("path") or "").replace("\\", "/")
+
+
+def source_context_evidence(row: dict[str, Any]) -> dict[str, Any]:
+    source_path = str(row.get("source_context_path") or "")
+    current_path = str(row.get("path") or "")
+    relative_path = str(row.get("source_context_relative_path") or "")
+    directories = list(PurePosixPath(relative_path.replace("\\", "/")).parts[:-1])
+    context_parts = [
+        part for part in directories
+        if part.casefold() not in TEMPORARY_PATH_COMPONENTS
+        and not re.fullmatch(r"move.documents(?: \(\d+\))?", part.casefold())
+    ]
+    return {
+        "source_context_path": source_path or None,
+        "source_context_relative_path": relative_path or None,
+        "source_context_event_id": str(row.get("source_context_event_id") or "") or None,
+        "source_context_selection_reason": row.get("source_context_selection_reason"),
+        "source_context_used": bool(source_path and source_path != current_path),
+        "matched_path_signals": context_parts[:4],
+    }
 
 
 def is_secret_candidate(row: dict[str, Any]) -> bool:
@@ -121,7 +147,7 @@ def is_secret_candidate(row: dict[str, Any]) -> bool:
 
 
 def is_supporting_dataset(row: dict[str, Any]) -> bool:
-    path = str(row.get("path") or "").replace("\\", "/").casefold()
+    path = _classification_path(row).casefold()
     extension = str(row.get("extension") or "").casefold().lstrip(".")
     return extension == "xlsx" and "/notebook" in path and "/data/" in path
 
@@ -136,7 +162,7 @@ def document_family(row: dict[str, Any]) -> tuple[str, str]:
     evidence = " " + _evidence(row).replace("-", " ") + " "
     filename_stem = PurePosixPath(str(row.get("filename") or "")).stem.casefold()
     filename_tokens = {token for token in re.split(r"[^a-z0-9]+", filename_stem) if token}
-    normalized_path = str(row.get("path") or "").replace("\\", "/").casefold()
+    normalized_path = _classification_path(row).casefold()
     if ("notebook" in normalized_path and any(term in evidence for term in ("python", "data science", "jupyter"))):
         return "course_material", FAMILY_LABELS["course_material"]
     if "cv" in filename_tokens or "curriculum vitae" in evidence:
@@ -178,7 +204,7 @@ def application_trajectory_parts(row: dict[str, Any]) -> tuple[str, str, list[st
         code = re.sub(r"[^a-z0-9]+", "_", learned_label.casefold()).strip("_")
         safe_label = safe_component(learned_label)
         return code[:80] or "general_applications", safe_label, [safe_label]
-    path = PurePosixPath(str(row.get("path") or "").replace("\\", "/"))
+    path = PurePosixPath(_classification_path(row))
     directories = list(path.parts[:-1])
     marker = next((i for i, value in enumerate(directories)
                    if value.casefold() in {"cv & sollicitaties", "cv en sollicitaties"}), None)
@@ -266,6 +292,7 @@ def propose_target(row: dict[str, Any]) -> dict[str, Any]:
         "document_family_code": family_code, "folder_label": family,
         "suggested_target_path": str(PurePosixPath(*parts)),
         "proposal_reason_code": reason, "proposal_confidence": confidence,
+        "proposal_evidence": source_context_evidence(row),
         "path_reduction_reason_codes": path_reductions,
         "database_writes": False, "file_mutations": False,
     }

@@ -556,6 +556,12 @@ WORKSET_SELECT = """
         location.plan_id AS physical_location_plan_id,
         location.plan_item_id AS physical_location_item_id,
         location.status_changed_at AS physical_location_changed_at,
+        source_context.source_context_path,
+        source_context.source_context_relative_path,
+        source_context.source_event_id AS source_context_event_id,
+        source_context.source_observed_at,
+        source_context.source_event_path_kind,
+        source_context.selection_reason AS source_context_selection_reason,
         w.size_bytes,
         w.workset_status,
         w.reason_code,
@@ -598,6 +604,8 @@ WORKSET_SELECT = """
         ON c.file_id = w.file_id
     LEFT JOIN public.v_workset_current_physical_location location
         ON location.file_id = w.file_id
+    LEFT JOIN public.v_workset_source_context source_context
+        ON source_context.file_id = w.file_id
     LEFT JOIN public.v_pdf_similarity_redundant_workset similarity
         ON similarity.file_id = w.file_id
     LEFT JOIN LATERAL (
@@ -737,6 +745,15 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
     )
     item["migration_status"] = row.get("physical_location_status") or "virtual_only"
     item["physical_location_kind"] = row.get("physical_location_kind") or "registered_path"
+    item["source_context"] = {
+        "path": row.get("source_context_path"),
+        "relative_path": row.get("source_context_relative_path"),
+        "event_id": str(row.get("source_context_event_id") or "") or None,
+        "observed_at": iso(row.get("source_context_observed_at")),
+        "event_path_kind": row.get("source_context_event_path_kind"),
+        "selection_reason": row.get("source_context_selection_reason"),
+        "classification_evidence_only": True,
+    } if row.get("source_context_path") else None
     item["is_deletion_quarantined"] = row.get("physical_location_kind") == "deletion_quarantine"
     privacy_proposal = effective_privacy_proposal(row)
 
@@ -882,6 +899,7 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
                 "suggested_target_path",
                 "proposal_reason_code",
                 "proposal_confidence",
+                "proposal_evidence",
             )
         }
 
@@ -1124,6 +1142,7 @@ def workset(
             "category_code", "category_label", "trajectory_code", "trajectory_label",
             "document_family_code", "folder_label", "suggested_target_path",
             "proposal_reason_code", "proposal_confidence",
+            "proposal_evidence",
         )}
         item["target_proposal"]["proposal_reason_code"] = "learned_human_course_context"
         item["target_proposal"]["proposal_confidence"] = rule["confidence"]
@@ -1148,6 +1167,7 @@ def workset(
             "category_code", "category_label", "trajectory_code", "trajectory_label",
             "document_family_code", "folder_label", "suggested_target_path",
             "proposal_reason_code", "proposal_confidence",
+            "proposal_evidence",
         )}
         item["target_proposal"]["proposal_reason_code"] = "similar_human_review_consensus"
         item["target_proposal"]["proposal_confidence"] = "high"
@@ -1177,6 +1197,7 @@ def workset(
             "category_code", "category_label", "trajectory_code", "trajectory_label",
             "document_family_code", "folder_label", "suggested_target_path",
             "proposal_reason_code", "proposal_confidence",
+            "proposal_evidence",
         )}
         item["target_proposal"]["proposal_reason_code"] = (
             "learned_human_trajectory_consensus" if rule["support"] >= 3
@@ -2327,6 +2348,10 @@ def prepare_bulk_review(conn, payload: dict[str, Any]) -> list[dict[str, Any]]:
             "target_path_input_kind": str(normalized["input_kind"]),
             "original_proposal": original, "privacy_proposal": privacy_proposal,
             "similarity_evidence": similarity_evidence,
+            "proposal_evidence": {
+                **(original.get("proposal_evidence") or {}),
+                **similarity_evidence,
+            },
         })
     return prepared
 
@@ -2868,7 +2893,7 @@ def create_bulk_workset_review(payload: dict[str, Any] = Body(...)):
                         original["proposal_reason_code"], item["family"], item["category"], reviewer,
                         supersedes.get("target_path"), item["target_path"], item["target_path_raw"],
                         item["target_path_input_kind"], batch_id,
-                        json.dumps(item["similarity_evidence"], ensure_ascii=False),
+                        json.dumps(item["proposal_evidence"], ensure_ascii=False),
                     ))
                     privacy_proposal = item["privacy_proposal"]
                     privacy_key = str(uuid.uuid5(uuid.UUID(idempotency_key), f"privacy:{item['file_id']}"))
@@ -3159,6 +3184,10 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                     "restore_lifecycle", effective_lifecycle["effective_lifecycle"]
                 ),
             })
+            proposal_evidence = {
+                **(proposal.get("proposal_evidence") or {}),
+                **similarity_evidence,
+            }
             if filename_proposal:
                 base_target = proposed_path or selected_proposal["suggested_target_path"]
                 proposed_path = target_with_filename(base_target, str(filename_proposal["normalized"]))
@@ -3200,7 +3229,7 @@ def create_workset_review(payload: dict[str, Any] = Body(...)):
                     proposed_category, proposed_family, proposed_path, proposed_path_raw,
                     str(normalized_path["input_kind"]) if normalized_path else None,
                     path_suggestion, path_suggestion_decision,
-                    json.dumps(similarity_evidence, ensure_ascii=False),
+                    json.dumps(proposal_evidence, ensure_ascii=False),
                     ai_proposal_id,
                     str(row["filename"]) if filename_proposal else None,
                     proposed_filename_raw,

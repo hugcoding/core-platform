@@ -163,6 +163,39 @@ class CanonicalTargetPathTests(unittest.TestCase):
         self.assertEqual("mortgage_documents", result["document_family_code"])
         self.assertIn("/Wonen/Hypotheekdocumenten/", result["suggested_target_path"])
 
+    def test_historical_source_context_informs_classification_not_execution_path(self):
+        current = "/volume1/data/Persoonlijk/Inactief/Te beoordelen/kadastrale kaart.pdf"
+        source = "/volume1/data/import/cloud/onedrive/current/Documenten/Woning/Eksterlaan258/kadastrale kaart.pdf"
+        result = propose_target({
+            "file_id": 22,
+            "filename": "kadastrale kaart.pdf",
+            "extension": "pdf",
+            "path": current,
+            "source_context_path": source,
+            "source_context_relative_path": "Woning/Eksterlaan258/kadastrale kaart.pdf",
+            "source_context_event_id": "11111111-1111-1111-1111-111111111111",
+            "source_context_selection_reason": "earliest_onedrive_documents_path",
+            "accepted_lifecycle": "archive",
+        })
+        self.assertEqual("home_living", result["category_code"])
+        self.assertEqual("housing_contracts", result["document_family_code"])
+        self.assertTrue(result["suggested_target_path"].startswith(
+            "/volume1/data/Persoonlijk/Inactief/Wonen/"
+        ))
+        self.assertNotIn("/import/cloud/onedrive/", result["suggested_target_path"])
+        self.assertTrue(result["proposal_evidence"]["source_context_used"])
+        self.assertEqual(["Woning", "Eksterlaan258"],
+                         result["proposal_evidence"]["matched_path_signals"])
+
+    def test_current_path_remains_fallback_without_historical_context(self):
+        result = propose_target({
+            "file_id": 23, "filename": "hypotheek.pdf", "extension": "pdf",
+            "path": "/volume1/data/import/Documenten/Hypotheek/hypotheek.pdf",
+        })
+        self.assertEqual("home_living", result["category_code"])
+        self.assertFalse(result["proposal_evidence"]["source_context_used"])
+        self.assertIsNone(result["proposal_evidence"]["source_context_path"])
+
     def test_accepted_review_family_code_gets_canonical_dutch_label(self):
         result = propose_target({
             "file_id": 14, "filename": "Een integere Belastingdienst.pdf", "extension": "pdf",
