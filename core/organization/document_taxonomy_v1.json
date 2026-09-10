@@ -1,5 +1,5 @@
 {
-  "version": "document-taxonomy-v1",
+  "version": "document-taxonomy-v2",
   "categories": [
     {
       "code": "work_career",
@@ -62,7 +62,8 @@
       "categories": ["work_career"],
       "keywords": [
         "vacature",
-        "functieprofiel"
+        "functieprofiel",
+        "job profile"
       ]
     },
     {
@@ -104,7 +105,11 @@
         "arbeidsvoorwaarden",
         "werkgeversverklaring",
         "werkgever",
-        "dienstverband"
+        "dienstverband",
+        "employment agreement",
+        "employment contract",
+        "secondment agreement",
+        "compensation letter"
       ]
     },
     {
@@ -181,7 +186,8 @@
         "pensioenoverzicht",
         "uniform pensioenoverzicht",
         "upo",
-        "pensioenfonds"
+        "pensioenfonds",
+        "pension scheme"
       ]
     },
     {
@@ -216,7 +222,9 @@
       "keywords": [
         "vve",
         "vereniging van eigenaars",
-        "riolering"
+        "riolering",
+        "mjop",
+        "meerjarenonderhoudsplan"
       ]
     },
     {
@@ -226,7 +234,12 @@
       "keywords": [
         "onderhoud",
         "reparatie",
-        "verbouwing"
+        "verbouwing",
+        "badkamer",
+        "tuin",
+        "elektra",
+        "uitbouw",
+        "offerte"
       ]
     },
     {
@@ -260,7 +273,9 @@
         "kadaster",
         "kadastraal",
         "splitsingsakte",
-        "eigendom"
+        "eigendom",
+        "kadastrale kaart",
+        "levering"
       ]
     },
     {
@@ -543,7 +558,10 @@
       "keywords": [
         "cursus",
         "opleiding",
-        "studie"
+        "studie",
+        "programmeren",
+        "java",
+        "modopdr"
       ]
     },
     {

@@ -178,7 +178,7 @@ class CanonicalTargetPathTests(unittest.TestCase):
             "accepted_lifecycle": "archive",
         })
         self.assertEqual("home_living", result["category_code"])
-        self.assertEqual("housing_contracts", result["document_family_code"])
+        self.assertEqual("property_documents", result["document_family_code"])
         self.assertTrue(result["suggested_target_path"].startswith(
             "/volume1/data/Persoonlijk/Inactief/Wonen/"
         ))
