@@ -38,25 +38,43 @@ def taxonomy_extension_code(label: str) -> str:
     return "custom_{}_{}".format(base, digest)
 
 
+def _taxonomy_label_key(value: str) -> str:
+    """Compare display labels without changing persisted extension codes."""
+    ascii_label = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode()
+    return " ".join(re.findall(r"[a-z0-9]+", ascii_label.casefold()))
+
+
 def extend_taxonomy(base: dict[str, Any], extensions: list[dict[str, Any]]) -> dict[str, Any]:
     result = json.loads(json.dumps(base))
     category_codes = {item["code"] for item in result["categories"]}
+    category_labels = {_taxonomy_label_key(item["label"]) for item in result["categories"]}
     family_keys = {(item["code"], tuple(item.get("categories", []))) for item in result["families"]}
+    family_label_keys = {
+        (_taxonomy_label_key(item["label"]), tuple(item.get("categories", [])))
+        for item in result["families"]
+    }
+    added = False
     for item in extensions:
         if item.get("proposal_type") == "category":
-            if item["taxonomy_code"] not in category_codes:
+            label_key = _taxonomy_label_key(item["proposed_label"])
+            if item["taxonomy_code"] not in category_codes and label_key not in category_labels:
                 result["categories"].append({"code": item["taxonomy_code"], "label": item["proposed_label"]})
                 category_codes.add(item["taxonomy_code"])
+                category_labels.add(label_key)
+                added = True
         elif item.get("proposal_type") == "family" and item.get("category_code"):
             key = (item["taxonomy_code"], (item["category_code"],))
-            if key not in family_keys:
+            label_key = (_taxonomy_label_key(item["proposed_label"]), (item["category_code"],))
+            if key not in family_keys and label_key not in family_label_keys:
                 result["families"].append({
                     "code": item["taxonomy_code"], "label": item["proposed_label"],
                     "categories": [item["category_code"]], "keywords": [],
                     "source": "accepted_human_taxonomy_extension",
                 })
                 family_keys.add(key)
-    if extensions:
+                family_label_keys.add(label_key)
+                added = True
+    if added:
         result["version"] = "{}+db".format(base["version"])
     return result
 
