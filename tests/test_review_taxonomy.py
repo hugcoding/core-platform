@@ -22,14 +22,37 @@ class ReviewTaxonomyTests(unittest.TestCase):
 
     def test_accepted_extension_is_added_without_mutating_base_taxonomy(self):
         base = taxonomy()
-        code = taxonomy_extension_code("Cursusmateriaal")
+        code = taxonomy_extension_code("Lesnotities")
         result = extend_taxonomy(base, [{
             "proposal_type": "family", "taxonomy_code": code,
-            "proposed_label": "Cursusmateriaal", "category_code": "learning_development",
+            "proposed_label": "Lesnotities", "category_code": "learning_development",
         }])
         self.assertNotIn(code, [item["code"] for item in base["families"]])
         self.assertIn(code, [item["code"] for item in result["families"]])
         self.assertTrue(result["version"].endswith("+db"))
+
+    def test_db_category_with_existing_label_is_not_added_twice(self):
+        base = taxonomy()
+        result = extend_taxonomy(base, [{
+            "proposal_type": "category",
+            "taxonomy_code": "custom_reizen_vrije_tijd_a8350589",
+            "proposed_label": "  REIZEN & vrije tijd ",
+            "category_code": None,
+        }])
+        labels = [item["label"] for item in result["categories"]]
+        self.assertEqual(1, sum(label.casefold() == "reizen & vrije tijd" for label in labels))
+        self.assertEqual(base["version"], result["version"])
+
+    def test_db_family_with_existing_label_in_same_category_is_not_added_twice(self):
+        base = taxonomy()
+        result = extend_taxonomy(base, [{
+            "proposal_type": "family",
+            "taxonomy_code": "custom_hypotheekdocumenten_deadbeef",
+            "proposed_label": "Hypotheekdocumenten",
+            "category_code": "home_living",
+        }])
+        labels = [item["label"] for item in result["families"] if "home_living" in item["categories"]]
+        self.assertEqual(1, sum(label == "Hypotheekdocumenten" for label in labels))
 
     def test_existing_family_label_is_not_returned_as_new_proposal(self):
         reviews = [{
