@@ -8,31 +8,58 @@ from pathlib import PurePosixPath
 from typing import Any
 
 
-RULE_VERSION = "similar-document-review-v1"
+RULE_VERSION = "similar-document-review-v2"
 SUPPORTED_EXTENSIONS = {"docx", "pdf", "xlsx"}
+GENERIC_IDENTITIES = {"bestand", "brief", "document", "formulier", "image", "lijst", "scan"}
+SAFE_SHORT_IDENTITIES = {"tuin"}
+
+
+def document_identity(filename: str) -> dict[str, Any]:
+    """Return a conservative identity plus explainable normalization evidence."""
+    stem = PurePosixPath(filename.replace("\\", "/")).stem.casefold()
+    original = stem
+    reasons: list[str] = []
+    transforms = (
+        (r"^\s*(?:signed|ondertekend|getekend)[-_ ]+", "signature_marker"),
+        (r"\s*[-_ ]\s*(?:signed|ondertekend|getekend)\s*$", "signature_marker"),
+        (r"\s*[-_ ]\s*(?:gecomprimeerd|compressed)\s*$", "compression_marker"),
+        (r"\s*[-_ ]\s*(?:definitief|final)\s*$", "final_marker"),
+        (r"\s*[-_ ]\s*(?:versie|version|vs?|rev)\s*\d+(?:[._-]\d+)*\s*$", "version_suffix"),
+        (r"\s*[-_ ]\s*(?:en|nl|engels|nederlands)\s*$", "language_suffix"),
+        (r"\s*[\[(](?:kopie|copy)?\s*\d+[\])]\s*$", "copy_suffix"),
+        (r"\s*[-_ ]\s*(?:kopie|copy)\s*\d*\s*$", "copy_suffix"),
+        (r"[-_ ]+\d{1,2}[.\-_]\d{1,2}[.\-_]\d{2,4}\s*$", "date_suffix"),
+        (r"[-_ ]+\d{4}[.\-_]\d{1,2}[.\-_]\d{1,2}\s*$", "date_suffix"),
+        (r"[-_ ]+\d{8}\s*$", "date_suffix"),
+        (r"[-_ ]+(?:19|20)\d{2}\s*$", "year_suffix"),
+        (r"[-_ ]+\d{6,}\s*$", "reference_suffix"),
+    )
+    changed = True
+    while changed:
+        changed = False
+        for pattern, reason in transforms:
+            updated = re.sub(pattern, "", stem)
+            if updated != stem:
+                stem = updated
+                if reason not in reasons:
+                    reasons.append(reason)
+                changed = True
+    identity = re.sub(r"[^a-z0-9]+", " ", stem).strip()
+    safe = (len(identity) >= 5 or identity in SAFE_SHORT_IDENTITIES) and identity not in GENERIC_IDENTITIES
+    identity_key = f"short:{identity}" if identity in SAFE_SHORT_IDENTITIES else identity
+    return {
+        "identity": identity_key if safe else "",
+        "raw_identity": identity,
+        "rule_version": RULE_VERSION,
+        "normalization_reasons": reasons,
+        "is_safe": safe,
+        "is_exact_stem": stem == original,
+    }
 
 
 def normalized_document_identity(filename: str) -> str:
     """Return a cautious document-pattern identity for similar-review reuse."""
-    stem = PurePosixPath(filename.replace("\\", "/")).stem.casefold()
-
-    # Language / copy suffixes.
-    stem = re.sub(r"\s*[-_ ]\s*(en|nl|engels|nederlands)\s*$", "", stem)
-    stem = re.sub(r"\s*[\\[(](?:kopie|copy)?\s*\d+[\])]\s*$", "", stem)
-    stem = re.sub(r"\s*[-_ ]\s*(?:kopie|copy)\s*\d*\s*$", "", stem)
-
-    # Dates such as 25.04.2025, 2025-04-25, 20250425.
-    stem = re.sub(r"[-_ ]+\d{1,2}[.\-_]\d{1,2}[.\-_]\d{2,4}\s*$", "", stem)
-    stem = re.sub(r"[-_ ]+\d{4}[.\-_]\d{1,2}[.\-_]\d{1,2}\s*$", "", stem)
-    stem = re.sub(r"[-_ ]+\d{8}\s*$", "", stem)
-
-    # Standalone year.
-    stem = re.sub(r"[-_ ]+(?:19|20)\d{2}\s*$", "", stem)
-
-    # Long generated/reference numbers.
-    stem = re.sub(r"[-_ ]+\d{6,}\s*$", "", stem)
-
-    return re.sub(r"[^a-z0-9]+", " ", stem).strip()
+    return str(document_identity(filename)["identity"])
 
 
 def apply_similar_review_proposals(
@@ -43,7 +70,8 @@ def apply_similar_review_proposals(
 
     for item in items:
         extension = str(item.get("extension") or "").casefold().lstrip(".")
-        identity = normalized_document_identity(str(item.get("filename") or ""))
+        identity_details = document_identity(str(item.get("filename") or ""))
+        identity = str(identity_details["identity"])
 
         if extension in SUPPORTED_EXTENSIONS and len(identity) >= 5:
             groups.setdefault(identity, []).append(item)
@@ -78,6 +106,7 @@ def apply_similar_review_proposals(
                 continue
 
             peers = [peer for peer in members if peer is not item]
+            evidence_peers = accepted + [peer for peer in peers if peer not in accepted]
 
             (category, family), count = most_common[0]
             total = len(accepted)
@@ -88,6 +117,7 @@ def apply_similar_review_proposals(
             evidence = {
                 "rule_version": RULE_VERSION,
                 "normalized_identity": identity,
+                "normalization_reasons": identity_details["normalization_reasons"],
                 "match_kind": "normalized_filename_cross_format",
                 "score": 1.0 if any(
                     PurePosixPath(str(peer.get("filename") or "")).stem.casefold()
@@ -96,7 +126,7 @@ def apply_similar_review_proposals(
                 ) else 0.95,
                 "related_file_ids": [
                     int(peer["file_id"])
-                    for peer in peers[:10]
+                    for peer in evidence_peers[:10]
                 ],
                 "source_review_event_ids": [
                     str(peer["latest_review_id"])
@@ -108,8 +138,11 @@ def apply_similar_review_proposals(
                         "filename": str(peer.get("filename") or ""),
                         "extension": str(peer.get("extension") or ""),
                         "human_reviewed": peer in accepted,
+                        "source_review_event_id": (
+                            str(peer["latest_review_id"]) if peer in accepted else None
+                        ),
                     }
-                    for peer in peers[:5]
+                    for peer in evidence_peers[:5]
                 ],
                 "conflicting_human_judgments": len(judgment_counts) > 1,
                 "support_count": count,

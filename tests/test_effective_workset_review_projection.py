@@ -24,6 +24,17 @@ class EffectiveWorksetReviewProjectionTests(unittest.TestCase):
         self.assertIn("public.core_normalized_document_identity", sql)
         self.assertIn("identity_consensus", sql)
 
+    def test_round_three_identity_migration_is_safe_and_versioned(self):
+        sql = (ROOT / "database/migrations/20260914_add_similar_document_identity_v2.sql").read_text("utf-8")
+        rollback = (ROOT / "database/migrations/rollback/20260914_add_similar_document_identity_v2.sql").read_text("utf-8")
+        self.assertIn("similar-document-review-v2", sql)
+        self.assertIn("gecomprimeerd", sql)
+        self.assertIn("definitief", sql)
+        self.assertIn("versie|version|vs?|rev", sql)
+        self.assertIn("ARRAY['bestand', 'brief', 'document'", sql)
+        self.assertNotIn("UPDATE ", sql.upper())
+        self.assertIn("similar-document-review-v1", rollback)
+
     def test_dashboard_refines_database_family_bucket_with_visible_proposal(self):
         source = (ROOT / "dashboard/app.py").read_text("utf-8")
         self.assertIn("FROM public.v_effective_document_workset w", source)
