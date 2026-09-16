@@ -8,6 +8,18 @@ Open `/corefinance` en ontgrendel met de persoonlijke toegangscode uit het lokal
 
 Ondersteund: losse UTF-8 ASN CAMT `camt.053.001.02` XML-bestanden, geboekte EUR-mutaties, één eigenaar. Een `Ntry` is één transactie; onderliggende `TxDtls` zijn aanvullende broninformatie. Begin/eindsaldi worden gecontroleerd indien aanwezig. Andere versies, valuta, ZIP, CSV, PDF, MT940 en Open Banking volgen later. De UI heeft geen AI-laag.
 
+## Eigen rekeningnamen
+
+Selecteer een rekening en kies **Naam wijzigen**. De weergavenaam verschijnt met de laatste vier IBAN-cijfers in de rekeningkeuze. **Standaardnaam herstellen** voegt een nieuw event toe; bestaande historie en bankidentiteit blijven intact. Herimport verandert de gekozen naam niet. Namen zijn versleuteld opgeslagen in `finance.finance_account_name_events`; gelijktijdige wijzigingen worden op hun voorganger gecontroleerd.
+
+Na merge/pull eerst de aanvullende migratie uitvoeren, daarna het dashboard opnieuw bouwen/starten met de bestaande deploymentconfiguratie:
+
+```sh
+/usr/local/bin/docker exec -i postgres psql -X -v ON_ERROR_STOP=1 -U hugo -d nasdb_test < database/migrations/20260916_add_finance_account_names.sql
+```
+
+Deze migratie is eenmalig en vereist het bestaande Finance-schema. De gelijknamige down-migratie onder `rollback/` werkt alleen zolang geen naamwijzigingen zijn opgeslagen. Bij code-rollback met bestaande naamreviews blijft de tabel behouden. Deze wijziging voert zelf geen migraties uit bij opstarten.
+
 ## Bron en idempotency
 
 Originele bestanden worden uitsluitend gelezen. De bestaande `public.files`-ID wordt hergebruikt of aangemaakt, met afzonderlijke bronvoorkomens voor kopieën. Er is geen tweede algemene documentenregistratie. De Finance-bron bewaart bovendien een versleutelde exacte kopie zodat bronherleiding niet afhankelijk is van een later gewijzigde NAS-file.
