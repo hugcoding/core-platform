@@ -65,6 +65,8 @@ class WorksetOcrQueueTests(unittest.TestCase):
         self.assertIn("postgres_busy", source)
         self.assertIn("CORE_OCR_MAX_ACTIVE_DB_SESSIONS", compose)
         self.assertIn("COALESCE(location.current_path,f.path) AS path", source)
+        self.assertIn('workset_ocr_worker:heartbeat:status", reason or "idle"', source)
+        self.assertIn('workset_ocr_worker:heartbeat:status", "processing"', source)
 
     def test_portal_has_individual_ocr_endpoint_and_button(self):
         app = (ROOT / "dashboard/app.py").read_text(encoding="utf-8")

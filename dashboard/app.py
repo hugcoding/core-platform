@@ -388,6 +388,12 @@ def overview():
                 """)
                 for item in ai_counts:
                     metrics[f"ai_{item['status']}"] = int(item["job_count"])
+            if query_one(conn, "SELECT to_regclass('public.workset_ocr_jobs') IS NOT NULL AS available")["available"]:
+                ocr_counts = query_all(conn, """
+                    SELECT status, count(*) AS job_count FROM public.workset_ocr_jobs GROUP BY status
+                """)
+                for item in ocr_counts:
+                    metrics[f"ocr_{item['status']}"] = int(item["job_count"])
         services.append({"name": "postgres", "state": "healthy", "detail": "database connected"})
     except Exception as exc:
         errors.append(f"database: {type(exc).__name__}")
@@ -403,6 +409,7 @@ def overview():
         ])
         if llm_enabled():
             services.append(heartbeat_service(client, "workset_ai_worker"))
+        services.append(heartbeat_service(client, "workset_ocr_worker"))
         services.append(heartbeat_service(client, "controlled_execution_worker"))
         metrics.update(
             polling_queue=redis_key_size(client, "scan_stream"),
