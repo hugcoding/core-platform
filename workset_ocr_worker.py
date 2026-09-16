@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import json
 import os
 import subprocess
 import tempfile
@@ -15,6 +16,10 @@ from typing import Any
 import psycopg2
 import psycopg2.extras
 import redis
+
+from core.integrity.ocr_duplicate_similarity import (
+    ANALYZER_VERSION, compare_ocr_artifacts, group_key, metadata_json,
+)
 
 
 POLL_SECONDS = int(os.getenv("CORE_OCR_POLL_SECONDS", "10"))
@@ -180,6 +185,77 @@ def process_job(job: dict[str, Any]) -> None:
         """, (engine_version, pages, len(text), text_sha256, str(artifact), job["id"]))
 
 
+def discover_ocr_near_duplicates(limit: int = 3) -> int:
+    """Compare a bounded number of same-identity PDFs with ready OCR evidence."""
+    with db_connect() as conn, conn.cursor() as cur:
+        cur.execute("""
+          WITH ready AS (
+            SELECT DISTINCT ON (j.file_id)
+              j.file_id,j.content_sha256,j.artifact_path,j.pages,j.characters,
+              f.filename,public.core_normalized_document_identity(f.filename) AS identity
+            FROM public.workset_ocr_jobs j
+            JOIN public.files f ON f.id=j.file_id
+            WHERE j.status='ready' AND f.deleted_at IS NULL
+              AND lower(coalesce(f.extension,''))='pdf'
+              AND f.content_sha256=j.content_sha256
+              AND j.artifact_path IS NOT NULL
+            ORDER BY j.file_id,j.finished_at DESC,j.id DESC
+          )
+          SELECT l.file_id AS left_file_id,l.content_sha256 AS left_hash,
+                 l.artifact_path AS left_artifact,l.pages AS left_pages,
+                 l.characters AS left_characters,l.filename AS left_filename,
+                 r.file_id AS right_file_id,r.content_sha256 AS right_hash,
+                 r.artifact_path AS right_artifact,r.pages AS right_pages,
+                 r.characters AS right_characters,r.filename AS right_filename,
+                 l.identity
+          FROM ready l JOIN ready r ON r.identity=l.identity AND r.file_id>l.file_id
+          WHERE l.identity<>'' AND l.content_sha256<>r.content_sha256
+            AND NOT EXISTS (
+              SELECT 1 FROM public.ocr_similarity_comparisons c
+              WHERE c.left_file_id=l.file_id AND c.right_file_id=r.file_id
+                AND c.left_content_sha256=l.content_sha256
+                AND c.right_content_sha256=r.content_sha256
+                AND c.analyzer_version=%s
+            )
+          ORDER BY l.file_id,r.file_id LIMIT %s
+        """, (ANALYZER_VERSION, limit))
+        pairs = list(cur.fetchall())
+        inserted = 0
+        for pair in pairs:
+            metrics = compare_ocr_artifacts(
+                Path(str(pair["left_artifact"])), Path(str(pair["right_artifact"])),
+            )
+            cur.execute("""
+              INSERT INTO public.ocr_similarity_comparisons (
+                left_file_id,right_file_id,left_content_sha256,right_content_sha256,
+                normalized_identity,qualifies,metrics,analyzer_version
+              ) VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s)
+              ON CONFLICT (left_file_id,right_file_id,left_content_sha256,
+                           right_content_sha256,analyzer_version) DO NOTHING
+            """, (pair["left_file_id"], pair["right_file_id"], pair["left_hash"],
+                  pair["right_hash"], pair["identity"], metrics["qualifies"],
+                  json.dumps(metrics), ANALYZER_VERSION))
+            if not metrics["qualifies"]:
+                continue
+            key = group_key(str(pair["identity"]), str(pair["left_hash"]), str(pair["right_hash"]))
+            for side, peer in (("left", "right"), ("right", "left")):
+                signature = "signed" in str(pair[f"{side}_filename"]).casefold()
+                cur.execute("""
+                  INSERT INTO public.pdf_content_similarity_evidence (
+                    file_id,content_sha256,normalized_text_sha256,page_text_sha256,page_count,
+                    normalized_text_characters,metadata_snapshot,pdf_document_id,
+                    signature_present,extraction_warnings,analyzer_version
+                  ) VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s::jsonb,'[]'::jsonb,%s,'[]'::jsonb,%s)
+                  ON CONFLICT (file_id,content_sha256,analyzer_version) DO NOTHING
+                """, (pair[f"{side}_file_id"], pair[f"{side}_hash"], key,
+                      json.dumps([key]), max(1, int(pair[f"{side}_pages"] or 1)),
+                      max(1, int(pair[f"{side}_characters"] or 1)),
+                      metadata_json(str(pair["identity"]), int(pair[f"{peer}_file_id"]), metrics),
+                      signature, ANALYZER_VERSION))
+                inserted += cur.rowcount
+        return inserted
+
+
 def fail(job: dict[str, Any], exc: Exception) -> None:
     with db_connect() as conn, conn.cursor() as cur:
         cur.execute("""
@@ -206,6 +282,7 @@ def main() -> int:
                 continue
             job = claim_job()
             if not job:
+                discover_ocr_near_duplicates()
                 time.sleep(POLL_SECONDS)
                 continue
             try:
