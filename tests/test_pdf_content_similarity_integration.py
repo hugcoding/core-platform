@@ -36,6 +36,8 @@ class PdfContentSimilarityIntegrationTests(unittest.TestCase):
         self.assertIn('data-show-file', script)
         self.assertIn("ws('worksetSearch').value=show.dataset.showFile", script)
         self.assertIn('class=\"pdf-similarity-document-link\"', script)
+        self.assertIn("OCR-vergelijking", script)
+        self.assertIn("menselijke bevestiging vereist", script)
         self.assertIn('/content\" target=\"_blank\"', script)
         self.assertIn('@app.get("/api/v1/workset/pdf-similarity")', app)
         self.assertIn('"cleanup_handoff": False', app)
