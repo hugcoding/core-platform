@@ -59,6 +59,10 @@ class WorksetOcrQueueTests(unittest.TestCase):
         self.assertIn('"/volume1:/volume1:ro"', compose)
         self.assertIn("tesseract-ocr-data-nld", dockerfile)
         self.assertIn("CORE_OCR_MAX_CPU_PERCENT", compose)
+        self.assertIn("controlled_execution_priority", source)
+        self.assertIn("postgres_busy", source)
+        self.assertIn("CORE_OCR_MAX_ACTIVE_DB_SESSIONS", compose)
+        self.assertIn("COALESCE(location.current_path,f.path) AS path", source)
 
     def test_portal_has_individual_ocr_endpoint_and_button(self):
         app = (ROOT / "dashboard/app.py").read_text(encoding="utf-8")

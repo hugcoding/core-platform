@@ -24,6 +24,8 @@ MAX_STREAM_LAG = int(os.getenv("CORE_OCR_MAX_STREAM_LAG", "1000"))
 MAX_PAGES = int(os.getenv("CORE_OCR_MAX_PAGES", "100"))
 LANGUAGES = os.getenv("CORE_OCR_LANGUAGES", "nld+eng")
 OUTPUT_ROOT = Path(os.getenv("CORE_OCR_OUTPUT_ROOT", "/volume1/docker/core-runtime/ocr"))
+MAX_ACTIVE_DB_SESSIONS = max(1, int(os.getenv("CORE_OCR_MAX_ACTIVE_DB_SESSIONS", "4")))
+MAINTENANCE_MODE = os.getenv("CORE_MAINTENANCE_MODE", "false").lower() == "true"
 
 
 def db_connect():
@@ -64,11 +66,38 @@ def stream_lag(client: redis.Redis) -> int:
     return total
 
 
+def service_gate(client: redis.Redis) -> str | None:
+    if MAINTENANCE_MODE:
+        return "maintenance_mode"
+    try:
+        if not client.ping():
+            return "redis_unavailable"
+    except Exception:
+        return "redis_unavailable"
+    with db_connect() as conn, conn.cursor() as cur:
+        cur.execute("""SELECT
+            count(*) FILTER (WHERE state='active' AND pid<>pg_backend_pid()) AS active_sessions,
+            EXISTS (
+                SELECT 1 FROM public.v_controlled_execution_batch_progress
+                WHERE batch_status IN ('approved','queued','started','rollback_pending')
+            ) AS controlled_execution_active
+            FROM pg_stat_activity WHERE datname=current_database()
+        """)
+        pressure = cur.fetchone()
+    if pressure["controlled_execution_active"]:
+        return "controlled_execution_priority"
+    if int(pressure["active_sessions"] or 0) > MAX_ACTIVE_DB_SESSIONS:
+        return "postgres_busy"
+    return None
+
+
 def claim_job() -> dict[str, Any] | None:
     with db_connect() as conn, conn.cursor() as cur:
         cur.execute("""
-            SELECT j.*, f.path, f.extension, f.content_sha256 AS current_content_sha256
+            SELECT j.*, COALESCE(location.current_path,f.path) AS path,
+                   f.extension, f.content_sha256 AS current_content_sha256
             FROM public.workset_ocr_jobs j JOIN public.files f ON f.id=j.file_id
+            LEFT JOIN public.v_workset_current_physical_location location ON location.file_id=f.id
             WHERE j.status='pending' AND f.deleted_at IS NULL
             ORDER BY j.priority DESC,j.requested_at,j.id
             FOR UPDATE SKIP LOCKED LIMIT 1
@@ -163,12 +192,12 @@ def main() -> int:
     client = redis.Redis(host=os.getenv("REDIS_HOST", "redis"), decode_responses=True)
     while True:
         try:
-            reason = None
-            if cpu_load_percent() > CPU_LIMIT_PERCENT:
+            reason = service_gate(client)
+            if reason is None and cpu_load_percent() > CPU_LIMIT_PERCENT:
                 reason = "waiting_for_cpu"
-            elif available_memory_mib() < MIN_AVAILABLE_MIB:
+            elif reason is None and available_memory_mib() < MIN_AVAILABLE_MIB:
                 reason = "waiting_for_memory"
-            elif stream_lag(client) > MAX_STREAM_LAG:
+            elif reason is None and stream_lag(client) > MAX_STREAM_LAG:
                 reason = "core_pipeline_priority"
             client.set("workset_ocr_worker:heartbeat", datetime.now(timezone.utc).isoformat(), ex=90)
             set_waiting_reason(reason)
