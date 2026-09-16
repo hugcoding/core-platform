@@ -59,6 +59,23 @@ De eigenaar heeft inmiddels zelf een afzonderlijke `data/import/finance`-invoerl
 
 SCRUM-150 levert later een offline, read-only hulpmiddel dat de eigenaar zelf buiten de agentsessie kan uitvoeren; eerst ontwikkelen/testen op synthetische data. Geen telemetrie, crashupload of inhoudslogging. Private padinvoer niet via shell-history. Het volledige resultaat blijft lokaal; desgewenst bevestigt de eigenaar alleen een generieke profielcode. Formaatprofiel omvat encoding, delimiter, quoting, decimaal-/datumconventies, debit/credit, ID-betrouwbaarheid, rekening-/valutavelden, paginering/totalen en bronlocators. Tot die gate is geslaagd blijft echte ingest uit. Schemawerk kan zonder dit antwoord verder; het precieze ASN-dialect blijft bewust onbeslist.
 
+### Openbare ASN-specificatie: eerste adapterdoel
+
+De eigenaar heeft de [openbare ASN CAMT.053-pagina](https://www.asnbank.nl/zakelijk/boekhoudpakket-koppelen/camt053.html) aangeleverd. ASN beschrijft een ZIP-download met XML en meldt dat MT940 niet meer als export wordt ondersteund. Dit kiest CAMT als eerste ontwikkeldoel; het bewijst niet welk formaat de lokale bestanden daadwerkelijk hebben.
+
+De gekoppelde [technische ASN-beschrijving](https://www.asnbank.nl/downloads/formaatbeschrijving-camt053.html), geraadpleegd op 16 september 2026, noemt `camt.053.001.02`, UTF-8 en meerdere statements. Bedragen hebben een afzonderlijke credit/debit-indicator; geboekte entries hebben status BOOK. OPBD/CLBD beschrijven begin-/eindsaldo. Bericht- en statement-ID's hebben beschreven varianten met downloadvolgnummers; `NtryRef` is een optioneel sorteervolgnummer. De beschrijving bevat ook optionele transactiereferenties. Zie pagina's 3 en 5–9. De [Nederlandse implementatierichtlijn versie 2.0](https://www.betaalvereniging.nl/wp-content/uploads/IG-Bank-to-Customer-Statement-CAMT-053-v2.0.pdf) is aanvullende openbare context, geen bewijs over particuliere exports.
+
+Ontwerpbesluiten voor SCRUM-127 (eigen implementatiekeuzes):
+
+- Eerste allowlisted profiel: `asn-camt053-v02-v1`, exact namespace `urn:iso:std:iso:20022:tech:xsd:camt.053.001.02`. Andere namespaces expliciet unsupported totdat een adapterprofiel getest is. Geen automatische downgrade op alleen lokale tagnamen.
+- Start met lokaal uitgepakte XML. Een ZIP zelf blijft onondersteund tot veilige containerextractie met omvanglimieten, padcontrole en container→member-bronrelatie is ontworpen; nooit stil bronverpakking weggooien.
+- Bedragteken één keer afleiden uit credit/debit. Een reversal niet nogmaals van teken wisselen. Ontbrekende boekdatum niet verzinnen: record afwijzen of review, conform het generieke contract.
+- Entry en transactiedetails niet beide optellen. Eén entry is de initiële boekingseenheid; meerdere details blijven afzonderlijk bewijs onder die entry. Opsplitsen pas met bewezen bedragen, valuta en reconciliatie; geen instructiebedrag blind als geboekt bedrag gebruiken.
+- Bericht-ID, statement-ID, entryvolgnummer en end-to-end-referentie zijn geen bewezen cross-export transactie-identiteit. De sterke bank-ID-route blijft uit tot stabiliteit/uniciteit aangetoond is; anders de bestaande unresolved-/reviewroute toepassen.
+- Synthetische fixtures voor gewijzigde download-ID's, meerdere statements, lege statements, gelijke betalingen, ontbrekende referenties, meerdere details, signed saldocontrole en onbekende namespace. XSD en bankdocumentatie vóór parserimplementatie op inconsistenties controleren; geen ontbrekende regels uit voorbeeldwaarden afleiden.
+
+Geen bankbestand of private map geopend. De lokale profiel-/privacygate van SCRUM-150/151 blijft gelden; aanvullende headers of samples hoeven niet naar ChatGPT.
+
 ## 4. Voorgesteld datamodel (nog geen DDL)
 
 Plaatsing: afzonderlijk PostgreSQL-schema `finance` met expliciete rollen en `finance_*`-tabellen, verwijzend naar `public.files` en `public.content_groups`. Geen wijziging van generieke documenttabellen voor financiële velden. UUID-PK's behalve bestaande CORE-ID's; UTC `timestamptz` voor events, bankdatums als `date`. `scope_id` is een stabiele UUID voor de eigenaar/administratie, server-side uit autorisatiecontext, nooit een vrij te kiezen clientfilter. Eén initiële scope; voorbereid op meerdere administraties zonder te claimen dat bestaande CORE reeds multitenant is.

@@ -13,7 +13,7 @@ Alle stories hieronder vallen onder [SCRUM-118](https://hugohoogendoorn.atlassia
 | 1 | [SCRUM-125](https://hugohoogendoorn.atlassian.net/browse/SCRUM-125) | Bronoccurrences, recordlocators, many-to-one bewijs, sterke ID versus niet-unieke duplicatekandidaat. |
 | 2 | [SCRUM-150](https://hugohoogendoorn.atlassian.net/browse/SCRUM-150) — nieuw | Eigenaar stelt lokaal formaat vast; geen bankinformatie door ChatGPT. |
 | 2 | [SCRUM-151](https://hugohoogendoorn.atlassian.net/browse/SCRUM-151) — nieuw | Bestaande CORE-privacy/policies/retention hergebruiken; ontbrekende autorisatie, sleutelbeheer en consumer-gates aantonen en aanvullen vóór werkelijke ingest. |
-| 3 | [SCRUM-127](https://hugohoogendoorn.atlassian.net/browse/SCRUM-127) | Eén bewezen ASN-profiel, deterministic adapter; geen aanname dat XML CAMT of STA MT940 is. |
+| 3 | [SCRUM-127](https://hugohoogendoorn.atlassian.net/browse/SCRUM-127) | Eerste doel: ASN CAMT.053 volgens openbare specificatie; daadwerkelijke lokale profielmatch blijft gate. Zie ASN-aanvulling in het fundament. |
 | 3 | [SCRUM-128](https://hugohoogendoorn.atlassian.net/browse/SCRUM-128) | Extractie/normalisatie en controles met synthetische fixtures. |
 | 3 | [SCRUM-129](https://hugohoogendoorn.atlassian.net/browse/SCRUM-129) | Atomische import, lifecycle, retry/crash/idempotency-contract. |
 | 3 | [SCRUM-152](https://hugohoogendoorn.atlassian.net/browse/SCRUM-152) — nieuw | Append-only reviews, duplicatebesluiten, effectieve projectie en compensatie. |
