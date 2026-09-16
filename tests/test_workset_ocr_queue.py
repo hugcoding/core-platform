@@ -58,6 +58,8 @@ class WorksetOcrQueueTests(unittest.TestCase):
         self.assertIn("workset_ocr_worker:", compose)
         self.assertIn('"/volume1:/volume1:ro"', compose)
         self.assertIn("tesseract-ocr-data-nld", dockerfile)
+        self.assertIn("COPY core ./core", dockerfile)
+        self.assertLess(dockerfile.index("COPY core ./core"), dockerfile.index("COPY workset_ocr_worker.py"))
         self.assertIn("CORE_OCR_MAX_CPU_PERCENT", compose)
         self.assertIn("controlled_execution_priority", source)
         self.assertIn("postgres_busy", source)
