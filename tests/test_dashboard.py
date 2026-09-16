@@ -39,6 +39,10 @@ def test_dashboard_supports_hash_and_string_heartbeats():
     assert "values = client.hgetall(key)" in source
     assert "heartbeat = client.get(key)" in source
     assert 'redis_key_size(client, "scanner:dirty_roots")' in source
+    assert 'heartbeat_service(client, "workset_ocr_worker")' in source
+    assert 'metrics[f"ocr_{item[\'status\']}"]' in source
+    frontend = (ROOT / "dashboard" / "static" / "app.js").read_text(encoding="utf-8")
+    assert "OCR wachtend" in frontend
 
 
 def test_core_cli_exposes_dashboard_lifecycle():

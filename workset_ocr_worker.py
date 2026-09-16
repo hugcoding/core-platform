@@ -276,6 +276,7 @@ def main() -> int:
             elif reason is None and stream_lag(client) > MAX_STREAM_LAG:
                 reason = "core_pipeline_priority"
             client.set("workset_ocr_worker:heartbeat", datetime.now(timezone.utc).isoformat(), ex=90)
+            client.set("workset_ocr_worker:heartbeat:status", reason or "idle", ex=90)
             set_waiting_reason(reason)
             if reason:
                 time.sleep(POLL_SECONDS)
@@ -286,6 +287,7 @@ def main() -> int:
                 time.sleep(POLL_SECONDS)
                 continue
             try:
+                client.set("workset_ocr_worker:heartbeat:status", "processing", ex=90)
                 process_job(job)
             except Exception as exc:
                 fail(job, exc)
