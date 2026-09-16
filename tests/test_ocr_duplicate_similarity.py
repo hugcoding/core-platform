@@ -49,6 +49,14 @@ class OcrDuplicateSimilarityTests(unittest.TestCase):
         self.assertIn(ANALYZER_VERSION, migration)
         self.assertIn("NOT e.signature_present OR e.analyzer_version", migration)
 
+    def test_policy_and_operations_are_documented(self):
+        documentation = (ROOT / "project/reports/OCR-NEAR-DUPLICATE-DETECTION.md").read_text("utf-8")
+        for value in ("minimaal 500", "minimaal 98%", "minimaal 95%", "minimaal 90%"):
+            self.assertIn(value, documentation)
+        self.assertIn("nooit automatisch", documentation)
+        self.assertIn("20260916_allow_reviewed_ocr_near_duplicates.sql", documentation)
+        self.assertIn("ocr_similarity_comparisons", documentation)
+
 
 if __name__ == "__main__":
     unittest.main()
