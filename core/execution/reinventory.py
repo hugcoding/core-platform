@@ -39,7 +39,8 @@ def enqueue_source_reinventory(client: Any, item: Mapping[str, Any]) -> dict[str
     stream_id = client.eval(
         script, 2, dedup_key, REINVENTORY_STREAM, str(int(time.time())),
         str(REINVENTORY_DEDUP_TTL), source_path, "controlled_execution_reinventory",
-        str(item["file_id"]), str(item["batch_id"]), str(item["id"]), repair_key,
+        str(item["file_id"]), str(item.get("batch_id") or ""),
+        str(item.get("id") or ""), repair_key,
     )
     return {
         "reinventory_status": "queued" if stream_id else "already_queued",

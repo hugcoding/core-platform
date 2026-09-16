@@ -157,6 +157,8 @@ def check_source_availability(candidates: Iterable[Mapping[str, Any]]) -> tuple[
             reason = None if stat.S_ISREG(source_stat.st_mode) else "source_not_regular_file"
             if not reason and item.get("size_bytes") is not None and source_stat.st_size != int(item["size_bytes"]):
                 reason = "source_size_changed"
+                item["observed_size_bytes"] = source_stat.st_size
+                item["observed_mtime_ns"] = source_stat.st_mtime_ns
             if not reason and item.get("target_path"):
                 try:
                     Path(item["target_path"]).lstat()
