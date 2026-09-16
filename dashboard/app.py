@@ -295,13 +295,34 @@ def workset_page():
     return FileResponse(APP_DIR / "static" / "workset.html")
 
 
+def resolve_existing_managed_path(
+    candidates: list[str | None], managed_root: Path = Path("/volume1/data"),
+) -> Path:
+    """Pick the first existing managed path, tolerating a stale migration projection."""
+    root = managed_root.resolve()
+    safe_candidates: list[Path] = []
+    for candidate in candidates:
+        if not candidate:
+            continue
+        source = Path(str(candidate)).resolve()
+        if source != root and root in source.parents and source not in safe_candidates:
+            safe_candidates.append(source)
+    if not safe_candidates:
+        raise HTTPException(status_code=403, detail="document is outside the managed data root")
+    for source in safe_candidates:
+        if source.is_file():
+            return source
+    raise HTTPException(status_code=404, detail="document is unavailable on storage")
+
+
 @app.get("/api/v1/workset/{file_id}/content")
 def open_workset_document(file_id: int):
     """Open the current verified physical content; never mutate it."""
     try:
         with db_connect() as conn:
             rows = query_all(conn, """
-                SELECT f.id, COALESCE(location.current_path, f.path) AS path, f.filename
+                SELECT f.id, location.current_path AS projected_path,
+                       f.path AS registered_path, f.filename
                 FROM public.files f
                 LEFT JOIN public.v_workset_current_physical_location location
                   ON location.file_id = f.id
@@ -311,12 +332,9 @@ def open_workset_document(file_id: int):
         if not rows:
             raise HTTPException(status_code=404, detail="document not found")
         row = rows[0]
-        root = Path("/volume1/data").resolve()
-        source = Path(str(row["path"])).resolve()
-        if source == root or root not in source.parents:
-            raise HTTPException(status_code=403, detail="document is outside the managed data root")
-        if not source.is_file():
-            raise HTTPException(status_code=404, detail="document is unavailable on storage")
+        source = resolve_existing_managed_path([
+            row.get("projected_path"), row.get("registered_path"),
+        ])
         extension = source.suffix.casefold()
         inline_extensions = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".txt"}
         media_type = mimetypes.guess_type(str(source))[0] or "application/octet-stream"

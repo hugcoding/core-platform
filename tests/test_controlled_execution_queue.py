@@ -161,6 +161,14 @@ class ControlledExecutionQueueTests(unittest.TestCase):
         self.assertIn("COALESCE(location.current_path, v.source_path) AS source_path", migration)
         self.assertIn("LEFT JOIN public.v_workset_current_physical_location location", migration)
 
+    def test_newer_move_event_supersedes_stale_migration_target(self):
+        migration = (ROOT / "database/migrations/20260916_prefer_newer_move_event_for_workset_location.sql").read_text("utf-8")
+        rollback = (ROOT / "database/migrations/rollback/20260916_prefer_newer_move_event_for_workset_location.sql").read_text("utf-8")
+        self.assertIn("event.event_type = 'MOVED'", migration)
+        self.assertIn("event.created_at > status.status_changed_at", migration)
+        self.assertIn("COALESCE(latest_move.new_path, status.target_path) AS current_path", migration)
+        self.assertIn("status.target_path AS current_path", rollback)
+
     def test_flat_golden_record_gets_independent_fallback_correction(self):
         self.assertEqual(
             ("migrate_inactive", "/volume1/data/Persoonlijk/Inactief/Te beoordelen/payroll.pdf"),
