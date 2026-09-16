@@ -211,4 +211,29 @@ class IntegrationTests(unittest.TestCase):
                     WHERE NOT EXISTS(SELECT 1 FROM finance.finance_transactions t WHERE t.record_id=r.id) LIMIT 1''')
 
 
+    def test_08_sorting_covers_all_pages_and_validates_input(self):
+        template=sample().decode().replace('2026-09-01','2026-08-01')
+        start,end=template.index('<Ntry>'),template.index('</Ntry>')+len('</Ntry>')
+        entries=[]
+        for i in range(105):
+            entry=template[start:end].replace('12.34',str(i+1)+'.00')
+            entry=entry.replace('SYNTHETIC CANARY',f'Sorting {104-i:03d}')
+            entry=entry.replace('Synthetische winkel',f'Synthetic party {i:03d}')
+            entries.append(entry)
+        self.import_file((template[:start]+''.join(entries)+template[end:]).encode())
+        from decimal import Decimal
+        for field in ('booking_date','amount','counterparty','description','category'):
+            for direction in ('asc','desc'):
+                responses=[self.client.get(f'/api/v1/finance/data?month=2026-08&sort={field}&direction={direction}&page={page}') for page in (0,1)]
+                self.assertTrue(all(r.status_code==200 for r in responses))
+                rows=[row for response in responses for row in response.json()['transactions']]
+                self.assertEqual(105,len(rows));self.assertEqual(105,len({r['id'] for r in rows}))
+                categories={c['code']:c['label'] for c in responses[0].json()['categories']}
+                values=[Decimal(r['amount']) if field=='amount' else
+                    (categories.get(r['category_code'],'Nog te categoriseren') if field=='category' else r[field]).casefold() for r in rows]
+                self.assertEqual(sorted(values,reverse=direction=='desc'),values)
+        for query in ('sort=amount;DROP TABLE finance.finance_transactions','direction=desc nulls first'):
+            self.assertEqual(422,self.client.get('/api/v1/finance/data',params=dict([query.split('=',1)])).status_code)
+
+
 if __name__=='__main__': unittest.main()

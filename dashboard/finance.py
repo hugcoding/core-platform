@@ -112,7 +112,11 @@ def transaction(row):
 
 
 @router.get('/api/v1/finance/data')
-def data(account:str='',month:str='',category:str='',page:int=0):
+def data(account:str='',month:str='',category:str='',page:int=0,sort:str='booking_date',direction:str='desc'):
+    columns={'booking_date':'t.booking_date','amount':'t.amount',
+             'category':"lower(COALESCE(c.label,'Nog te categoriseren'))"}
+    if sort not in (*columns,'counterparty','description') or direction not in ('asc','desc'):
+        raise HTTPException(422,'invalid_sort')
     clauses,params=['true'],[]
     if account:
         clauses.append('t.account_id=%s'); params.append(uid(account))
@@ -142,9 +146,24 @@ def data(account:str='',month:str='',category:str='',page:int=0):
             coalesce(sum(amount) FILTER(WHERE amount<0),0) AS debits,coalesce(sum(amount),0) AS net,
             count(*) FILTER(WHERE category_code IS NULL) AS uncategorized FROM finance.v_transactions t WHERE {where}''',params)
         totals=serial(cur.fetchone())
-        cur.execute(f'''SELECT t.* FROM finance.v_transactions t WHERE {where}
-            ORDER BY booking_date DESC,id LIMIT 100 OFFSET %s''',params+[page*100])
-        rows=[transaction(r) for r in cur.fetchall()]
+        if sort in ('counterparty','description'):
+            # Text remains encrypted at rest. Sort the complete filtered selection
+            # locally, then paginate; never create a plaintext search/sort index.
+            cur.execute(f'SELECT t.id,t.private_data FROM finance.v_transactions t WHERE {where} ORDER BY t.id',params)
+            ranked=[(r['id'],str(decrypt(r['private_data']).get(sort) or '').casefold()) for r in cur.fetchall()]
+            ranked.sort(key=lambda item:item[1],reverse=direction=='desc')
+            ids=[str(item[0]) for item in ranked[page*100:(page+1)*100]]
+            if ids:
+                cur.execute('SELECT t.* FROM finance.v_transactions t WHERE t.id=ANY(%s::uuid[])',(ids,))
+                by_id={str(r['id']):transaction(r) for r in cur.fetchall()}
+                rows=[by_id[i] for i in ids]
+            else: rows=[]
+        else:
+            # Both SQL fragments are validated above, never interpolated user text.
+            cur.execute(f'''SELECT t.* FROM finance.v_transactions t
+                LEFT JOIN finance.finance_categories c ON c.code=t.category_code WHERE {where}
+                ORDER BY {columns[sort]} {direction} NULLS LAST,t.id LIMIT 100 OFFSET %s''',params+[page*100])
+            rows=[transaction(r) for r in cur.fetchall()]
         cur.execute('SELECT * FROM finance.v_import_status ORDER BY created_at DESC LIMIT 100')
         imports=[serial(r) for r in cur.fetchall()]
         cur.execute('SELECT * FROM finance.finance_ingest_jobs ORDER BY requested_at DESC LIMIT 5')
@@ -154,7 +173,7 @@ def data(account:str='',month:str='',category:str='',page:int=0):
             AND NOT EXISTS(SELECT 1 FROM finance.finance_duplicate_events e WHERE e.record_id=r.id)''')
         unresolved=cur.fetchone()['n']
     return {'accounts':accounts,'categories':categories,'months':months,'totals':totals,'transactions':rows,
-        'imports':imports,'jobs':jobs,'unresolved':unresolved,'page':page,'currency':'EUR'}
+        'imports':imports,'jobs':jobs,'unresolved':unresolved,'page':page,'currency':'EUR','sort':sort,'direction':direction}
 
 
 @router.post('/api/v1/finance/import')

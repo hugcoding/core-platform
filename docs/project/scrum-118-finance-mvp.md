@@ -4,7 +4,7 @@ De eerste verticale slice biedt een afzonderlijke CORE Finance-pagina, lokale CA
 
 ## Scope en gebruik
 
-Open `/corefinance` en ontgrendel met de persoonlijke toegangscode uit het lokale runtimebestand `finance/access-code.txt`. `XML importeren` zet een scanopdracht klaar voor de ingestworker. Accounts zijn gemaskeerd; bedragen, omschrijvingen en tegenpartijen worden uitsluitend aan de ontgrendelde browser geleverd. De totalen zijn mutaties binnen de filters, geen banksaldo. Eigen overboekingen zijn inbegrepen.
+Open `/corefinance` en ontgrendel met de persoonlijke toegangscode uit het lokale runtimebestand `finance/access-code.txt`. `XML importeren` zet een scanopdracht klaar voor de ingestworker. Accounts zijn gemaskeerd; bedragen, omschrijvingen en tegenpartijen worden uitsluitend aan de ontgrendelde browser geleverd. Via de kolomkoppen kunnen datum, tegenpartij, omschrijving, categorie en bedrag oplopend of aflopend worden gesorteerd. Dit geldt voor de volledige gefilterde selectie, met stabiele paginering. Tekstsortering ontsleutelt alleen lokaal in geheugen en maakt geen onversleutelde sorteerindex. De totalen zijn mutaties binnen de filters, geen banksaldo. Eigen overboekingen zijn inbegrepen.
 
 Ondersteund: losse UTF-8 ASN CAMT `camt.053.001.02` XML-bestanden, geboekte EUR-mutaties, één eigenaar. Een `Ntry` is één transactie; onderliggende `TxDtls` zijn aanvullende broninformatie. Begin/eindsaldi worden gecontroleerd indien aanwezig. Andere versies, valuta, ZIP, CSV, PDF, MT940 en Open Banking volgen later. De UI heeft geen AI-laag.
 
