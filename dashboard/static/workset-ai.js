@@ -8,7 +8,7 @@ const aiQueue={
 };
 const ocrQueue={jobs:new Map(),loaded:false};
 function aiStatusLabel(status){return({pending:'Wachtend',running:'Bezig',ready:'Voorstel gereed',failed:'Mislukt',abstained:'Onvoldoende bewijs',cancelled:'Vervallen'})[status]||status}
-function aiReasonInDutch(reason){const known={waiting_for_cpu:'Wacht op lagere CPU-belasting',waiting_for_memory:'Wacht op voldoende vrij geheugen',core_pipeline_priority:'CORE-verwerking heeft voorrang',ai_worker_busy:'De lokale AI-worker is bezig',provider_unavailable:'De lokale AI-provider is niet bereikbaar',ocr_required_from_existing_evidence:'OCR was al door CORE vastgesteld voor deze bestandsinhoud',ocr_recommended_no_extractable_text:'Geen herkenbare tekst gevonden; OCR wordt aanbevolen',no_extractable_text:'Geen uitleesbare tekst gevonden'};return known[reason]||reason||''}
+function aiReasonInDutch(reason){const known={waiting_for_cpu:'Wacht op lagere CPU-belasting',waiting_for_memory:'Wacht op voldoende vrij geheugen',core_pipeline_priority:'CORE-verwerking heeft voorrang',controlled_execution_priority:'Gecontroleerde uitvoering heeft voorrang',postgres_busy:'Wacht op lagere PostgreSQL-belasting',redis_unavailable:'Redis is niet beschikbaar',maintenance_mode:'Onderhoudsmodus is actief',waiting_for_ocr:'Wacht op lokale OCR',ocr_failed:'Lokale OCR is mislukt',ai_worker_busy:'De lokale AI-worker is bezig',provider_unavailable:'De lokale AI-provider is niet bereikbaar',ocr_required_from_existing_evidence:'OCR was al door CORE vastgesteld voor deze bestandsinhoud',ocr_recommended_no_extractable_text:'Geen herkenbare tekst gevonden; OCR wordt aanbevolen',no_extractable_text:'Geen uitleesbare tekst gevonden'};return known[reason]||reason||''}
 function refreshAiQueue(){
   if(aiQueue.inFlight)return aiQueue.inFlight;
   clearTimeout(aiQueue.refreshTimer);
@@ -60,7 +60,7 @@ actions.innerHTML = !aiQueue.loaded
 function prefillBackgroundAi(card, doc, job) {
   const panel = card.querySelector('.review-panel');
   if (!panel || panel.dataset.userEdited || panel.dataset.aiProposalId ||
-      doc.workset_status !== 'active' || doc.latest_review_decision ||
+      !['active','inactive'].includes(doc.workset_status) || doc.latest_review_decision ||
       doc.classification_status === 'accepted' || doc.is_similarity_redundant ||
       doc.is_deletion_quarantined ||
       (doc.target_proposal?.category_code && doc.target_proposal.category_code !== 'needs_review')) return;

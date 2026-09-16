@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment: { POSTGRES_USER: core, POSTGRES_PASSWORD: core, POSTGRES_DB: core_test }
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U core -d core_test"], interval: 2s, timeout: 2s, retries: 20 }
+  redis:
+    image: redis:7-alpine
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 2s, timeout: 2s, retries: 20 }
+  integration:
+    build: { context: ../../.., dockerfile: tests/integration/workset-ai-fallback/Dockerfile }
+    depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_healthy } }
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: core
+      DB_PASS: core
+      DB_NAME: core_test
+      REDIS_HOST: redis
+      CORE_AI_MAX_ACTIVE_DB_SESSIONS: 20
+    volumes: ["/proc:/host/proc:ro"]

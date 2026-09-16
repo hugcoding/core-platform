@@ -30,7 +30,7 @@ class WorksetAiQueueTests(unittest.TestCase):
     def test_resource_gate_protects_cpu_memory_and_core_pipeline(self):
         self.assertEqual("waiting_for_cpu", self.worker.resource_gate(
             {"cpu_load_percent": 80, "available_memory_mib": 8000}, 0,
-            {"requested_by": "core-auto-active-v1"},
+            {"requested_by": self.worker.REQUESTED_BY},
         ))
         self.assertEqual("waiting_for_cpu", self.worker.resource_gate(
             {"cpu_load_percent": 71, "available_memory_mib": 8000}, 0,
@@ -52,6 +52,27 @@ class WorksetAiQueueTests(unittest.TestCase):
         self.assertIn("MAX_STREAM_LAG", source)
         self.assertIn("workset_ai_worker:heartbeat", source)
         self.assertIn('row["workset_status"] = job["workset_status_snapshot"]', source)
+        self.assertIn("waiting_reason IS DISTINCT FROM 'waiting_for_ocr'", source)
+
+    def test_service_gate_pauses_for_redis_controlled_execution_and_postgres(self):
+        self.assertEqual("redis_unavailable", self.worker.service_gate(mock.Mock(ping=mock.Mock(return_value=False))))
+        client = mock.Mock(ping=mock.Mock(return_value=True))
+        cursor = mock.MagicMock()
+        connection = mock.MagicMock()
+        connection.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor
+        with mock.patch.object(self.worker, "db_connect", return_value=connection):
+            cursor.fetchone.return_value = {"active_sessions": 0, "controlled_execution_active": True}
+            self.assertEqual("controlled_execution_priority", self.worker.service_gate(client))
+            cursor.fetchone.return_value = {"active_sessions": 99, "controlled_execution_active": False}
+            self.assertEqual("postgres_busy", self.worker.service_gate(client))
+
+    def test_automatic_ocr_is_content_bound_and_leaves_ai_pending(self):
+        cursor = mock.MagicMock()
+        self.worker.enqueue_ocr(cursor, {"file_id": 42, "content_sha256": "a" * 64}, {"id": "job"})
+        statements = "\n".join(call.args[0] for call in cursor.execute.call_args_list)
+        self.assertIn("INSERT INTO public.workset_ocr_jobs", statements)
+        self.assertIn("waiting_reason='waiting_for_ocr'", statements)
+        self.assertIn(self.worker.REQUESTED_BY, cursor.execute.call_args_list[0].args[1])
 
     def test_auto_job_rechecks_eligibility_before_extraction(self):
         cursor = mock.MagicMock()
@@ -61,7 +82,7 @@ class WorksetAiQueueTests(unittest.TestCase):
         with mock.patch.object(self.worker, 'db_connect', return_value=connection), mock.patch.object(
             self.worker, 'extract_bounded_context'
         ) as extract:
-            self.worker.process_job({'id':'job', 'file_id':42, 'requested_by':'core-auto-active-v1'})
+            self.worker.process_job({'id':'job', 'file_id':42, 'requested_by':self.worker.REQUESTED_BY})
         extract.assert_not_called()
         self.assertIn("no_longer_eligible", cursor.execute.call_args.args[0])
 
@@ -98,6 +119,7 @@ class WorksetAiQueueTests(unittest.TestCase):
         self.assertIn('item["requested_file_id"]', app)
         self.assertIn('item["workset_available"]', app)
         self.assertIn("WHERE w.content_sha256=%s", app)
+        self.assertIn("!['active','inactive'].includes(doc.workset_status)", script)
 
     def test_portal_explains_ocr_recommendation_without_automatic_ocr(self):
         worker = (ROOT / "workset_ai_worker.py").read_text(encoding="utf-8")
@@ -143,6 +165,9 @@ class WorksetAiQueueTests(unittest.TestCase):
         self.assertIn("CORE_AI_MAX_CPU_PERCENT", compose)
         self.assertIn('"/volume1:/volume1:ro"', compose)
         self.assertIn("read_only: true", compose)
+        self.assertIn("CORE_AI_AUTO_HOURLY_LIMIT", compose)
+        self.assertIn("CORE_AI_MAX_ACTIVE_DB_SESSIONS", compose)
+        self.assertIn("CORE_AI_AUTO_INACTIVE_ENABLED:-true", compose)
 
 
 if __name__ == "__main__":

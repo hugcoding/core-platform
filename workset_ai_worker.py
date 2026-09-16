@@ -9,6 +9,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import NAMESPACE_URL, uuid5
 
 import psycopg2
 import psycopg2.extras
@@ -29,8 +30,13 @@ MAX_STREAM_LAG = int(os.getenv("CORE_AI_MAX_STREAM_LAG", "1000"))
 MODEL = os.getenv("CORE_LLM_MODEL", "qwen3.6:latest")
 ENDPOINT = os.getenv("CORE_LLM_ENDPOINT", "http://192.168.68.107:11434/v1")
 PROMPT_PATH = Path("project/prompts/scrum-101-workset-llm-v2.json")
-AUTO_ENABLED = os.getenv("CORE_AI_AUTO_ACTIVE_ENABLED", "false").lower() == "true"
+AUTO_ENABLED = os.getenv("CORE_AI_AUTO_INACTIVE_ENABLED", "false").lower() == "true"
 AUTO_INTERVAL = max(60, int(os.getenv("CORE_AI_AUTO_INTERVAL_SECONDS", "300")))
+AUTO_PAGE_SIZE = min(5, max(1, int(os.getenv("CORE_AI_AUTO_BATCH_SIZE", "5"))))
+AUTO_PENDING_LIMIT = min(5, max(1, int(os.getenv("CORE_AI_AUTO_PENDING_LIMIT", "5"))))
+AUTO_HOURLY_LIMIT = min(10, max(1, int(os.getenv("CORE_AI_AUTO_HOURLY_LIMIT", "10"))))
+MAX_ACTIVE_DB_SESSIONS = max(1, int(os.getenv("CORE_AI_MAX_ACTIVE_DB_SESSIONS", "4")))
+MAINTENANCE_MODE = os.getenv("CORE_MAINTENANCE_MODE", "false").lower() == "true"
 
 
 def db_connect():
@@ -107,11 +113,38 @@ def resource_gate(
     return None
 
 
+def service_gate(client: redis.Redis) -> str | None:
+    """Pause background work for maintenance, Redis or busy database/execution state."""
+    if MAINTENANCE_MODE:
+        return "maintenance_mode"
+    try:
+        if not client.ping():
+            return "redis_unavailable"
+    except Exception:
+        return "redis_unavailable"
+    with db_connect() as conn, conn.cursor() as cur:
+        cur.execute("""SELECT
+            count(*) FILTER (WHERE state='active' AND pid<>pg_backend_pid()) AS active_sessions,
+            EXISTS (
+                SELECT 1 FROM public.v_controlled_execution_batch_progress
+                WHERE batch_status IN ('approved','queued','started','rollback_pending')
+            ) AS controlled_execution_active
+            FROM pg_stat_activity WHERE datname=current_database()
+        """)
+        pressure = cur.fetchone()
+    if pressure["controlled_execution_active"]:
+        return "controlled_execution_priority"
+    if int(pressure["active_sessions"] or 0) > MAX_ACTIVE_DB_SESSIONS:
+        return "postgres_busy"
+    return None
+
+
 def set_pending_reason(reason: str | None) -> None:
     with db_connect() as conn, conn.cursor() as cur:
         cur.execute("""
             UPDATE public.workset_ai_jobs SET waiting_reason=%s, updated_at=now()
             WHERE status='pending' AND waiting_reason IS DISTINCT FROM %s
+              AND waiting_reason IS DISTINCT FROM 'waiting_for_ocr'
         """, (reason, reason))
 
 
@@ -120,6 +153,11 @@ def claim_job() -> dict[str, Any] | None:
         cur.execute("""
             SELECT * FROM public.workset_ai_jobs
             WHERE status='pending'
+              AND (waiting_reason IS DISTINCT FROM 'waiting_for_ocr' OR EXISTS (
+                  SELECT 1 FROM public.workset_ocr_jobs o
+                  WHERE o.content_sha256=workset_ai_jobs.content_sha256
+                    AND o.status IN ('ready','failed','cancelled')
+              ))
             ORDER BY priority DESC, requested_at, id
             FOR UPDATE SKIP LOCKED LIMIT 1
         """)
@@ -139,6 +177,11 @@ def peek_job() -> dict[str, Any] | None:
         cur.execute("""
             SELECT * FROM public.workset_ai_jobs
             WHERE status='pending'
+              AND (waiting_reason IS DISTINCT FROM 'waiting_for_ocr' OR EXISTS (
+                  SELECT 1 FROM public.workset_ocr_jobs o
+                  WHERE o.content_sha256=workset_ai_jobs.content_sha256
+                    AND o.status IN ('ready','failed','cancelled')
+              ))
             ORDER BY priority DESC, requested_at, id
             LIMIT 1
         """)
@@ -189,6 +232,25 @@ def existing_ocr_artifact(cur, content_sha256: str) -> dict[str, Any] | None:
     return dict(result) if result else None
 
 
+def latest_ocr_job(cur, content_sha256: str) -> dict[str, Any] | None:
+    cur.execute("""SELECT id,status,error_code FROM public.workset_ocr_jobs
+                   WHERE content_sha256=%s ORDER BY requested_at DESC,id DESC LIMIT 1""",
+                (content_sha256,))
+    result = cur.fetchone()
+    return dict(result) if result else None
+
+
+def enqueue_ocr(cur, row: dict[str, Any], ai_job: dict[str, Any]) -> None:
+    identity = str(uuid5(NAMESPACE_URL, f"{REQUESTED_BY}:ocr:{row['content_sha256']}"))
+    cur.execute("""INSERT INTO public.workset_ocr_jobs
+        (idempotency_key,file_id,content_sha256,priority,requested_by)
+        VALUES (%s,%s,%s,50,%s) ON CONFLICT DO NOTHING""",
+        (identity, row["file_id"], row["content_sha256"], REQUESTED_BY))
+    cur.execute("""UPDATE public.workset_ai_jobs
+        SET status='pending',started_at=NULL,waiting_reason='waiting_for_ocr',updated_at=now()
+        WHERE id=%s""", (ai_job["id"],))
+
+
 def ocr_context(artifact: dict[str, Any]) -> dict[str, Any]:
     path = Path(str(artifact["artifact_path"]))
     allowed_root = Path("/volume1/docker/core-runtime/ocr")
@@ -223,9 +285,11 @@ def process_job(job: dict[str, Any]) -> None:
                 """, (job["id"],))
                 return
         cur.execute("""
-            SELECT w.*, c.category, c.document_family
+            SELECT w.*, COALESCE(location.current_path,w.path) AS path,
+                   c.category, c.document_family
             FROM public.v_active_document_workset w
             LEFT JOIN public.v_current_file_classification c ON c.file_id=w.file_id
+            LEFT JOIN public.v_workset_current_physical_location location ON location.file_id=w.file_id
             WHERE w.file_id=%s
         """, (job["file_id"],))
         row = cur.fetchone()
@@ -243,6 +307,7 @@ def process_job(job: dict[str, Any]) -> None:
             cur, int(row["file_id"]), str(row["content_sha256"]),
         )
         ocr_artifact = existing_ocr_artifact(cur, str(row["content_sha256"]))
+        ocr_job = latest_ocr_job(cur, str(row["content_sha256"]))
 
     context = (ocr_context(ocr_artifact) if ocr_artifact else {
         "status": "ocr_recommended",
@@ -255,6 +320,15 @@ def process_job(job: dict[str, Any]) -> None:
         "evidence_file_id": int(ocr_evidence["evidence_file_id"]),
         "evidence_updated_at": ocr_evidence["updated_at"].isoformat(),
     } if ocr_evidence else extract_bounded_context(str(row["path"])))
+    if context["status"] != "ready" and context.get("ocr_recommended"):
+        if not ocr_job or ocr_job.get("status") in {"pending", "running"}:
+            with db_connect() as conn, conn.cursor() as cur:
+                enqueue_ocr(cur, dict(row), job)
+            return
+        if ocr_job.get("status") in {"failed", "cancelled"}:
+            context["reason"] = "ocr_failed"
+            context["ocr_job_id"] = str(ocr_job["id"])
+            context["ocr_error_code"] = ocr_job.get("error_code")
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     if context["status"] != "ready":
         proposal = abstention(int(row["file_id"]), context["reason"])
@@ -328,13 +402,18 @@ def main() -> int:
     while True:
         try:
             resources = host_resources()
+            service_reason = service_gate(client)
             if AUTO_ENABLED and time.monotonic() >= next_discovery:
                 next_discovery = time.monotonic() + AUTO_INTERVAL
-                if resource_gate(resources, stream_lag(client)) is None:
+                if service_reason is None and resource_gate(resources, stream_lag(client)) is None:
                     try:
                         with db_connect() as conn, conn.cursor() as cur:
                             cur.execute("SET LOCAL statement_timeout='2000ms'")
-                            after_id, added = enqueue_page(cur, after_id, MODEL, PROMPT_VERSION)
+                            after_id, added = enqueue_page(
+                                cur, after_id, MODEL, PROMPT_VERSION,
+                                page_size=AUTO_PAGE_SIZE, pending_limit=AUTO_PENDING_LIMIT,
+                                hourly_limit=AUTO_HOURLY_LIMIT,
+                            )
                         client.hset("workset_ai_worker:auto", mapping={
                             "last_scan": datetime.now(timezone.utc).isoformat(),
                             "after_id": after_id, "added": added, "error": "",
@@ -342,7 +421,7 @@ def main() -> int:
                     except Exception as exc:
                         client.hset("workset_ai_worker:auto", "error", type(exc).__name__)
             pending_job = peek_job()
-            reason = resource_gate(resources, stream_lag(client), pending_job)
+            reason = service_reason or resource_gate(resources, stream_lag(client), pending_job)
             client.set("workset_ai_worker:heartbeat", datetime.now(timezone.utc).isoformat(), ex=90)
             client.hset("workset_ai_worker:resources", mapping={
                 **resources, "gate_reason": reason or "ready",
