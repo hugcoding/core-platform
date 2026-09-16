@@ -189,6 +189,11 @@ def _high_content_signals(row: dict[str, Any]) -> list[str]:
 
 def propose_privacy(row: dict[str, Any]) -> dict[str, Any]:
     """Return a proposal only; this function never persists or lowers a review."""
+    from core.finance.privacy import protected_path
+    if protected_path(row.get('path')):
+        return {'classification':'high','confidence':'high','reason_code':'finance_source_policy',
+                'rule_version':RULE_VERSION,'evidence':['finance_source_policy'],
+                'requires_human_review':False,'external_llm_content_allowed':False}
     evidence = _evidence_text(row)
     high = _matched_terms(evidence, HIGH_TERMS)
     content_high = _high_content_signals(row)

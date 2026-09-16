@@ -630,6 +630,10 @@ def process_event(cur, data):
         raise ValueError("Empty path")
 
     path = os.path.normpath(str(path))
+    # Finance owns local parsing/registration; generic extraction must not read it.
+    from core.finance.privacy import protected_path
+    if protected_path(path):
+        return
 
     if "delete" in event:
         cur.execute("""

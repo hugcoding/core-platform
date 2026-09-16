@@ -164,6 +164,8 @@ def pdf_metadata_evidence(metadata) -> dict[str, object]:
 
 
 def extract_text(path: Path, route: str) -> tuple[str, int | None, dict[str, object]]:
+    from core.finance.privacy import deny_generic_access
+    deny_generic_access(path)
     if route == "plain-text":
         try:
             return path.read_text(encoding="utf-8"), None, {}

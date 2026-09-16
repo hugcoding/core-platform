@@ -25,6 +25,9 @@ ORDER BY w.file_id
 
 
 def eligible(row, now=None):
+    from core.finance.privacy import protected_path
+    if protected_path(row.get('path')):
+        return False
     del now  # Kept for call compatibility; effective status is database-projected.
     status = row.get("effective_workset_status") or row.get("workset_status")
     if status != "inactive" or row.get("redundant_file_id"):

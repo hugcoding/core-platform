@@ -127,6 +127,8 @@ def set_waiting_reason(reason: str | None) -> None:
 
 
 def recognize_pdf(path: Path) -> tuple[str, int, str]:
+    from core.finance.privacy import deny_generic_access
+    deny_generic_access(path)
     if path.suffix.casefold() != ".pdf":
         raise ValueError("unsupported_extension")
     with tempfile.TemporaryDirectory(prefix="core-ocr-") as directory:

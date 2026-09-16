@@ -1,0 +1,22 @@
+# Acceptance deployment from an isolated checkout; original NAS checkout stays intact.
+services:
+  dashboard:
+    image: core-finance-dashboard:mvp
+    build: {context: "${CORE_FINANCE_BUILD_CONTEXT:?set isolated build directory}", dockerfile: Dockerfile.dashboard}
+    environment:
+      CORE_FINANCE_ENABLED: "true"
+  finance_worker:
+    image: core-finance-dashboard:mvp
+    build: {context: "${CORE_FINANCE_BUILD_CONTEXT:?set isolated build directory}", dockerfile: Dockerfile.dashboard}
+  metadata_worker:
+    image: core-finance-metadata:mvp
+    build: {context: "${CORE_FINANCE_BUILD_CONTEXT:?set isolated build directory}", dockerfile: Dockerfile.metadata}
+  workset_ai_worker:
+    image: core-finance-ai:mvp
+    build: {context: "${CORE_FINANCE_BUILD_CONTEXT:?set isolated build directory}", dockerfile: Dockerfile.workset-ai-worker}
+  workset_ocr_worker:
+    image: core-finance-ocr:mvp
+    build: {context: "${CORE_FINANCE_BUILD_CONTEXT:?set isolated build directory}", dockerfile: Dockerfile.workset-ocr-worker}
+  controlled_execution_worker:
+    image: core-finance-execution:mvp
+    build: {context: "${CORE_FINANCE_BUILD_CONTEXT:?set isolated build directory}", dockerfile: Dockerfile.controlled-execution-worker}

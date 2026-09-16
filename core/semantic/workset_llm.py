@@ -58,6 +58,8 @@ def extract_bounded_context(path: str) -> dict[str, Any]:
 
 def build_prompt(document: dict[str, Any], context: dict[str, Any],
                  examples: list[dict[str, Any]], system_prompt: str) -> tuple[str, str]:
+    from core.finance.privacy import deny_generic_access
+    deny_generic_access(document.get('path'))
     contract = taxonomy()
     categories = ", ".join(item["code"] for item in contract["categories"])
     families = ", ".join(item["code"] for item in contract["families"])
