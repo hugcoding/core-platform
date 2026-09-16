@@ -232,8 +232,26 @@ class IntegrationTests(unittest.TestCase):
                 values=[Decimal(r['amount']) if field=='amount' else
                     (categories.get(r['category_code'],'Nog te categoriseren') if field=='category' else r[field]).casefold() for r in rows]
                 self.assertEqual(sorted(values,reverse=direction=='desc'),values)
+                if field=='booking_date':
+                    self.assertEqual([Decimal(-i) for i in range(1,106)],[Decimal(r['amount']) for r in rows])
         for query in ('sort=amount;DROP TABLE finance.finance_transactions','direction=desc nulls first'):
             self.assertEqual(422,self.client.get('/api/v1/finance/data',params=dict([query.split('=',1)])).status_code)
+
+
+    def test_09_date_ties_follow_source_and_numeric_statement_order(self):
+        from decimal import Decimal
+        template=sample().decode().replace('2026-09-01','2026-07-01')
+        start,end=template.index('<Stmt>'),template.index('</Stmt>')+len('</Stmt>')
+        statements=[template[start:end].replace('12.34',f'{i}.00') for i in range(1,13)]
+        self.import_file((template[:start]+''.join(statements)+template[end:]).encode(),'z-first.xml')
+        self.import_file(template.replace('12.34','99.00').encode(),'a-second.xml')
+        self.import_file(template.replace('2026-07-01','2026-07-02').replace('12.34','100.00').encode(),'next-day.xml')
+        source_order=[Decimal(-i) for i in range(1,13)]+[Decimal(-99)]
+        for direction in ('asc','desc'):
+            response=self.client.get(f'/api/v1/finance/data?month=2026-07&sort=booking_date&direction={direction}')
+            self.assertEqual(200,response.status_code)
+            expected=source_order+[Decimal(-100)] if direction=='asc' else [Decimal(-100)]+source_order
+            self.assertEqual(expected,[Decimal(r['amount']) for r in response.json()['transactions']])
 
 
 if __name__=='__main__': unittest.main()

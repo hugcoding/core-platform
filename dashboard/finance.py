@@ -159,10 +159,21 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
                 rows=[by_id[i] for i in ids]
             else: rows=[]
         else:
-            # Both SQL fragments are validated above, never interpolated user text.
-            cur.execute(f'''SELECT t.* FROM finance.v_transactions t
+            # Date ties retain the original source order in either date direction.
+            # The initial record remains stable even when duplicate evidence is added.
+            joins=''
+            tie_break='t.id'
+            if sort=='booking_date':
+                joins='''JOIN finance.finance_import_records r ON r.id=t.record_id
+                    JOIN finance.finance_import_batches b ON b.id=r.batch_id
+                    JOIN finance.finance_source_documents s ON s.id=b.source_id'''
+                tie_break="""s.file_id ASC,
+                    substring(r.locator from '^stmt:([0-9]+)/entry:')::integer ASC NULLS LAST,
+                    substring(r.locator from '/entry:([0-9]+)$')::integer ASC NULLS LAST,t.id"""
+            # SQL fragments are selected internally; user input is allowlisted above.
+            cur.execute(f'''SELECT t.* FROM finance.v_transactions t {joins}
                 LEFT JOIN finance.finance_categories c ON c.code=t.category_code WHERE {where}
-                ORDER BY {columns[sort]} {direction} NULLS LAST,t.id LIMIT 100 OFFSET %s''',params+[page*100])
+                ORDER BY {columns[sort]} {direction} NULLS LAST,{tie_break} LIMIT 100 OFFSET %s''',params+[page*100])
             rows=[transaction(r) for r in cur.fetchall()]
         cur.execute('SELECT * FROM finance.v_import_status ORDER BY created_at DESC LIMIT 100')
         imports=[serial(r) for r in cur.fetchall()]
