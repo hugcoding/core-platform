@@ -1,5 +1,6 @@
 import importlib
 import sys
+import tempfile
 import types
 import unittest
 import uuid
@@ -179,6 +180,26 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIsNotNone(result["target_proposal"])
         self.assertEqual("needs_review", result["target_proposal"]["zone_code"])
         self.assertNotIn("/Persoonlijk/Quarantaine/", result["target_proposal"]["suggested_target_path"])
+
+    def test_content_path_falls_back_when_migration_projection_is_stale(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            registered = root / "Persoonlijk" / "Inactief" / "Te beoordelen" / "bestand.pdf"
+            registered.parent.mkdir(parents=True)
+            registered.write_bytes(b"pdf")
+            result = self.dashboard.resolve_existing_managed_path([
+                str(root / "Persoonlijk" / "Inactief" / "bestand.pdf"),
+                str(registered),
+            ], root)
+        self.assertEqual(registered, result)
+
+    def test_content_path_never_falls_back_outside_managed_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "managed"
+            root.mkdir()
+            with self.assertRaises(self.dashboard.HTTPException) as raised:
+                self.dashboard.resolve_existing_managed_path([str(Path(directory) / "outside.pdf")], root)
+        self.assertEqual(403, raised.exception.status_code)
 
     def test_quarantine_target_proposal_uses_underlying_active_lifecycle(self):
         row = {
