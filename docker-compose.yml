@@ -17,17 +17,48 @@ services:
       - STORAGE_PATH=/volume1
       - CORE_REVIEW_WRITES_ENABLED=${CORE_REVIEW_WRITES_ENABLED:-false}
       - CORE_REVIEWER=${CORE_REVIEWER:-hugo}
+      - CORE_FINANCE_ENABLED=${CORE_FINANCE_ENABLED:-false}
+      - CORE_FINANCE_SECRET_FILE=/run/finance/secret.json
       - CORE_LLM_ENABLED=${CORE_LLM_ENABLED:-false}
       - CORE_LLM_ENDPOINT=${CORE_LLM_ENDPOINT:-http://192.168.68.107:11434/v1}
       - CORE_LLM_MODEL=${CORE_LLM_MODEL:-qwen3.6:latest}
       - CORE_LLM_TIMEOUT_SECONDS=${CORE_LLM_TIMEOUT_SECONDS:-600}
     volumes:
       - "./project/exports:/exports:ro"
+      - "/volume1/docker/core-runtime/finance:/run/finance:ro"
       - "/proc:/host/proc:ro"
       - "/volume1:/volume1:ro"
     read_only: true
     tmpfs: ["/tmp"]
     security_opt: ["no-new-privileges:true"]
+
+  finance_worker:
+    profiles: [finance]
+    build: { context: ., dockerfile: Dockerfile.dashboard }
+    command: [python, finance_worker.py]
+    restart: unless-stopped
+    cpu_shares: 128
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - DB_NAME=${DB_NAME}
+      - REDIS_HOST=redis
+      - CORE_FINANCE_SECRET_FILE=/run/finance/secret.json
+      - CORE_MAINTENANCE_MODE=${CORE_MAINTENANCE_MODE:-false}
+    volumes:
+      - "/volume1/data/import/finance:/volume1/data/import/finance:ro"
+      - "/volume1/docker/core-runtime/finance:/run/finance:ro"
+      - "/proc:/host/proc:ro"
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import redis; assert redis.Redis(host='redis').exists('finance_ingest_worker:heartbeat')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   workset_ai_worker:
     build: { context: ., dockerfile: Dockerfile.workset-ai-worker }

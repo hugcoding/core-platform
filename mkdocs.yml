@@ -79,6 +79,7 @@ nav:
       - SCRUM-114 Watcher read-events: project/scrum-114-watcher-read-events.md
       - SCRUM-106 Asynchrone AI-wachtrij: project/scrum-106-async-ai-queue.md
       - SCRUM-118 Finance fundament: project/scrum-118-finance-foundation.md
+      - SCRUM-118 Finance MVP: project/scrum-118-finance-mvp.md
       - SCRUM-92 Database-backed policies: project/scrum-92-policy-registry.md
   - Runtime:
       - Scanner: wiki/scanner.md

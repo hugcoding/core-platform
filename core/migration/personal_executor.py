@@ -44,6 +44,9 @@ def validate_paths(
     allowed_zones: Optional[Tuple[Path, ...]] = None,
 ) -> Tuple[Path, Path]:
     source_path, target_path = normalized_path(source), normalized_path(target)
+    from core.finance.privacy import protected_path
+    if protected_path(source_path) or protected_path(target_path):
+        raise MigrationSafetyError('finance_source_protected')
     if not is_within(source_path, DATA_ROOT) or not is_within(target_path, DATA_ROOT):
         raise MigrationSafetyError("source_and_target_must_be_within_volume1_data")
     zones = allowed_zones or ALLOWED_ZONES

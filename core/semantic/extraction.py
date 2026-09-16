@@ -41,6 +41,8 @@ def extract_document(
     docx_loader: Callable[[Path], tuple[str, int]] = _docx_text,
     pdf_loader: Callable[[Path], tuple[str, int]] = _pdf_text,
 ) -> tuple[str, int]:
+    from core.finance.privacy import deny_generic_access
+    deny_generic_access(path)
     extension = path.suffix.lower()
     if extension not in SUPPORTED_EXTENSIONS:
         raise ValueError(f"unsupported extension: {extension or '[none]'}")

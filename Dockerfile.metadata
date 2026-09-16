@@ -10,6 +10,7 @@ COPY core/integrity ./core/integrity
 COPY core/metadata ./core/metadata
 COPY core/organization ./core/organization
 COPY core/semantic ./core/semantic
+COPY core/finance ./core/finance
 
 COPY tools/runtime/date_evidence_backfill.py ./date_evidence_backfill.py
 COPY tools/runtime/file_event_corrections.py ./file_event_corrections.py

@@ -89,6 +89,11 @@ def latest_batch_status(conn, batch_id: str) -> str | None:
 
 def claim_batch(conn) -> dict[str, Any] | None:
     with conn.cursor() as cur:
+        # Session admission lock is released by run_once's finally/connection close.
+        # Finance holds the same lock only for a bounded, atomic source import.
+        cur.execute('SELECT pg_try_advisory_lock(118202609) AS locked')
+        if not cur.fetchone()['locked']:
+            return None
         cur.execute("""SELECT progress.* FROM public.v_controlled_execution_batch_progress progress
           WHERE progress.batch_status IN ('approved','queued','started','rollback_pending')
           ORDER BY progress.id LIMIT 1""")

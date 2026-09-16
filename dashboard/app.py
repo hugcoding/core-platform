@@ -67,6 +67,9 @@ _target_path_reference_cache: dict[str, Any] = {
 }
 
 app = FastAPI(title="CORE Pulse", version="0.1.0", docs_url=None, redoc_url=None)
+from dashboard.finance import router as finance_router, finance_boundary
+app.middleware('http')(finance_boundary)
+app.include_router(finance_router)
 app.mount("/coredashboard/assets", StaticFiles(directory=APP_DIR / "static"), name="assets")
 
 
@@ -300,6 +303,9 @@ def resolve_existing_managed_path(
 ) -> Path:
     """Pick the first existing managed path, tolerating a stale migration projection."""
     root = managed_root.resolve()
+    from core.finance.privacy import protected_path
+    if any(protected_path(value) for value in candidates if value):
+        raise HTTPException(status_code=403, detail='finance_source_protected')
     safe_candidates: list[Path] = []
     for candidate in candidates:
         if not candidate:
@@ -394,6 +400,9 @@ def overview():
                 """)
                 for item in ocr_counts:
                     metrics[f"ocr_{item['status']}"] = int(item["job_count"])
+            if query_one(conn, "SELECT to_regclass('finance.finance_ingest_jobs') IS NOT NULL AS available")['available']:
+                for item in query_all(conn, 'SELECT status,count(*) AS n FROM finance.finance_ingest_jobs GROUP BY status'):
+                    metrics[f"finance_{item['status']}"] = int(item['n'])
         services.append({"name": "postgres", "state": "healthy", "detail": "database connected"})
     except Exception as exc:
         errors.append(f"database: {type(exc).__name__}")
@@ -411,6 +420,8 @@ def overview():
             services.append(heartbeat_service(client, "workset_ai_worker"))
         services.append(heartbeat_service(client, "workset_ocr_worker"))
         services.append(heartbeat_service(client, "controlled_execution_worker"))
+        if os.getenv('CORE_FINANCE_ENABLED','false').lower() == 'true':
+            services.append(heartbeat_service(client, 'finance_ingest_worker'))
         metrics.update(
             polling_queue=redis_key_size(client, "scan_stream"),
             realtime_queue=redis_key_size(client, "scan_stream_realtime"),
