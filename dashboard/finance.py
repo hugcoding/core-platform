@@ -13,7 +13,8 @@ import uuid
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
-from core.finance.crypto import canonical, decrypt, secret
+from core.finance.crypto import canonical, decrypt, encrypt, fingerprint, secret
+from core.finance.account_names import account_view, normalize_name
 from core.finance.store import connection, enqueue, event, publish_record, IMPORT_LOCK
 
 router = APIRouter()
@@ -134,10 +135,12 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
         raise HTTPException(422,'invalid_page')
     where=' AND '.join(clauses)
     with connection() as conn, conn.cursor() as cur:
-        cur.execute('SELECT id,private_data FROM finance.finance_accounts ORDER BY created_at,id')
-        accounts=[{'id':str(r['id']),**decrypt(r['private_data'])} for r in cur.fetchall()]
-        # Mask full account identifiers in list; users can obtain original source separately.
-        for a in accounts: a.pop('iban',None)
+        cur.execute("""SELECT a.id,a.private_data,n.id AS name_event_id,n.private_data AS name_data
+            FROM finance.finance_accounts a LEFT JOIN LATERAL (
+                SELECT id,private_data FROM finance.finance_account_name_events
+                WHERE account_id=a.id ORDER BY sequence_no DESC LIMIT 1
+            ) n ON true ORDER BY a.created_at,a.id""")
+        accounts=[account_view(r) for r in cur.fetchall()]
         cur.execute('SELECT * FROM finance.finance_categories ORDER BY label')
         categories=cur.fetchall()
         cur.execute('SELECT DISTINCT to_char(booking_date,\'YYYY-MM\') AS month FROM finance.v_transactions ORDER BY month DESC')
@@ -221,6 +224,34 @@ def replay(cur,table,key,digest):
     row=cur.fetchone()
     if row and row['payload_digest']!=digest: raise HTTPException(409,'idempotency_conflict')
     return row is not None
+
+
+@router.post('/api/v1/finance/accounts/{account_id}/name')
+def rename_account(account_id:str,payload:dict=Body(...)):
+    aid=uid(account_id); key=uid(payload.get('key'))
+    expected=uid(payload['previous']) if payload.get('previous') else None
+    try:
+        name=normalize_name(payload.get('name'))
+    except ValueError:
+        raise HTTPException(422,'invalid_account_name') from None
+    digest=fingerprint('account-name-review-v1',[aid,name,expected])
+    with connection() as conn,conn.cursor() as cur:
+        # Serialize retries, including accidental key reuse for another account.
+        cur.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',('finance-account-name-key:'+key,))
+        if replay(cur,'finance_account_name_events',key,digest): return {'status':'saved'}
+        cur.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',('finance-account-name:'+aid,))
+        cur.execute('SELECT 1 FROM finance.finance_accounts WHERE id=%s',(aid,))
+        if not cur.fetchone(): raise HTTPException(404,'account_not_found')
+        cur.execute("""SELECT id FROM finance.finance_account_name_events
+            WHERE account_id=%s ORDER BY sequence_no DESC LIMIT 1""",(aid,))
+        previous=cur.fetchone()
+        if (str(previous['id']) if previous else None)!=expected:
+            raise HTTPException(409,'account_name_changed')
+        cur.execute("""INSERT INTO finance.finance_account_name_events
+            (account_id,private_data,supersedes_event_id,actor,idempotency_key,payload_digest)
+            VALUES (%s,%s,%s,'owner',%s,%s)""",
+            (aid,encrypt({'display_name':name}),expected,key,digest))
+    return {'status':'saved'}
 
 
 @router.post('/api/v1/finance/transactions/{transaction_id}/category')

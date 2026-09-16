@@ -105,6 +105,9 @@ class IntegrationTests(unittest.TestCase):
             up=Path('database/migrations/20260916_add_finance_mvp.sql').read_text()
             down=Path('database/migrations/rollback/20260916_add_finance_mvp.sql').read_text()
             cur.execute(up);cur.execute(down);cur.execute(up)
+            names_up=Path('database/migrations/20260916_add_finance_account_names.sql').read_text()
+            names_down=Path('database/migrations/rollback/20260916_add_finance_account_names.sql').read_text()
+            cur.execute(names_up);cur.execute(names_down);cur.execute(names_up)
         app=FastAPI();app.middleware('http')(finance_boundary);app.include_router(router)
         cls.client=TestClient(app);cls.client.headers['origin']='http://testserver'
         response=cls.client.post('/api/v1/finance/session',json={'code':'synthetic-access'})
@@ -252,6 +255,65 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(200,response.status_code)
             expected=source_order+[Decimal(-100)] if direction=='asc' else [Decimal(-100)]+source_order
             self.assertEqual(expected,[Decimal(r['amount']) for r in response.json()['transactions']])
+
+
+    def test_10_account_names_are_private_auditable_and_survive_reimport(self):
+        import psycopg2
+        from core.finance.store import connection
+        account=self.client.get('/api/v1/finance/data').json()['accounts'][0]
+        aid=account['id']; endpoint='/api/v1/finance/accounts/'+aid+'/name'
+        payload={'name':'SYNTHETIC PRIVATE LABEL','previous':None,'key':str(uuid.uuid4())}
+        self.assertEqual(200,self.client.post(endpoint,json=payload).status_code)
+        self.assertEqual(200,self.client.post(endpoint,json=payload).status_code)
+        self.assertEqual(409,self.client.post(endpoint,json={**payload,'name':'different'}).status_code)
+        renamed=self.client.get('/api/v1/finance/data').json()['accounts'][0]
+        self.assertEqual(payload['name'],renamed['display_name'])
+        self.assertIn(IBAN[-4:],renamed['label']);self.assertNotIn(IBAN,renamed['label'])
+        self.assertNotIn('iban',renamed)
+        self.assertEqual(409,self.client.post(endpoint,json={**payload,'key':str(uuid.uuid4())}).status_code)
+        self.import_file(sample(count=2),'name-replay.xml')
+        self.assertEqual(payload['name'],self.client.get('/api/v1/finance/data').json()['accounts'][0]['display_name'])
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT private_data FROM finance.finance_account_name_events WHERE account_id=%s',(aid,))
+            history=cur.fetchall();self.assertEqual(1,len(history));self.assertNotIn(payload['name'],history[0][0])
+        clear={'name':'','previous':renamed['name_event_id'],'key':str(uuid.uuid4())}
+        self.assertEqual(200,self.client.post(endpoint,json=clear).status_code)
+        restored=self.client.get('/api/v1/finance/data').json()['accounts'][0]
+        self.assertIsNone(restored['display_name']);self.assertEqual(account['label'],restored['label'])
+        for sql in ["UPDATE finance.finance_account_name_events SET actor='changed'",
+                    'DELETE FROM finance.finance_account_name_events','TRUNCATE finance.finance_account_name_events']:
+            with self.assertRaises(psycopg2.Error):
+                with connection() as conn,conn.cursor() as cur:cur.execute(sql)
+        with self.assertRaises(psycopg2.Error):
+            with self.admin.cursor() as cur:
+                cur.execute(Path('database/migrations/rollback/20260916_add_finance_account_names.sql').read_text())
+        with self.admin.cursor() as cur:cur.execute('ROLLBACK')
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT count(*) FROM finance.finance_account_name_events WHERE account_id=%s',(aid,))
+            self.assertEqual(2,cur.fetchone()[0])
+
+    def test_11_account_name_access_validation_and_concurrent_review(self):
+        from fastapi.testclient import TestClient
+        from core.finance.crypto import encrypt,fingerprint
+        with self.admin.cursor() as cur:
+            cur.execute("""INSERT INTO finance.finance_accounts(identity_key,private_data)
+                VALUES (%s,%s) RETURNING id""",(fingerprint('account-v1','synthetic-other'),encrypt({'iban':IBAN,'label':'Synthetic other'})))
+            aid=str(cur.fetchone()[0])
+        endpoint='/api/v1/finance/accounts/'+aid+'/name'
+        payload={'name':'Synthetic concurrent','previous':None,'key':str(uuid.uuid4())}
+        anonymous=TestClient(self.client.app)
+        self.assertEqual(401,anonymous.post(endpoint,json=payload,headers={'Origin':'http://testserver'}).status_code)
+        self.assertEqual(403,self.client.post(endpoint,json=payload,headers={'Origin':'http://other.invalid'}).status_code)
+        for value in [None,{},'x'*81,'line\nbreak','hidden\u202ename']:
+            self.assertEqual(422,self.client.post(endpoint,json={**payload,'name':value}).status_code)
+        self.assertEqual(404,self.client.post('/api/v1/finance/accounts/'+str(uuid.uuid4())+'/name',json=payload).status_code)
+        def submit(key):
+            client=TestClient(self.client.app);client.cookies.update(self.client.cookies)
+            return client.post(endpoint,json={**payload,'key':key},headers={'Origin':'http://testserver'}).status_code
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            statuses=list(pool.map(submit,[str(uuid.uuid4()),str(uuid.uuid4())]))
+        self.assertEqual([200,409],sorted(statuses))
+
 
 
 if __name__=='__main__': unittest.main()
