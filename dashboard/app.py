@@ -1660,6 +1660,9 @@ def controlled_execution_queue_preview():
             "blocked_count": len(blocked),
             "blocked_candidates": [{"file_id": item.get("file_id"),
                 "source_path": item.get("source_path", ""), "blocked_reason": item.get("blocked_reason", "unknown"),
+                "target_path": item.get("target_path", ""), "action_type": item.get("action_type"),
+                "expected_size_bytes": item.get("size_bytes"),
+                "observed_size_bytes": item.get("observed_size_bytes"),
                 "reinventory_status": item.get("reinventory_status"),
                 "controlled_item_id": str(item.get("controlled_item_id")) if item.get("controlled_item_id") else None}
                 for item in blocked if item.get("blocked_reason") in
@@ -1697,6 +1700,27 @@ def retry_controlled_execution_reinventory(item_id: str):
                     json.dumps({"reason": "source_size_changed", **result}, default=str),
                 ))
         return {**result, "item_id": item_id, "file_mutations": False}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"reinventory unavailable: {type(exc).__name__}") from exc
+
+
+@app.post("/api/v1/workset/execution-reinventory-by-file/{file_id}")
+def start_candidate_reinventory(file_id: int):
+    """Queue one currently size-blocked candidate without creating an unsafe batch."""
+    if not review_writes_enabled():
+        raise HTTPException(status_code=403, detail="interactive execution recovery is disabled")
+    try:
+        with db_connect() as conn:
+            _ready, blocked = controlled_execution_candidates(conn)
+            candidate = next((item for item in blocked
+                              if int(item.get("file_id") or 0) == file_id
+                              and item.get("blocked_reason") == "source_size_changed"), None)
+            if not candidate:
+                raise HTTPException(status_code=409, detail="file is not blocked by a changed source")
+            result = enqueue_source_reinventory(redis_connect(), candidate)
+        return {**result, "file_id": file_id, "file_mutations": False}
     except HTTPException:
         raise
     except Exception as exc:
