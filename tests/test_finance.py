@@ -108,6 +108,9 @@ class IntegrationTests(unittest.TestCase):
             names_up=Path('database/migrations/20260916_add_finance_account_names.sql').read_text()
             names_down=Path('database/migrations/rollback/20260916_add_finance_account_names.sql').read_text()
             cur.execute(names_up);cur.execute(names_down);cur.execute(names_up)
+            suggestions_up=Path('database/migrations/20260917_add_finance_suggestion_audit.sql').read_text()
+            suggestions_down=Path('database/migrations/rollback/20260917_add_finance_suggestion_audit.sql').read_text()
+            cur.execute(suggestions_up);cur.execute(suggestions_down);cur.execute(suggestions_up)
         app=FastAPI();app.middleware('http')(finance_boundary);app.include_router(router)
         cls.client=TestClient(app);cls.client.headers['origin']='http://testserver'
         response=cls.client.post('/api/v1/finance/session',json={'code':'synthetic-access'})
@@ -352,6 +355,85 @@ class IntegrationTests(unittest.TestCase):
                 self.assertEqual('105',result['totals']['total']);rows.extend(result['transactions'])
             self.assertEqual(105,len({r['id'] for r in rows}))
             self.assertEqual([f'{-i}.00' for i in range(105,0,-1)],[r['amount'] for r in rows])
+
+
+    def test_14_local_proposals_require_confirmation_and_preserve_evidence(self):
+        def add(name,credit=False):
+            data=sample(description=name).replace(b'2026-09-01',b'2020-01-01').replace(b'Synthetische winkel',b'')
+            if credit:data=data.replace(b'<CdtDbtInd>DBIT',b'<CdtDbtInd>CRDT')
+            self.import_file(data)
+        for name in ('OVpay seed TEST001','www.ovpay02.01.2020 TEST002','MCC:4111 Apple Pay TEST003','OVpay existing TEST004'):
+            add(name)
+        add('OVpay credit TEST005',credit=True)
+        rows=self.client.get('/api/v1/finance/data?year=2020').json()['transactions']
+        seed=next(r for r in rows if r['description'].startswith('OVpay seed'))
+        target=next(r for r in rows if r['description'].startswith('www.ovpay'))
+        existing=next(r for r in rows if r['description'].startswith('OVpay existing'))
+        for row in (seed,existing):
+            self.assertEqual(200,self.client.post('/api/v1/finance/transactions/'+row['id']+'/category',
+                json={'category':'vervoer','previous':None,'key':str(uuid.uuid4())}).status_code)
+        route='/api/v1/finance/transactions/'+seed['id']+'/suggestions'
+        response=self.client.get(route);self.assertEqual(200,response.status_code);proposal=response.json()
+        self.assertEqual('ovpay',proposal['reason']);self.assertEqual('vervoer',proposal['category_code'])
+        self.assertEqual([target['id']],[r['id'] for r in proposal['transactions']])
+        self.assertEqual(1,proposal['total'])
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT count(*) FROM finance.finance_review_events WHERE transaction_id=%s',(target['id'],))
+            self.assertEqual(0,cur.fetchone()[0])
+        payload={'seed_transaction_id':seed['id'],'seed_review_id':proposal['seed_review_id'],
+                 'previous':None,'key':str(uuid.uuid4())}
+        accept='/api/v1/finance/transactions/'+target['id']+'/suggestion'
+        self.assertEqual(200,self.client.post(accept,json=payload).status_code)
+        self.assertEqual(200,self.client.post(accept,json=payload).status_code)
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT category_code,source_review_id,suggestion_method FROM finance.finance_review_events WHERE transaction_id=%s',(target['id'],))
+            events=cur.fetchall();self.assertEqual(1,len(events));self.assertEqual('vervoer',events[0][0])
+            self.assertEqual(proposal['seed_review_id'],str(events[0][1]));self.assertEqual('local-merchant-v1',events[0][2])
+        self.assertEqual(0,self.client.get(route).json()['total'])
+
+    def test_15_stale_conflicting_and_unauthorized_proposals(self):
+        from fastapi.testclient import TestClient
+        data=sample(description='OVpay later TEST006').replace(b'2026-09-01',b'2020-01-02').replace(b'Synthetische winkel',b'')
+        self.import_file(data)
+        rows=self.client.get('/api/v1/finance/data?year=2020').json()['transactions']
+        seed=next(r for r in rows if r['description'].startswith('OVpay seed'))
+        target=next(r for r in rows if r['description'].startswith('OVpay later'))
+        route='/api/v1/finance/transactions/'+seed['id']+'/suggestions'
+        proposal=self.client.get(route).json()
+        self.assertEqual(401,TestClient(self.client.app).get(route).status_code)
+        payload={'seed_transaction_id':seed['id'],'seed_review_id':proposal['seed_review_id'],'previous':None,'key':str(uuid.uuid4())}
+        accept='/api/v1/finance/transactions/'+target['id']+'/suggestion'
+        self.assertEqual(403,self.client.post(accept,json=payload,headers={'Origin':'http://other.invalid'}).status_code)
+        self.assertEqual(200,self.client.post('/api/v1/finance/transactions/'+seed['id']+'/category',
+            json={'category':'overig','previous':seed['review_id'],'key':str(uuid.uuid4())}).status_code)
+        self.assertEqual('conflicting_examples',self.client.get(route).json()['reason'])
+        self.assertEqual(0,self.client.get(route).json()['total'])
+        self.assertEqual(409,self.client.post(accept,json=payload).status_code)
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT category_code FROM finance.v_transactions WHERE id=%s',(target['id'],))
+            self.assertIsNone(cur.fetchone()[0])
+        latest=next(r for r in self.client.get('/api/v1/finance/data?year=2020').json()['transactions'] if r['id']==seed['id'])
+        self.client.post('/api/v1/finance/transactions/'+seed['id']+'/category',
+            json={'category':'vervoer','previous':latest['review_id'],'key':str(uuid.uuid4())})
+        proposal=self.client.get(route).json();payload['seed_review_id']=proposal['seed_review_id']
+        def submit(key):
+            client=TestClient(self.client.app);client.cookies.update(self.client.cookies)
+            return client.post(accept,json={**payload,'key':key},headers={'Origin':'http://testserver'}).status_code
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results=list(pool.map(submit,[str(uuid.uuid4()),str(uuid.uuid4())]))
+        self.assertEqual([200,409],sorted(results))
+
+    def test_16_suggestion_audit_rollback_refuses_history_and_inactive_source(self):
+        import psycopg2
+        with self.assertRaises(psycopg2.Error):
+            with self.admin.cursor() as cur:
+                cur.execute(Path('database/migrations/rollback/20260917_add_finance_suggestion_audit.sql').read_text())
+        with self.admin.cursor() as cur:cur.execute('ROLLBACK')
+        rows=self.client.get('/api/v1/finance/data?year=2020').json()['transactions']
+        seed=next(r for r in rows if r['description'].startswith('OVpay seed'))
+        sources=self.client.get('/api/v1/finance/transactions/'+seed['id']+'/sources').json()['sources']
+        self.assertEqual(200,self.client.post('/api/v1/finance/imports/'+sources[0]['batch_id']+'/rollback',json={'confirm':True}).status_code)
+        self.assertEqual(409,self.client.get('/api/v1/finance/transactions/'+seed['id']+'/suggestions').status_code)
 
 
 if __name__=='__main__': unittest.main()

@@ -32,4 +32,7 @@
 <div class="account-name-actions"><button id="saveAccountName" type="submit" class="primary">Opslaan</button><button id="resetAccountName" type="button">Standaardnaam herstellen</button></div>
 <p class="muted">Naamwijzigingen blijven bewaard in de historie. Bankgegevens veranderen niet.</p>
 </form></dialog>
+<dialog id="suggestionsDialog" aria-labelledby="suggestionsTitle"><form method="dialog"><button class="close" aria-label="Sluiten">&#10005;</button></form>
+<h2 id="suggestionsTitle">Soortgelijke betalingen</h2><p>Alle rekeningen en perioden. Alleen betalingen zonder categorie. Er verandert niets zonder jouw bevestiging.</p>
+<p id="suggestionsStatus" role="status" aria-live="polite"></p><button id="refreshSuggestions" type="button">Voorstellen vernieuwen</button><div id="suggestionsBody"></div></dialog>
 </main><script src="/coredashboard/assets/finance.js"></script></body></html>
