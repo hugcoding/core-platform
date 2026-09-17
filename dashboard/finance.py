@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from core.finance.crypto import canonical, decrypt, encrypt, fingerprint, secret
 from core.finance.account_names import account_view, normalize_name
 from core.finance.periods import period_bounds
+from core.finance.suggestions import identity as merchant_identity, METHOD as SUGGESTION_METHOD, MAX_SCAN
 from core.finance.store import connection, enqueue, event, publish_record, IMPORT_LOCK
 
 router = APIRouter()
@@ -260,6 +261,7 @@ def categorize(transaction_id:str,payload:dict=Body(...)):
     expected=uid(payload['previous']) if payload.get('previous') else None
     digest=hashlib.sha256(canonical([tid,category,expected]).encode()).hexdigest()
     with connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-category-learning'))")
         cur.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(tid,))
         if replay(cur,'finance_review_events',key,digest): return {'status':'saved'}
         cur.execute('SELECT review_id FROM finance.v_transactions WHERE id=%s',(tid,))
@@ -271,6 +273,61 @@ def categorize(transaction_id:str,payload:dict=Body(...)):
             if not cur.fetchone(): raise HTTPException(422,'invalid_category')
         cur.execute('''INSERT INTO finance.finance_review_events(transaction_id,category_code,supersedes_event_id,actor,idempotency_key,payload_digest)
             VALUES (%s,%s,%s,'owner',%s,%s)''',(tid,category,expected,key,digest))
+    return {'status':'saved'}
+
+
+def category_suggestion_context(cur,seed_id):
+    cur.execute("""SELECT t.*,r.source_review_id FROM finance.v_transactions t
+        LEFT JOIN finance.finance_review_events r ON r.id=t.review_id WHERE t.id=%s""",(seed_id,))
+    seed=cur.fetchone()
+    if not seed or not seed['category_code'] or seed['source_review_id']:
+        raise HTTPException(409,'suggestion_needs_manual_example')
+    identity=merchant_identity(decrypt(seed['private_data']),seed['amount'],seed['currency'])
+    if identity is None: return seed,[],'unsupported_pattern'
+    cur.execute("""SELECT count(*) AS n FROM finance.v_transactions
+        WHERE currency=%s AND (amount<0)=%s""",(seed['currency'],seed['amount']<0))
+    if cur.fetchone()['n']>MAX_SCAN: raise HTTPException(422,'suggestion_scan_limit')
+    cur.execute("""SELECT t.*,r.source_review_id FROM finance.v_transactions t
+        LEFT JOIN finance.finance_review_events r ON r.id=t.review_id
+        WHERE t.currency=%s AND (t.amount<0)=%s ORDER BY t.booking_date DESC,t.id""",
+        (seed['currency'],seed['amount']<0))
+    candidates=[]
+    for row in cur.fetchall():
+        if merchant_identity(decrypt(row['private_data']),row['amount'],row['currency'])!=identity: continue
+        if row['category_code'] and row['source_review_id'] is None and row['category_code']!=seed['category_code']:
+            return seed,[],'conflicting_examples'
+        if row['category_code'] is None and row['id']!=seed['id']: candidates.append(row)
+    return seed,candidates,identity[0]
+
+
+@router.get('/api/v1/finance/transactions/{transaction_id}/suggestions')
+def category_suggestions(transaction_id:str):
+    with connection() as conn,conn.cursor() as cur:
+        seed,rows,reason=category_suggestion_context(cur,uid(transaction_id))
+        return {'seed_transaction_id':str(seed['id']),'seed_review_id':str(seed['review_id']),
+            'category_code':seed['category_code'],'method':SUGGESTION_METHOD,'reason':reason,
+            'total':len(rows),'transactions':[transaction(r) for r in rows[:50]]}
+
+
+@router.post('/api/v1/finance/transactions/{transaction_id}/suggestion')
+def accept_category_suggestion(transaction_id:str,payload:dict=Body(...)):
+    tid=uid(transaction_id);seed_id=uid(payload.get('seed_transaction_id'))
+    seed_review=uid(payload.get('seed_review_id'));key=uid(payload.get('key'))
+    expected=uid(payload['previous']) if payload.get('previous') else None
+    digest=fingerprint('category-suggestion-v1',[tid,seed_id,seed_review,expected,SUGGESTION_METHOD])
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-category-learning'))")
+        if replay(cur,'finance_review_events',key,digest): return {'status':'saved'}
+        seed,rows,reason=category_suggestion_context(cur,seed_id)
+        target=next((r for r in rows if str(r['id'])==tid),None)
+        if str(seed['review_id'])!=seed_review or target is None:
+            raise HTTPException(409,'suggestion_changed')
+        if (str(target['review_id']) if target['review_id'] else None)!=expected:
+            raise HTTPException(409,'suggestion_changed')
+        cur.execute("""INSERT INTO finance.finance_review_events
+            (transaction_id,category_code,supersedes_event_id,actor,idempotency_key,payload_digest,source_review_id,suggestion_method)
+            VALUES (%s,%s,%s,'owner',%s,%s,%s,%s)""",
+            (tid,seed['category_code'],expected,key,digest,seed_review,SUGGESTION_METHOD))
     return {'status':'saved'}
 
 

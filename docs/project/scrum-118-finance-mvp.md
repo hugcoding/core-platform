@@ -8,6 +8,16 @@ Open `/corefinance` en ontgrendel met de persoonlijke toegangscode uit het lokal
 
 Ondersteund: losse UTF-8 ASN CAMT `camt.053.001.02` XML-bestanden, geboekte EUR-mutaties, één eigenaar. Een `Ntry` is één transactie; onderliggende `TxDtls` zijn aanvullende broninformatie. Begin/eindsaldi worden gecontroleerd indien aanwezig. Andere versies, valuta, ZIP, CSV, PDF, MT940 en Open Banking volgen later. De UI heeft geen AI-laag.
 
+## Lokale categorievoorstellen
+
+Na het handmatig opslaan van een categorie zoekt Finance op jouw verzoek soortgelijke boekingen. Voor een eerder ingedeelde boeking: open de details en klik **Soortgelijke betalingen voorstellen**. De voorstellen gelden voor alle eigen rekeningen en perioden, uitsluitend voor boekingen zonder categorie. Bevestig ieder voorstel afzonderlijk; sluiten verandert niets. Maximaal 50 voorstellen worden tegelijk getoond; na bevestigen vult de lijst zich aan.
+
+De eerste deterministische herkenners zijn de OVpay-marker in omschrijvingen en de combinatie van een concrete tegenpartij met dezelfde tegenrekening. Bedrag, datum en wisselende betalingsreferenties bepalen een OVpay-match niet; richting (afschrijving/bijschrijving) en valuta moeten wel gelijk zijn. Algemene betaalteksten, alleen MCC, paymentprocessors en samengestelde boekingen zijn onvoldoende bewijs. De categorie komt uitsluitend uit jouw handmatige oordeel, niet uit een vaste koppeling OVpay=Vervoer. Tegenstrijdige actuele handmatige voorbeelden blokkeren voorstellen. Eerder toegepaste voorstellen worden niet opnieuw als onafhankelijk leerbewijs gebruikt.
+
+Dit is een lokale, door de gebruiker aangevraagde vergelijking, geen externe API, AI-model, permanente automatische regel of achtergrondworker. Nieuwe imports kun je opnieuw met hetzelfde voorbeeld vergelijken. Er wordt maximaal een selectie van 25.000 boekingen met dezelfde richting/valuta gescand; daarboven volgt een melding zonder wijzigingen. Voorstellen zijn tijdelijke zoekresultaten. Bevestiging maakt een append-only reviewevent met `source_review_id` en `suggestion_method`; bron, actuele categorie, conflictsituatie en idempotency worden opnieuw gecontroleerd. Bestaande categorie?n worden nooit via deze route overschreven.
+
+Voor installatie is eenmalig `database/migrations/20260917_add_finance_suggestion_audit.sql` nodig, v??r activeren van de nieuwe dashboardcode. De down-migratie onder `rollback/` weigert auditbewijs van reeds bevestigde voorstellen te verwijderen. Bij rollback van code blijft dat bewijs behouden. Er is geen herimport nodig en er worden geen gegevens naar buiten gestuurd.
+
 ## Periode kiezen
 
 Het menu **Periode** biedt alle perioden, beschikbare jaren, maanden en **Aangepast datumbereik**. Kies bij datumbereik **Van** en **Tot en met**, en klik **Toepassen**. Beide grensdatums zijn inclusief; de boekdatum bepaalt de selectie. De selectie geldt voor transacties, totalen, categorie- en rekeningfilters, sortering en alle pagina's. Wisselen van periode begint op pagina 1. Tijdens het invoeren blijft de vorige selectie actief tot Toepassen is gekozen.
