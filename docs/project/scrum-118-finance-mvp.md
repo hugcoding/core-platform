@@ -8,6 +8,12 @@ Open `/corefinance` en ontgrendel met de persoonlijke toegangscode uit het lokal
 
 Ondersteund: losse UTF-8 ASN CAMT `camt.053.001.02` XML-bestanden, geboekte EUR-mutaties, één eigenaar. Een `Ntry` is één transactie; onderliggende `TxDtls` zijn aanvullende broninformatie. Begin/eindsaldi worden gecontroleerd indien aanwezig. Andere versies, valuta, ZIP, CSV, PDF, MT940 en Open Banking volgen later. De UI heeft geen AI-laag.
 
+## Periode kiezen
+
+Het menu **Periode** biedt alle perioden, beschikbare jaren, maanden en **Aangepast datumbereik**. Kies bij datumbereik **Van** en **Tot en met**, en klik **Toepassen**. Beide grensdatums zijn inclusief; de boekdatum bepaalt de selectie. De selectie geldt voor transacties, totalen, categorie- en rekeningfilters, sortering en alle pagina's. Wisselen van periode begint op pagina 1. Tijdens het invoeren blijft de vorige selectie actief tot Toepassen is gekozen.
+
+Voor deze uitbreiding is geen database-migratie of herimport nodig; alleen het dashboard moet na merge/pull opnieuw worden gebouwd en gestart. De bestaande Finance- en rekeningnamen-migraties blijven vereist.
+
 ## Eigen rekeningnamen
 
 Selecteer een rekening en kies **Naam wijzigen**. De weergavenaam verschijnt met de laatste vier IBAN-cijfers in de rekeningkeuze. **Standaardnaam herstellen** voegt een nieuw event toe; bestaande historie en bankidentiteit blijven intact. Herimport verandert de gekozen naam niet. Namen zijn versleuteld opgeslagen in `finance.finance_account_name_events`; gelijktijdige wijzigingen worden op hun voorganger gecontroleerd.

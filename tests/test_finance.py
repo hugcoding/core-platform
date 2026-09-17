@@ -316,4 +316,42 @@ class IntegrationTests(unittest.TestCase):
 
 
 
+    def test_12_year_and_inclusive_date_range(self):
+        template=sample(description='SYNTHETIC PERIOD').decode()
+        start,end=template.index('<Ntry>'),template.index('</Ntry>')+len('</Ntry>')
+        dates=['2023-12-31','2024-01-01','2024-02-28','2024-02-29','2024-03-01','2024-12-31','2025-01-01']
+        entries=[template[start:end].replace('2026-09-01',day).replace('12.34',f'{i}.00') for i,day in enumerate(dates,1)]
+        self.import_file((template[:start]+''.join(entries)+template[end:]).encode())
+        for params,count,net in [({'year':'2024'},5,'-20.00'),({'month':'2024-02'},2,'-7.00'),
+            ({'date_from':'2024-02-28','date_to':'2024-03-01'},3,'-12.00'),
+            ({'date_from':'2024-02-29','date_to':'2024-02-29'},1,'-4.00'),
+            ({'date_from':'2023-12-31','date_to':'2024-01-01'},2,'-3.00')]:
+            response=self.client.get('/api/v1/finance/data',params=params)
+            self.assertEqual(200,response.status_code);data=response.json()
+            self.assertEqual(count,len(data['transactions']));self.assertEqual(str(count),data['totals']['total'])
+            self.assertEqual(net,data['totals']['net']);self.assertIn('2024',data['years'])
+        empty=self.client.get('/api/v1/finance/data?year=2027').json()
+        self.assertEqual('0',empty['totals']['total']);self.assertEqual([],empty['transactions'])
+        for params in [{'year':'2024','month':'2024-01'},{'year':'0000'},{'date_from':'2024-01-01'},
+            {'date_from':'2024-03-01','date_to':'2024-02-28'},{'year':'20xx'},
+            {'date_from':'2023-02-29','date_to':'2023-03-01'},
+            {'month':'2024-01','date_from':'2024-01-01','date_to':'2024-01-02'}]:
+            self.assertEqual(422,self.client.get('/api/v1/finance/data',params=params).status_code)
+
+    def test_13_period_filter_combines_with_account_sort_and_pages(self):
+        template=sample(description='SYNTHETIC PERIOD PAGING').decode().replace('2026-09-01','2021-01-01')
+        start,end=template.index('<Ntry>'),template.index('</Ntry>')+len('</Ntry>')
+        entries=[template[start:end].replace('12.34',f'{i}.00') for i in range(1,106)]
+        self.import_file((template[:start]+''.join(entries)+template[end:]).encode())
+        aid=self.client.get('/api/v1/finance/data?year=2021').json()['transactions'][0]['account_id']
+        for period in [{'year':'2021'},{'date_from':'2021-01-01','date_to':'2021-01-01'}]:
+            rows=[]
+            for page in (0,1):
+                result=self.client.get('/api/v1/finance/data',params={**period,'account':aid,
+                    'category':'uncategorized','sort':'amount','direction':'asc','page':page}).json()
+                self.assertEqual('105',result['totals']['total']);rows.extend(result['transactions'])
+            self.assertEqual(105,len({r['id'] for r in rows}))
+            self.assertEqual([f'{-i}.00' for i in range(105,0,-1)],[r['amount'] for r in rows])
+
+
 if __name__=='__main__': unittest.main()

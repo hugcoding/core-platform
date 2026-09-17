@@ -1,6 +1,5 @@
 """Owner-only Finance API. Existing CORE serves layout and source identity."""
 import base64
-from datetime import date
 import hashlib
 import hmac
 import json
@@ -15,6 +14,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from core.finance.crypto import canonical, decrypt, encrypt, fingerprint, secret
 from core.finance.account_names import account_view, normalize_name
+from core.finance.periods import period_bounds
 from core.finance.store import connection, enqueue, event, publish_record, IMPORT_LOCK
 
 router = APIRouter()
@@ -113,7 +113,7 @@ def transaction(row):
 
 
 @router.get('/api/v1/finance/data')
-def data(account:str='',month:str='',category:str='',page:int=0,sort:str='booking_date',direction:str='desc'):
+def data(account:str='',month:str='',category:str='',page:int=0,sort:str='booking_date',direction:str='desc',year:str='',date_from:str='',date_to:str=''):
     columns={'booking_date':'t.booking_date','amount':'t.amount',
              'category':"lower(COALESCE(c.label,'Nog te categoriseren'))"}
     if sort not in (*columns,'counterparty','description') or direction not in ('asc','desc'):
@@ -121,13 +121,13 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
     clauses,params=['true'],[]
     if account:
         clauses.append('t.account_id=%s'); params.append(uid(account))
-    if month:
-        try:
-            start=date.fromisoformat(month+'-01')
-        except ValueError:
-            raise HTTPException(422,'invalid_month') from None
-        clauses.append("t.booking_date >= %s AND t.booking_date < %s::date+interval '1 month'")
-        params.extend([start,start])
+    try:
+        bounds=period_bounds(month,year,date_from,date_to)
+    except ValueError:
+        raise HTTPException(422,'invalid_period') from None
+    if bounds:
+        clauses.append('t.booking_date >= %s AND t.booking_date <= %s')
+        params.extend(bounds)
     if category:
         if category=='uncategorized': clauses.append('t.category_code IS NULL')
         else: clauses.append('t.category_code=%s');params.append(category)
@@ -186,7 +186,7 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
             WHERE r.initial_outcome='unresolved' AND b.status IN ('partial','imported')
             AND NOT EXISTS(SELECT 1 FROM finance.finance_duplicate_events e WHERE e.record_id=r.id)''')
         unresolved=cur.fetchone()['n']
-    return {'accounts':accounts,'categories':categories,'months':months,'totals':totals,'transactions':rows,
+    return {'accounts':accounts,'categories':categories,'months':months,'years':sorted({m[:4] for m in months},reverse=True),'totals':totals,'transactions':rows,
         'imports':imports,'jobs':jobs,'unresolved':unresolved,'page':page,'currency':'EUR','sort':sort,'direction':direction}
 
 

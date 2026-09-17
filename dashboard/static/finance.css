@@ -3,3 +3,5 @@
 .sort-column{padding:6px 2px;background:transparent;border:0;border-radius:3px;font-weight:600;white-space:nowrap}.sort-column span{display:inline-block;margin-left:5px;color:var(--muted)}.sort-column:hover,.sort-column.active,.sort-column.active span{color:var(--cyan)}
 
 #editAccountName{margin-top:8px}#accountDisplayName{display:block;box-sizing:border-box;width:100%;margin-top:8px}.account-name-actions{display:flex;gap:10px;flex-wrap:wrap}#accountNameError{color:#ffb7bc;min-height:1.5em}
+
+.period-range{display:flex;align-items:end;gap:16px;flex-wrap:wrap;padding:20px;margin-bottom:20px}.period-range label{color:var(--muted);font-size:12px}.period-range input{display:block;margin-top:8px}.period-range p{flex-basis:100%;margin:0;color:var(--muted)}
