@@ -390,6 +390,11 @@ class IntegrationTests(unittest.TestCase):
             events=cur.fetchall();self.assertEqual(1,len(events));self.assertEqual('vervoer',events[0][0])
             self.assertEqual(proposal['seed_review_id'],str(events[0][1]));self.assertEqual('local-merchant-v1',events[0][2])
         self.assertEqual(0,self.client.get(route).json()['total'])
+        inherited=self.client.get('/api/v1/finance/transactions/'+target['id']+'/suggestions')
+        self.assertEqual(200,inherited.status_code)
+        self.assertTrue(inherited.json()['from_original_example'])
+        self.assertEqual(seed['id'],inherited.json()['seed_transaction_id'])
+        self.assertEqual(proposal['seed_review_id'],inherited.json()['seed_review_id'])
 
     def test_15_stale_conflicting_and_unauthorized_proposals(self):
         from fastapi.testclient import TestClient
@@ -406,6 +411,10 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(403,self.client.post(accept,json=payload,headers={'Origin':'http://other.invalid'}).status_code)
         self.assertEqual(200,self.client.post('/api/v1/finance/transactions/'+seed['id']+'/category',
             json={'category':'overig','previous':seed['review_id'],'key':str(uuid.uuid4())}).status_code)
+        inherited=next(r for r in rows if r['description'].startswith('www.ovpay'))
+        invalid=self.client.get('/api/v1/finance/transactions/'+inherited['id']+'/suggestions')
+        self.assertEqual(409,invalid.status_code)
+        self.assertEqual('suggestion_example_changed',invalid.json()['detail'])
         self.assertEqual('conflicting_examples',self.client.get(route).json()['reason'])
         self.assertEqual(0,self.client.get(route).json()['total'])
         self.assertEqual(409,self.client.post(accept,json=payload).status_code)

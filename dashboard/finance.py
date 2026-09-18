@@ -303,10 +303,24 @@ def category_suggestion_context(cur,seed_id):
 @router.get('/api/v1/finance/transactions/{transaction_id}/suggestions')
 def category_suggestions(transaction_id:str):
     with connection() as conn,conn.cursor() as cur:
-        seed,rows,reason=category_suggestion_context(cur,uid(transaction_id))
+        requested_id=uid(transaction_id)
+        cur.execute("""SELECT t.id,r.source_review_id FROM finance.v_transactions t
+            LEFT JOIN finance.finance_review_events r ON r.id=t.review_id WHERE t.id=%s""",(requested_id,))
+        selected=cur.fetchone();source_review=selected['source_review_id'] if selected else None
+        seed_id=requested_id
+        if source_review:
+            cur.execute("""SELECT t.id FROM finance.finance_review_events r
+                JOIN finance.v_transactions t ON t.id=r.transaction_id AND t.review_id=r.id
+                WHERE r.id=%s AND r.source_review_id IS NULL""",(source_review,))
+            original=cur.fetchone()
+            if not original: raise HTTPException(409,'suggestion_example_changed')
+            seed_id=str(original['id'])
+        seed,rows,reason=category_suggestion_context(cur,seed_id)
+        if source_review and str(seed['review_id'])!=str(source_review):
+            raise HTTPException(409,'suggestion_example_changed')
         return {'seed_transaction_id':str(seed['id']),'seed_review_id':str(seed['review_id']),
             'category_code':seed['category_code'],'method':SUGGESTION_METHOD,'reason':reason,
-            'total':len(rows),'transactions':[transaction(r) for r in rows[:50]]}
+            'from_original_example':bool(source_review),'total':len(rows),'transactions':[transaction(r) for r in rows[:50]]}
 
 
 @router.post('/api/v1/finance/transactions/{transaction_id}/suggestion')
