@@ -436,4 +436,43 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(409,self.client.get('/api/v1/finance/transactions/'+seed['id']+'/suggestions').status_code)
 
 
+    def test_17_bulk_selection_atomic_idempotent_and_audited(self):
+        for name in ('bulk seed','bulk one','bulk two','bulk untouched'):
+            data=sample(description=name).replace(b'2026-09-01',b'2019-01-01').replace(b'Synthetische winkel',b'Synthetic bulk merchant')
+            data=data.replace(b'</RltdPties>',b'<CdtrAcct><Id><IBAN>NL91ABNA0417164300</IBAN></Id></CdtrAcct></RltdPties>')
+            self.import_file(data)
+        rows=self.client.get('/api/v1/finance/data?year=2019').json()['transactions']
+        seed=next(r for r in rows if r['description']=='bulk seed')
+        self.assertEqual(200,self.client.post('/api/v1/finance/transactions/'+seed['id']+'/category',
+            json={'category':'vervoer','previous':None,'key':str(uuid.uuid4())}).status_code)
+        proposal=self.client.get('/api/v1/finance/transactions/'+seed['id']+'/suggestions').json()
+        targets=proposal['transactions'];self.assertEqual(3,len(targets))
+        payload={'seed_transaction_id':seed['id'],'seed_review_id':proposal['seed_review_id'],
+                 'key':str(uuid.uuid4()),'items':[{'id':t['id'],'previous':t['review_id']} for t in targets[:2]]}
+        route='/api/v1/finance/suggestions/approve'
+        from fastapi.testclient import TestClient
+        self.assertEqual(401,TestClient(self.client.app).post(route,json=payload,headers={'Origin':'http://testserver'}).status_code)
+        self.assertEqual(403,self.client.post(route,json=payload,headers={'Origin':'http://other.invalid'}).status_code)
+        for items in ([],payload['items']*26,[payload['items'][0]]*2):
+            self.assertEqual(422,self.client.post(route,json={**payload,'items':items}).status_code)
+        stale={**payload,'items':[payload['items'][0],{**payload['items'][1],'previous':str(uuid.uuid4())}]}
+        self.assertEqual(409,self.client.post(route,json=stale).status_code)
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT count(*) FROM finance.finance_review_events WHERE transaction_id IN (%s,%s)',tuple(t['id'] for t in targets[:2]))
+            self.assertEqual(0,cur.fetchone()[0])
+        for _ in range(2):
+            response=self.client.post(route,json=payload);self.assertEqual(200,response.status_code);self.assertEqual(2,response.json()['count'])
+        self.assertEqual(409,self.client.post(route,json={**payload,'items':payload['items'][:1]}).status_code)
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT transaction_id,source_review_id,suggestion_method FROM finance.finance_review_events WHERE transaction_id IN (%s,%s,%s)',tuple(t['id'] for t in targets))
+            events=cur.fetchall();self.assertEqual(2,len(events))
+            self.assertEqual({t['id'] for t in targets[:2]},{str(e[0]) for e in events})
+            self.assertTrue(all(str(e[1])==proposal['seed_review_id'] and e[2]=='local-merchant-v1' for e in events))
+        # A categorized target invalidates the entire new selection, including an untouched target.
+        mixed={**payload,'key':str(uuid.uuid4()),'items':[payload['items'][0],{'id':targets[2]['id'],'previous':None}]}
+        self.assertEqual(409,self.client.post(route,json=mixed).status_code)
+        remaining=self.client.get('/api/v1/finance/transactions/'+seed['id']+'/suggestions').json()
+        self.assertEqual([targets[2]['id']],[t['id'] for t in remaining['transactions']])
+
+
 if __name__=='__main__': unittest.main()
