@@ -331,6 +331,37 @@ def accept_category_suggestion(transaction_id:str,payload:dict=Body(...)):
     return {'status':'saved'}
 
 
+@router.post('/api/v1/finance/suggestions/approve')
+def approve_category_selection(payload:dict=Body(...)):
+    seed_id=uid(payload.get('seed_transaction_id'));seed_review=uid(payload.get('seed_review_id'))
+    batch_key=uuid.UUID(uid(payload.get('key')))
+    items=payload.get('items')
+    if not isinstance(items,list) or not 1<=len(items)<=50 or any(not isinstance(i,dict) for i in items):
+        raise HTTPException(422,'invalid_selection')
+    selected=sorted([(uid(i.get('id')),uid(i['previous']) if i.get('previous') else None) for i in items],key=lambda item:item[0])
+    if len({tid for tid,_ in selected})!=len(selected): raise HTTPException(422,'invalid_selection')
+    digest=fingerprint('category-selection-v1',[seed_id,seed_review,selected,SUGGESTION_METHOD])
+    keys=[str(uuid.uuid5(batch_key,str(i))) for i in range(len(selected))]
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-category-learning'))")
+        done=[replay(cur,'finance_review_events',key,digest) for key in keys]
+        if all(done): return {'status':'saved','count':len(selected)}
+        if any(done): raise HTTPException(409,'idempotency_conflict')
+        seed,rows,_=category_suggestion_context(cur,seed_id)
+        candidates={str(r['id']):r for r in rows}
+        if str(seed['review_id'])!=seed_review: raise HTTPException(409,'suggestion_changed')
+        for tid,expected in selected:
+            target=candidates.get(tid)
+            if target is None or (str(target['review_id']) if target['review_id'] else None)!=expected:
+                raise HTTPException(409,'suggestion_changed')
+        for (tid,expected),key in zip(selected,keys):
+            cur.execute("""INSERT INTO finance.finance_review_events
+                (transaction_id,category_code,supersedes_event_id,actor,idempotency_key,payload_digest,source_review_id,suggestion_method)
+                VALUES (%s,%s,%s,'owner',%s,%s,%s,%s)""",
+                (tid,seed['category_code'],expected,key,digest,seed_review,SUGGESTION_METHOD))
+    return {'status':'saved','count':len(selected)}
+
+
 @router.get('/api/v1/finance/unresolved')
 def unresolved():
     with connection() as conn, conn.cursor() as cur:
