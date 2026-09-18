@@ -48,7 +48,8 @@ async function showSuggestions(seed){
 function updateSuggestionSelection(){
  const boxes=[...document.querySelectorAll('[data-select-suggestion]')],count=boxes.filter(b=>b.checked).length;
  $('selectVisibleSuggestions').checked=boxes.length>0&&count===boxes.length;$('selectVisibleSuggestions').indeterminate=count>0&&count<boxes.length;
- $('approveSelection').disabled=!count;$('approveSelection').textContent=`Selectie accorderen (${count})`;
+ $('selectVisibleSuggestions').disabled=!boxes.length||!!suggestionsState?.busy;
+ $('approveSelection').disabled=!count||!!suggestionsState?.busy;$('approveSelection').textContent=`Selectie accorderen (${count})`;
 }
 $('selectVisibleSuggestions').onchange=()=>{document.querySelectorAll('[data-select-suggestion]').forEach(b=>b.checked=$('selectVisibleSuggestions').checked);updateSuggestionSelection()};
 $('approveSelection').onclick=async()=>{
