@@ -8,6 +8,10 @@ Open `/corefinance` en ontgrendel met de persoonlijke toegangscode uit het lokal
 
 Ondersteund: losse UTF-8 ASN CAMT `camt.053.001.02` XML-bestanden, geboekte EUR-mutaties, één eigenaar. Een `Ntry` is één transactie; onderliggende `TxDtls` zijn aanvullende broninformatie. Begin/eindsaldi worden gecontroleerd indien aanwezig. Andere versies, valuta, ZIP, CSV, PDF, MT940 en Open Banking volgen later. De UI heeft geen AI-laag.
 
+## Flexibele classificatie
+
+Het [classificatiemodel](scrum-118-finance-classification.md) voegt afzonderlijke transactietypen, configureerbare hoofd-/subcategorieen, versleutelde merchants en classificatiehistorie toe. Bestaande bankmutatietotalen blijven behouden; aparte geclassificeerde totalen sluiten interne transfers uit van uitgaven. Installatie vereist de migratie `20260918_add_finance_classification.sql`.
+
 ## Lokale categorievoorstellen
 
 Na het handmatig opslaan van een categorie zoekt Finance op jouw verzoek soortgelijke boekingen. Voor een eerder ingedeelde boeking: open de details en klik **Soortgelijke betalingen voorstellen**. De voorstellen gelden voor alle eigen rekeningen en perioden, uitsluitend voor boekingen zonder categorie. Vink gewenste voorstellen aan en klik **Selectie accorderen**. **Alle zichtbare voorstellen** selecteert alleen de getoonde lijst. Sluiten verandert niets. De selectie wordt in een database-transactie opnieuw gecontroleerd en opgeslagen: bij een verouderd voorstel wordt niets uit die aanvraag toegepast. Iedere betaling behoudt een eigen append-only audit-event. Maximaal 50 voorstellen worden tegelijk getoond; na bevestigen vult de lijst zich aan.

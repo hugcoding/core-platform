@@ -111,6 +111,9 @@ class IntegrationTests(unittest.TestCase):
             suggestions_up=Path('database/migrations/20260917_add_finance_suggestion_audit.sql').read_text()
             suggestions_down=Path('database/migrations/rollback/20260917_add_finance_suggestion_audit.sql').read_text()
             cur.execute(suggestions_up);cur.execute(suggestions_down);cur.execute(suggestions_up)
+            classification_up=Path('database/migrations/20260918_add_finance_classification.sql').read_text(encoding='utf-8')
+            classification_down=Path('database/migrations/rollback/20260918_add_finance_classification.sql').read_text(encoding='utf-8')
+            cur.execute(classification_up);cur.execute(classification_down);cur.execute(classification_up)
         app=FastAPI();app.middleware('http')(finance_boundary);app.include_router(router)
         cls.client=TestClient(app);cls.client.headers['origin']='http://testserver'
         response=cls.client.post('/api/v1/finance/session',json={'code':'synthetic-access'})
@@ -388,7 +391,7 @@ class IntegrationTests(unittest.TestCase):
         with self.admin.cursor() as cur:
             cur.execute('SELECT category_code,source_review_id,suggestion_method FROM finance.finance_review_events WHERE transaction_id=%s',(target['id'],))
             events=cur.fetchall();self.assertEqual(1,len(events));self.assertEqual('vervoer',events[0][0])
-            self.assertEqual(proposal['seed_review_id'],str(events[0][1]));self.assertEqual('local-merchant-v1',events[0][2])
+            self.assertEqual(proposal['seed_review_id'],str(events[0][1]));self.assertEqual('local-merchant-v2',events[0][2])
         self.assertEqual(0,self.client.get(route).json()['total'])
         inherited=self.client.get('/api/v1/finance/transactions/'+target['id']+'/suggestions')
         self.assertEqual(200,inherited.status_code)
@@ -476,12 +479,141 @@ class IntegrationTests(unittest.TestCase):
             cur.execute('SELECT transaction_id,source_review_id,suggestion_method FROM finance.finance_review_events WHERE transaction_id IN (%s,%s,%s)',tuple(t['id'] for t in targets))
             events=cur.fetchall();self.assertEqual(2,len(events))
             self.assertEqual({t['id'] for t in targets[:2]},{str(e[0]) for e in events})
-            self.assertTrue(all(str(e[1])==proposal['seed_review_id'] and e[2]=='local-merchant-v1' for e in events))
+            self.assertTrue(all(str(e[1])==proposal['seed_review_id'] and e[2]=='local-merchant-v2' for e in events))
         # A categorized target invalidates the entire new selection, including an untouched target.
         mixed={**payload,'key':str(uuid.uuid4()),'items':[payload['items'][0],{'id':targets[2]['id'],'previous':None}]}
         self.assertEqual(409,self.client.post(route,json=mixed).status_code)
         remaining=self.client.get('/api/v1/finance/transactions/'+seed['id']+'/suggestions').json()
         self.assertEqual([targets[2]['id']],[t['id'] for t in remaining['transactions']])
+
+
+    def test_18_classification_taxonomy_merchants_and_meaning(self):
+        from fastapi.testclient import TestClient
+        names=('SHELL STATION 1234 SYNTHETIC','SHELL STATION 9876 SYNTHETIC','Synthetic transfer','Synthetic unknown')
+        for name in names:
+            self.import_file(sample(description=name,amount='500.00').replace(b'2026-09-01',b'2018-01-01'))
+        data=self.client.get('/api/v1/finance/data?year=2018').json()
+        self.assertEqual(9,len(data['transaction_types']))
+        roots=[c for c in data['categories'] if c['parent_id'] is None]
+        self.assertEqual(18,len(roots));self.assertGreater(len(data['categories']),110)
+        rows={r['description']:r for r in data['transactions']}
+        seed=rows[names[0]];target=rows[names[1]];transfer=rows[names[2]]
+        self.assertEqual('UNKNOWN',seed['transaction_type']);self.assertEqual('Shell',seed['merchant_suggestion'])
+        route='/api/v1/finance/transactions/'+seed['id']+'/classification'
+        payload={'transaction_type':'EXPENSE','category':'vervoer','subcategory':'vervoer_brandstof',
+                 'merchant':'  Shell  ','previous':None,'key':str(uuid.uuid4())}
+        self.assertEqual(401,TestClient(self.client.app).post(route,json=payload,headers={'Origin':'http://testserver'}).status_code)
+        self.assertEqual(403,self.client.post(route,json=payload,headers={'Origin':'http://other.invalid'}).status_code)
+        for invalid in ({'subcategory':'boodschappen_supermarkt'},{'category':'vervoer_brandstof'},
+                        {'transaction_type':'BOGUS'},{'merchant':'x'*121},{'merchant':'bad\nname'}):
+            self.assertEqual(422,self.client.post(route,json={**payload,**invalid}).status_code)
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT private_data FROM finance.finance_transactions WHERE id=%s',(seed['id'],));raw=cur.fetchone()[0]
+        for _ in range(2):self.assertEqual(200,self.client.post(route,json=payload).status_code)
+        self.assertEqual(409,self.client.post(route,json={**payload,'transaction_type':'TRANSFER'}).status_code)
+        self.assertEqual(409,self.client.post(route,json={**payload,'key':str(uuid.uuid4())}).status_code)
+        proposal=self.client.get('/api/v1/finance/transactions/'+seed['id']+'/suggestions').json()
+        self.assertEqual('merchant_marker',proposal['reason'])
+        self.assertEqual([target['id']],[r['id'] for r in proposal['transactions']])
+        self.assertEqual('vervoer_brandstof',proposal['classification']['subcategory_code'])
+        self.assertEqual('Shell',proposal['classification']['merchant'])
+        accept={'seed_transaction_id':seed['id'],'seed_review_id':proposal['seed_review_id'],
+                'items':[{'id':target['id'],'previous':None}],'key':str(uuid.uuid4())}
+        self.assertEqual(200,self.client.post('/api/v1/finance/suggestions/approve',json=accept).status_code)
+        self.assertEqual(200,self.client.post('/api/v1/finance/transactions/'+transfer['id']+'/classification',json={
+            'transaction_type':'TRANSFER','category':'overboekingen','subcategory':'overboekingen_eigen_rekening',
+            'merchant':'','previous':None,'key':str(uuid.uuid4())}).status_code)
+        data=self.client.get('/api/v1/finance/data?year=2018').json()
+        self.assertEqual('1000.00',data['totals']['expenses']);self.assertEqual('500.00',data['totals']['transfer_out'])
+        self.assertEqual('-2000.00',data['totals']['debits']);self.assertEqual('1',data['totals']['unknown_type'])
+        filtered=self.client.get('/api/v1/finance/data?year=2018&transaction_type=EXPENSE&subcategory=vervoer_brandstof').json()
+        self.assertEqual('2',filtered['totals']['total'])
+        approved=next(r for r in data['transactions'] if r['id']==target['id'])
+        self.assertEqual('MERCHANT',approved['classification_source']);self.assertTrue(approved['confirmed'])
+        self.assertIsNone(approved['confidence']);self.assertEqual('Shell',approved['merchant'])
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT private_data FROM finance.finance_transactions WHERE id=%s',(seed['id'],));self.assertEqual(raw,cur.fetchone()[0])
+            cur.execute('SELECT private_data FROM finance.finance_counterparties WHERE id=%s',(approved['merchant_id'],));self.assertNotIn('Shell',cur.fetchone()[0])
+        history=self.client.get('/api/v1/finance/transactions/'+seed['id']+'/classifications').json()['events']
+        self.assertEqual(1,len(history));self.assertEqual('MANUAL',history[0]['classification_source'])
+        self.assertNotIn('payload_digest',history[0])
+
+    def test_19_manual_priority_unknown_and_conflicting_examples(self):
+        from core.finance.store import connection
+        import psycopg2
+        rows=self.client.get('/api/v1/finance/data?year=2018').json()['transactions']
+        seed=next(r for r in rows if r['description'].startswith('SHELL STATION 1234'))
+        route='/api/v1/finance/transactions/'+seed['id']+'/classification'
+        # A future classifier proposal remains audit-only and cannot displace a manual classification.
+        with connection() as conn,conn.cursor() as cur:
+            cur.execute("""INSERT INTO finance.finance_review_events(transaction_id,category_code,transaction_type,
+                classification_source,confidence,confirmed,supersedes_event_id,actor,idempotency_key,payload_digest,model_version)
+                VALUES (%s,'overig','UNKNOWN','AI',0.97,false,%s,'synthetic-classifier',%s,'synthetic','future-test') RETURNING id""",
+                (seed['id'],seed['review_id'],str(uuid.uuid4())))
+            pending=cur.fetchone()['id']
+        current=next(r for r in self.client.get('/api/v1/finance/data?year=2018').json()['transactions'] if r['id']==seed['id'])
+        self.assertEqual(seed['review_id'],current['review_id']);self.assertEqual('EXPENSE',current['transaction_type'])
+        with self.assertRaises(psycopg2.Error):
+            with connection() as conn,conn.cursor() as cur:
+                cur.execute("""INSERT INTO finance.finance_review_events(transaction_id,category_code,transaction_type,
+                    classification_source,confirmed,supersedes_event_id,actor,idempotency_key,payload_digest)
+                    VALUES (%s,'overig','UNKNOWN','RULE',true,%s,'synthetic',%s,'synthetic')""",
+                    (seed['id'],str(pending),str(uuid.uuid4())))
+        corrected={'transaction_type':'CORRECTION','category':'vervoer','subcategory':'vervoer_brandstof',
+                   'merchant':'Shell','previous':seed['review_id'],'key':str(uuid.uuid4())}
+        self.assertEqual(200,self.client.post(route,json=corrected).status_code)
+        history=self.client.get('/api/v1/finance/transactions/'+seed['id']+'/classifications').json()['events']
+        self.assertEqual(3,len(history));self.assertEqual(str(pending),history[0]['supersedes_event_id'])
+        self.assertEqual('MANUAL',history[0]['classification_source'])
+        # A manual UNKNOWN is a deliberate review, not permission for automatic rewriting.
+        unknown=next(r for r in rows if r['description']=='Synthetic unknown')
+        self.assertEqual(200,self.client.post('/api/v1/finance/transactions/'+unknown['id']+'/classification',json={
+            'transaction_type':'UNKNOWN','category':None,'subcategory':None,'merchant':'','previous':None,'key':str(uuid.uuid4())}).status_code)
+        # Two manual examples for the same recognized merchant disagree on accounting meaning.
+        target=next(r for r in rows if r['description'].startswith('SHELL STATION 9876'))
+        self.assertEqual(200,self.client.post('/api/v1/finance/transactions/'+target['id']+'/classification',json={
+            **corrected,'transaction_type':'EXPENSE','previous':target['review_id'],'key':str(uuid.uuid4())}).status_code)
+        proposal=self.client.get('/api/v1/finance/transactions/'+seed['id']+'/suggestions').json()
+        self.assertEqual('conflicting_examples',proposal['reason']);self.assertEqual(0,proposal['total'])
+        # A historical category-only review remains UNKNOWN, without inventing a type.
+        legacy_source=sample(description='Legacy category only').replace(b'2026-09-01',b'2017-01-01')
+        self.import_file(legacy_source)
+        legacy=self.client.get('/api/v1/finance/data?year=2017').json()['transactions'][0]
+        with connection() as conn,conn.cursor() as cur:
+            cur.execute("""INSERT INTO finance.finance_review_events(transaction_id,category_code,actor,idempotency_key,payload_digest)
+                VALUES (%s,'vervoer','owner',%s,'legacy-synthetic')""",(legacy['id'],str(uuid.uuid4())))
+        legacy=self.client.get('/api/v1/finance/data?year=2017').json()['transactions'][0]
+        self.assertEqual('UNKNOWN',legacy['transaction_type']);self.assertEqual('vervoer',legacy['category_code'])
+        from core.finance.classification import conflicts
+        self.assertFalse(conflicts({**legacy,'legacy_classification':True},{**legacy,'transaction_type':'EXPENSE'}))
+        self.assertTrue(conflicts({**legacy,'legacy_classification':False},{**legacy,'transaction_type':'EXPENSE'}))
+
+
+    def test_20_taxonomy_constraints_audit_and_safe_rollback(self):
+        import psycopg2
+        with self.admin.cursor() as cur:
+            cur.execute("SELECT id FROM finance.finance_categories WHERE code='vervoer'");parent=cur.fetchone()[0]
+            cur.execute("UPDATE finance.finance_categories SET name='Transport',sort_order=99 WHERE code='vervoer'")
+            cur.execute('SELECT count(*) FROM finance.finance_category_events WHERE category_id=%s',(parent,));self.assertEqual(1,cur.fetchone()[0])
+            cur.execute("SELECT count(*) FROM finance.v_transactions WHERE category_code='vervoer'");self.assertGreater(cur.fetchone()[0],0)
+        for statement in (
+            "UPDATE finance.finance_categories SET parent_id=id WHERE code='vervoer'",
+            "UPDATE finance.finance_categories SET code='new-code' WHERE code='vervoer'",
+            "DELETE FROM finance.finance_categories WHERE code='vervoer'",
+            "UPDATE finance.finance_categories SET parent_id=(SELECT id FROM finance.finance_categories WHERE code='vervoer_brandstof') WHERE code='wonen'",
+            "DELETE FROM finance.finance_category_events"):
+            with self.assertRaises(psycopg2.Error):
+                with self.admin.cursor() as cur:cur.execute(statement)
+        with self.admin.cursor() as cur:cur.execute("UPDATE finance.finance_categories SET active=false WHERE code='vervoer_brandstof'")
+        row=next(r for r in self.client.get('/api/v1/finance/data?year=2018').json()['transactions'] if r['description'].startswith('SHELL STATION 1234'))
+        self.assertEqual('vervoer_brandstof',row['subcategory_code'])
+        invalid={'transaction_type':'EXPENSE','category':'vervoer','subcategory':'vervoer_brandstof',
+                 'merchant':'Shell','previous':row['review_id'],'key':str(uuid.uuid4())}
+        self.assertEqual(422,self.client.post('/api/v1/finance/transactions/'+row['id']+'/classification',json=invalid).status_code)
+        with self.assertRaises(psycopg2.Error):
+            with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20260918_add_finance_classification.sql').read_text(encoding='utf-8'))
+        with self.admin.cursor() as cur:cur.execute('ROLLBACK')
+        self.assertEqual(200,self.client.get('/api/v1/finance/data?year=2018').status_code)
 
 
 if __name__=='__main__': unittest.main()
