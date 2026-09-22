@@ -31,6 +31,8 @@ def test_dashboard_frontend_uses_relative_api_and_refreshes():
     source = (ROOT / "dashboard" / "static" / "app.js").read_text(encoding="utf-8")
     assert "fetch('/api/v1/overview'" in source
     assert "setInterval(refresh,10000)" in source
+    assert "fetch('/api/v1/scan-settings'" in source
+    assert "Volledige scan aanvragen" in (ROOT / "dashboard" / "static" / "index.html").read_text(encoding="utf-8")
 
 
 def test_dashboard_supports_hash_and_string_heartbeats():

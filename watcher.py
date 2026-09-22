@@ -4,6 +4,7 @@ import os
 import socket
 import threading
 import time
+import json
 from datetime import datetime, timezone
 
 import redis
@@ -31,6 +32,8 @@ HEARTBEAT_STATUS_KEY = "watcher:heartbeat:status"
 LAST_EVENT_KEY = "watcher:last_event"
 RECOVERY_ROOTS_KEY = "watcher:recovery_roots"
 DIRTY_ROOTS_KEY = "scanner:dirty_roots"
+DEFERRED_ROOTS_KEY = "scanner:deferred_roots"
+SETTINGS_KEY = "scanner:runtime_settings"
 DEBOUNCE_PREFIX = "watcher:dedupe:"
 
 IGNORE_PREFIXES = ("@", ".", "#")
@@ -68,17 +71,57 @@ def should_skip_path(path):
     return any(value in path for value in IGNORE_CONTAINS)
 
 
-def root_for_path(path):
-    relative = os.path.relpath(os.path.normpath(path), SCAN_ROOT)
-    if relative == os.curdir or relative.startswith(os.pardir + os.sep):
-        return None
-    return os.path.join(SCAN_ROOT, relative.split(os.sep, 1)[0])
+def runtime_settings():
+    defaults = {"dirty_parent_levels": 1, "dirty_min_depth": 3}
+    try:
+        raw = r.get(SETTINGS_KEY)
+        if raw:
+            defaults.update(json.loads(raw))
+    except Exception:
+        logger.warning("Invalid runtime scan settings; using safe defaults")
+    return defaults
+
+
+def watch_root_for_path(path):
+    path = os.path.normpath(path)
+    matches = [root for root in WATCH_ROOTS if path == root or path.startswith(root + os.sep)]
+    return max(matches, key=len) if matches else None
+
+
+def scope_for_path(path, settings=None):
+    settings = settings or runtime_settings()
+    watch_root = watch_root_for_path(path)
+    if not watch_root:
+        return None, "outside_watch_roots"
+    scope = os.path.dirname(os.path.normpath(path))
+    for _ in range(max(0, int(settings["dirty_parent_levels"]))):
+        if scope == watch_root:
+            break
+        scope = os.path.dirname(scope)
+    relative = os.path.relpath(scope, watch_root)
+    depth = 0 if relative == os.curdir else len(relative.split(os.sep))
+    if depth < max(1, int(settings["dirty_min_depth"])):
+        return scope, "too_broad"
+    return scope, None
 
 
 def mark_dirty(path):
-    root = root_for_path(path)
-    if root:
-        r.hset(DIRTY_ROOTS_KEY, root, utc_now())
+    scope, reason = scope_for_path(path)
+    if not scope:
+        return
+    marker = utc_now()
+    if reason:
+        r.hset(DEFERRED_ROOTS_KEY, scope, json.dumps({"marked_at": marker, "reason": reason}))
+        return
+    current = r.hgetall(DIRTY_ROOTS_KEY)
+    for existing in current:
+        if scope == existing or scope.startswith(existing + os.sep):
+            r.hset(DIRTY_ROOTS_KEY, existing, marker)
+            return
+    for existing in current:
+        if existing.startswith(scope + os.sep):
+            r.hdel(DIRTY_ROOTS_KEY, existing)
+    r.hset(DIRTY_ROOTS_KEY, scope, marker)
 
 
 def schedule_startup_recovery():
@@ -91,7 +134,9 @@ def schedule_startup_recovery():
         ):
             continue
         roots.append(path)
-        r.hset(DIRTY_ROOTS_KEY, path, utc_now())
+        r.hset(DEFERRED_ROOTS_KEY, path, json.dumps({
+            "marked_at": utc_now(), "reason": "watcher_startup_recovery",
+        }))
     r.set(RECOVERY_ROOTS_KEY, len(roots))
     return roots
 

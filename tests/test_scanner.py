@@ -158,9 +158,7 @@ class ScannerStateTests(unittest.TestCase):
         run_scan.assert_called_once_with(
             "interval",
             ["/volume1/b"],
-            full_sweep=True,
-            reconcile_scope="/volume1/b",
-            missing_threshold=1,
+            full_sweep=False,
         )
         self.assertEqual({}, scanner.r.values[scanner.DIRTY_ROOTS_KEY])
 
@@ -342,6 +340,35 @@ class ScannerStateTests(unittest.TestCase):
 
         self.assertIn(key, scanner.r.values)
         self.assertEqual([], scanner.r.events)
+
+    def test_daily_full_scan_only_runs_inside_window(self):
+        settings = scanner.default_runtime_settings()
+        inside = scanner.datetime(2026, 9, 21, 0, 35, tzinfo=scanner.timezone.utc)
+        daytime = scanner.datetime(2026, 9, 21, 10, 0, tzinfo=scanner.timezone.utc)
+        self.assertTrue(scanner.scheduled_full_scan_due(inside, settings))
+        self.assertFalse(scanner.scheduled_full_scan_due(daytime, settings))
+
+    def test_dirty_scope_waits_for_settle_period(self):
+        scanner.r.values[scanner.DIRTY_ROOTS_KEY] = {
+            "/volume1/data/Persoonlijk/Actief/Werk": "2026-09-21T10:00:00+00:00",
+        }
+        root, _ = scanner.select_dirty_root(
+            ["/volume1/data"], settle_seconds=60,
+            now=scanner.datetime(2026, 9, 21, 10, 0, 30, tzinfo=scanner.timezone.utc),
+        )
+        self.assertIsNone(root)
+
+    def test_unsettled_scope_does_not_fall_back_to_polling(self):
+        scanner.r.values[scanner.DIRTY_ROOTS_KEY] = {
+            "/volume1/data/Persoonlijk/Actief/Werk": scanner.utc_now(),
+        }
+        with (
+            mock.patch.object(scanner, "discover_roots", return_value=["/volume1/data"]),
+            mock.patch.object(scanner, "run_scan") as run_scan,
+        ):
+            result = scanner.scan_interval_once(scanner.default_runtime_settings())
+        self.assertIsNone(result)
+        run_scan.assert_not_called()
 
 
 if __name__ == "__main__":
