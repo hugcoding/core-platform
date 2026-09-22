@@ -3,13 +3,26 @@ from decimal import Decimal
 import re
 import unicodedata
 
-METHOD = 'local-merchant-v1'
+METHOD = 'local-merchant-v2'
 MAX_SCAN = 25000
 PROCESSORS = {'mollie', 'adyen', 'paypal', 'stripe', 'sumup', 'worldline', 'pay nl'}
 
 
 def normalize(value):
     return ' '.join(re.findall(r'[^\W_]+', unicodedata.normalize('NFKC', value or '').casefold()))
+
+
+def recognized_merchant(payload):
+    """Explicit merchant markers only; no category or meaning is inferred."""
+    if len(payload.get('details') or []) > 1:
+        return None
+    for value in (payload.get('counterparty'), payload.get('description')):
+        text = normalize(value)
+        if re.match(r'^shell (?:station\b|[0-9]{3,}\b)', text):
+            return 'Shell'
+        if re.match(r'^(?:albert heijn\b|ah [0-9]{4}\b)', text):
+            return 'Albert Heijn'
+    return None
 
 
 def identity(payload, amount, currency):
@@ -24,6 +37,9 @@ def identity(payload, amount, currency):
     description = unicodedata.normalize('NFKC', payload.get('description') or '').casefold()
     if re.search(r'(?<![a-z0-9])(?:www\.)?ovpay(?=$|[^a-z])', description):
         return ('ovpay', direction, currency)
+    merchant = recognized_merchant(payload)
+    if merchant:
+        return ('merchant_marker', merchant, direction, currency)
     party = normalize(payload.get('counterparty'))
     account = ''.join((payload.get('counteraccount') or '').split()).upper()
     if not party or party in {'onbekende tegenpartij', 'unknown', 'betaling', 'apple pay', 'google pay'}:

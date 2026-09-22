@@ -15,7 +15,8 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from core.finance.crypto import canonical, decrypt, encrypt, fingerprint, secret
 from core.finance.account_names import account_view, normalize_name
 from core.finance.periods import period_bounds
-from core.finance.suggestions import identity as merchant_identity, METHOD as SUGGESTION_METHOD, MAX_SCAN
+from core.finance.suggestions import identity as merchant_identity, METHOD as SUGGESTION_METHOD, MAX_SCAN, recognized_merchant
+from core.finance.classification import merchant_name, merchant_id, validate_category, conflicts, insert_suggestion, predecessor
 from core.finance.store import connection, enqueue, event, publish_record, IMPORT_LOCK
 
 router = APIRouter()
@@ -109,12 +110,17 @@ def transaction(row):
     payload=decrypt(row['private_data'])
     result.pop('private_data',None)
     result.pop('fingerprint',None)
+    result.pop('merchant_data',None)
+    result['merchant']=decrypt(row['merchant_data']).get('name') if row.get('merchant_data') else None
+    result['confirmed']=bool(row.get('confirmed'))
+    result['confidence']=float(row['confidence']) if row.get('confidence') is not None else None
+    result['merchant_suggestion']=recognized_merchant(payload)
     result.update({key:payload[key] for key in ('description','counterparty','counteraccount','details')})
     return result
 
 
 @router.get('/api/v1/finance/data')
-def data(account:str='',month:str='',category:str='',page:int=0,sort:str='booking_date',direction:str='desc',year:str='',date_from:str='',date_to:str=''):
+def data(account:str='',month:str='',category:str='',page:int=0,sort:str='booking_date',direction:str='desc',year:str='',date_from:str='',date_to:str='',transaction_type:str='',subcategory:str=''):
     columns={'booking_date':'t.booking_date','amount':'t.amount',
              'category':"lower(COALESCE(c.label,'Nog te categoriseren'))"}
     if sort not in (*columns,'counterparty','description') or direction not in ('asc','desc'):
@@ -132,6 +138,10 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
     if category:
         if category=='uncategorized': clauses.append('t.category_code IS NULL')
         else: clauses.append('t.category_code=%s');params.append(category)
+    if transaction_type:
+        clauses.append('t.transaction_type=%s');params.append(transaction_type)
+    if subcategory:
+        clauses.append('t.subcategory_code=%s');params.append(subcategory)
     if not 0<=page<=100000:
         raise HTTPException(422,'invalid_page')
     where=' AND '.join(clauses)
@@ -142,13 +152,20 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
                 WHERE account_id=a.id ORDER BY sequence_no DESC LIMIT 1
             ) n ON true ORDER BY a.created_at,a.id""")
         accounts=[account_view(r) for r in cur.fetchall()]
-        cur.execute('SELECT * FROM finance.finance_categories ORDER BY label')
+        cur.execute('SELECT * FROM finance.finance_categories ORDER BY sort_order,name')
         categories=cur.fetchall()
+        cur.execute('SELECT * FROM finance.finance_transaction_types ORDER BY code')
+        transaction_types=cur.fetchall()
         cur.execute('SELECT DISTINCT to_char(booking_date,\'YYYY-MM\') AS month FROM finance.v_transactions ORDER BY month DESC')
         months=[r['month'] for r in cur.fetchall()]
         cur.execute(f'''SELECT count(*) AS total,coalesce(sum(amount) FILTER(WHERE amount>0),0) AS credits,
             coalesce(sum(amount) FILTER(WHERE amount<0),0) AS debits,coalesce(sum(amount),0) AS net,
-            count(*) FILTER(WHERE category_code IS NULL) AS uncategorized FROM finance.v_transactions t WHERE {where}''',params)
+            count(*) FILTER(WHERE category_code IS NULL) AS uncategorized,
+            count(*) FILTER(WHERE transaction_type='UNKNOWN') AS unknown_type,
+            coalesce(-sum(amount) FILTER(WHERE transaction_type IN (SELECT code FROM finance.finance_transaction_types WHERE counts_as_expense)),0) AS expenses,
+            coalesce(sum(amount) FILTER(WHERE transaction_type IN (SELECT code FROM finance.finance_transaction_types WHERE counts_as_income)),0) AS income,
+            coalesce(-sum(amount) FILTER(WHERE amount<0 AND transaction_type='TRANSFER'),0) AS transfer_out
+            FROM finance.v_transactions t WHERE {where}''',params)
         totals=serial(cur.fetchone())
         if sort in ('counterparty','description'):
             # Text remains encrypted at rest. Sort the complete filtered selection
@@ -187,7 +204,7 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
             WHERE r.initial_outcome='unresolved' AND b.status IN ('partial','imported')
             AND NOT EXISTS(SELECT 1 FROM finance.finance_duplicate_events e WHERE e.record_id=r.id)''')
         unresolved=cur.fetchone()['n']
-    return {'accounts':accounts,'categories':categories,'months':months,'years':sorted({m[:4] for m in months},reverse=True),'totals':totals,'transactions':rows,
+    return {'accounts':accounts,'categories':categories,'transaction_types':transaction_types,'months':months,'years':sorted({m[:4] for m in months},reverse=True),'totals':totals,'transactions':rows,
         'imports':imports,'jobs':jobs,'unresolved':unresolved,'page':page,'currency':'EUR','sort':sort,'direction':direction}
 
 
@@ -264,16 +281,62 @@ def categorize(transaction_id:str,payload:dict=Body(...)):
         cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-category-learning'))")
         cur.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(tid,))
         if replay(cur,'finance_review_events',key,digest): return {'status':'saved'}
+        cur.execute('SELECT * FROM finance.v_transactions WHERE id=%s',(tid,))
+        row=cur.fetchone()
+        if not row: raise HTTPException(404,'transaction_not_found')
+        if (str(row['review_id']) if row['review_id'] else None)!=expected: raise HTTPException(409,'review_changed')
+        validate_category(cur,category,None)
+        cur.execute('''INSERT INTO finance.finance_review_events(transaction_id,category_code,supersedes_event_id,actor,idempotency_key,payload_digest,
+            transaction_type,merchant_id,classification_source,confirmed)
+            VALUES (%s,%s,%s,'owner',%s,%s,%s,%s,'MANUAL',true)''',
+            (tid,category,predecessor(cur,tid),key,digest,row['transaction_type'],row['merchant_id']))
+    return {'status':'saved'}
+
+
+@router.post('/api/v1/finance/transactions/{transaction_id}/classification')
+def classify(transaction_id:str,payload:dict=Body(...)):
+    tid=uid(transaction_id);key=uid(payload.get('key'))
+    expected=uid(payload['previous']) if payload.get('previous') else None
+    category=payload.get('category') or None;subcategory=payload.get('subcategory') or None
+    kind=payload.get('transaction_type','UNKNOWN');name=merchant_name(payload.get('merchant'))
+    if not isinstance(kind,str) or any(v is not None and not isinstance(v,str) for v in (category,subcategory)):
+        raise HTTPException(422,'invalid_classification')
+    digest=fingerprint('classification-v1',[tid,kind,category,subcategory,name,expected])
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-category-learning'))")
+        if replay(cur,'finance_review_events',key,digest): return {'status':'saved'}
         cur.execute('SELECT review_id FROM finance.v_transactions WHERE id=%s',(tid,))
         row=cur.fetchone()
         if not row: raise HTTPException(404,'transaction_not_found')
         if (str(row['review_id']) if row['review_id'] else None)!=expected: raise HTTPException(409,'review_changed')
-        if category:
-            cur.execute('SELECT 1 FROM finance.finance_categories WHERE code=%s',(category,))
-            if not cur.fetchone(): raise HTTPException(422,'invalid_category')
-        cur.execute('''INSERT INTO finance.finance_review_events(transaction_id,category_code,supersedes_event_id,actor,idempotency_key,payload_digest)
-            VALUES (%s,%s,%s,'owner',%s,%s)''',(tid,category,expected,key,digest))
+        cur.execute('SELECT 1 FROM finance.finance_transaction_types WHERE code=%s',(kind,))
+        if not cur.fetchone(): raise HTTPException(422,'invalid_classification')
+        validate_category(cur,category,subcategory)
+        merchant=merchant_id(cur,name)
+        cur.execute("""INSERT INTO finance.finance_review_events
+            (transaction_id,category_code,subcategory_code,transaction_type,merchant_id,
+             classification_source,confidence,confirmed,supersedes_event_id,actor,idempotency_key,payload_digest)
+            VALUES (%s,%s,%s,%s,%s,'MANUAL',NULL,true,%s,'owner',%s,%s)""",
+            (tid,category,subcategory,kind,merchant,predecessor(cur,tid),key,digest))
     return {'status':'saved'}
+
+
+@router.get('/api/v1/finance/transactions/{transaction_id}/classifications')
+def classification_history(transaction_id:str):
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute("""SELECT r.*,m.private_data AS merchant_data FROM finance.finance_review_events r
+            LEFT JOIN finance.finance_counterparties m ON m.id=r.merchant_id
+            WHERE r.transaction_id=%s ORDER BY r.sequence_no DESC LIMIT 100""",(uid(transaction_id),))
+        rows=[]
+        for r in cur.fetchall():
+            item={k:v for k,v in serial(r).items() if k not in ('merchant_data','payload_digest','idempotency_key')}
+            item['merchant']=decrypt(r['merchant_data']).get('name') if r['merchant_data'] else None
+            item['transaction_type']=r['transaction_type'] or 'UNKNOWN'
+            item['classification_source']=r['classification_source'] or ('MERCHANT' if r['source_review_id'] else 'MANUAL')
+            item['confirmed']=r['confirmed'] is not False
+            item['confidence']=float(r['confidence']) if r['confidence'] is not None else None
+            rows.append(item)
+        return {'events':rows}
 
 
 def category_suggestion_context(cur,seed_id):
@@ -294,9 +357,9 @@ def category_suggestion_context(cur,seed_id):
     candidates=[]
     for row in cur.fetchall():
         if merchant_identity(decrypt(row['private_data']),row['amount'],row['currency'])!=identity: continue
-        if row['category_code'] and row['source_review_id'] is None and row['category_code']!=seed['category_code']:
+        if row['category_code'] and row['source_review_id'] is None and conflicts(row,seed):
             return seed,[],'conflicting_examples'
-        if row['category_code'] is None and row['id']!=seed['id']: candidates.append(row)
+        if row['review_id'] is None and row['id']!=seed['id']: candidates.append(row)
     return seed,candidates,identity[0]
 
 
@@ -319,7 +382,7 @@ def category_suggestions(transaction_id:str):
         if source_review and str(seed['review_id'])!=str(source_review):
             raise HTTPException(409,'suggestion_example_changed')
         return {'seed_transaction_id':str(seed['id']),'seed_review_id':str(seed['review_id']),
-            'category_code':seed['category_code'],'method':SUGGESTION_METHOD,'reason':reason,
+            'category_code':seed['category_code'],'classification':{k:transaction(seed).get(k) for k in ('transaction_type','category_code','subcategory_code','merchant','classification_source','confidence')},'method':SUGGESTION_METHOD,'reason':reason,
             'from_original_example':bool(source_review),'total':len(rows),'transactions':[transaction(r) for r in rows[:50]]}
 
 
@@ -338,10 +401,7 @@ def accept_category_suggestion(transaction_id:str,payload:dict=Body(...)):
             raise HTTPException(409,'suggestion_changed')
         if (str(target['review_id']) if target['review_id'] else None)!=expected:
             raise HTTPException(409,'suggestion_changed')
-        cur.execute("""INSERT INTO finance.finance_review_events
-            (transaction_id,category_code,supersedes_event_id,actor,idempotency_key,payload_digest,source_review_id,suggestion_method)
-            VALUES (%s,%s,%s,'owner',%s,%s,%s,%s)""",
-            (tid,seed['category_code'],expected,key,digest,seed_review,SUGGESTION_METHOD))
+        insert_suggestion(cur,tid,seed,expected,key,digest,SUGGESTION_METHOD)
     return {'status':'saved'}
 
 
@@ -369,10 +429,7 @@ def approve_category_selection(payload:dict=Body(...)):
             if target is None or (str(target['review_id']) if target['review_id'] else None)!=expected:
                 raise HTTPException(409,'suggestion_changed')
         for (tid,expected),key in zip(selected,keys):
-            cur.execute("""INSERT INTO finance.finance_review_events
-                (transaction_id,category_code,supersedes_event_id,actor,idempotency_key,payload_digest,source_review_id,suggestion_method)
-                VALUES (%s,%s,%s,'owner',%s,%s,%s,%s)""",
-                (tid,seed['category_code'],expected,key,digest,seed_review,SUGGESTION_METHOD))
+            insert_suggestion(cur,tid,seed,expected,key,digest,SUGGESTION_METHOD)
     return {'status':'saved','count':len(selected)}
 
 
