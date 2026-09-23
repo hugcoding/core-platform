@@ -890,6 +890,17 @@ def enrich_workset_row(row: dict[str, Any]) -> dict[str, Any]:
         )
         else "not_reviewed"
     )
+    placement_source = str(row.get("current_physical_path") or row.get("path") or "")
+    has_accepted_classification = (
+        row.get("latest_review_decision") == "accepted"
+        and row.get("latest_review_category")
+        and row.get("latest_review_family")
+    )
+    item["can_stage_for_review"] = (
+        not has_accepted_classification
+        and "/Te beoordelen/" not in placement_source
+        and not item["is_similarity_redundant"]
+    )
     item["migration_status"] = row.get("physical_location_status") or "virtual_only"
     item["physical_location_kind"] = row.get("physical_location_kind") or "registered_path"
     item["source_context"] = {
@@ -1736,6 +1747,51 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
         if correction:
             corrective_targets[file_id] = correction["target_path"]
             direct_corrections[file_id] = correction
+
+    staging_rows = query_all(conn, """
+      SELECT file_id, content_sha256, source_path, proposal_lifecycle,
+             proposal_target_path, id AS staging_review_id, created_at
+      FROM public.v_latest_staging_placement_review
+      WHERE decision = 'accepted'
+    """)
+    staging_by_file = {int(row["file_id"]): row for row in staging_rows}
+    classification_blocked: list[dict[str, Any]] = []
+    approved_personal: list[dict[str, Any]] = []
+    for candidate in [*mapped_personal, *direct_corrections.values()]:
+        if candidate.get("effective_lifecycle") == "deletion_review" or candidate.get("target_path_basis") == "human_review":
+            approved_personal.append(candidate)
+            continue
+        approval = staging_by_file.get(int(candidate["file_id"]))
+        expected_lifecycle = candidate.get("effective_lifecycle") or (
+            "active" if candidate.get("action_type") == "migrate_active" else "archive"
+        )
+        expected_target = str(PurePosixPath("/volume1/data/Persoonlijk") /
+                              ("Actief" if expected_lifecycle == "active" else "Inactief") /
+                              "Te beoordelen" / PurePosixPath(str(candidate["source_path"])).name)
+        if not approval or any((
+            str(approval.get("content_sha256") or "") != str(candidate.get("content_sha256") or ""),
+            str(approval.get("source_path") or "") != str(candidate.get("source_path") or ""),
+            str(approval.get("proposal_lifecycle") or "") != str(expected_lifecycle or ""),
+            str(approval.get("proposal_target_path") or "") != expected_target,
+        )):
+            classification_blocked.append({
+                **candidate,
+                "target_path": expected_target,
+                "blocked_reason": "classification_review_required",
+            })
+            continue
+        approved_personal.append({
+            **candidate,
+            "target_path": expected_target,
+            "target_path_basis": "explicit_staging_review",
+            "staging_review_id": approval["staging_review_id"],
+            "reviewed_at": approval["created_at"],
+            "evidence_snapshot": {
+                **(candidate.get("evidence_snapshot") or {}),
+                "staging_review_id": str(approval["staging_review_id"]),
+                "target_path_basis": "explicit_staging_review",
+            },
+        })
     exact = [{**row, "leader_correction_target": corrective_targets.get(int(row["leader_file_id"]))}
              for row in exact]
     similar = [{**row, "leader_correction_target": corrective_targets.get(int(row["leader_file_id"]))}
@@ -1750,7 +1806,7 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
          OR batch.batch_status IN ('approved','queued','started','paused','rollback_pending')
     """)
     candidates = exclude_already_controlled(
-        [*exact, *similar, *mapped_personal, *direct_corrections.values()], controlled
+        [*exact, *similar, *approved_personal], controlled
     )
     ready, blocked = partition_candidates(candidates)
     ready, unavailable = check_source_availability(ready)
@@ -1772,7 +1828,7 @@ def controlled_execution_candidates(conn) -> tuple[list[dict[str, Any]], list[di
         if previous:
             item["reinventory_status"] = (previous.get("latest_details") or {}).get("reinventory_status")
             item["controlled_item_id"] = previous.get("controlled_item_id")
-    return ready, blocked + unavailable + held
+    return ready, classification_blocked + blocked + unavailable + held
 
 
 @app.get("/api/v1/workset/execution-queue")
@@ -1795,7 +1851,7 @@ def controlled_execution_queue_preview():
                 "reinventory_status": item.get("reinventory_status"),
                 "controlled_item_id": str(item.get("controlled_item_id")) if item.get("controlled_item_id") else None}
                 for item in blocked if item.get("blocked_reason") in
-                ("target_collision", "source_size_changed", "source_missing", "source_unavailable", "previous_execution_blocked")][:50],
+                ("classification_review_required", "target_collision", "source_size_changed", "source_missing", "source_unavailable", "previous_execution_blocked")][:50],
             "writes_enabled": review_writes_enabled(), "file_mutations": False}
 
 
@@ -3130,6 +3186,77 @@ def create_bulk_workset_review(payload: dict[str, Any] = Body(...)):
         raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"bulk review unavailable: {type(exc).__name__}") from exc
+
+
+@app.post("/api/v1/workset/staging-placement-reviews")
+def create_staging_placement_review(payload: dict[str, Any] = Body(...)):
+    """Authorize one current file version for controlled placement in Te beoordelen."""
+    if not review_writes_enabled():
+        raise HTTPException(status_code=403, detail="interactive reviews are disabled")
+    try:
+        file_id = int(payload["file_id"])
+        idempotency_key = str(uuid.UUID(str(payload["idempotency_key"])))
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(status_code=422, detail="valid file_id and UUID idempotency_key required") from exc
+    notes = str(payload.get("review_notes") or "").strip() or None
+    if notes and len(notes) > 2000:
+        raise HTTPException(status_code=422, detail="review note exceeds 2000 characters")
+    try:
+        with db_connect() as conn:
+            if not query_one(conn, "SELECT to_regclass('public.v_latest_staging_placement_review') IS NOT NULL AS available")["available"]:
+                raise HTTPException(status_code=503, detail="staging placement migration is not applied")
+            matches = query_all(conn, WORKSET_SELECT + " WHERE w.file_id = %s", (file_id,))
+            if not matches:
+                raise HTTPException(status_code=409, detail="file is no longer a workset candidate")
+            row = matches[0]
+            if row.get("similarity_review_event_id"):
+                raise HTTPException(status_code=409, detail="a redundant copy cannot be staged independently")
+            accepted = (row.get("latest_review_decision") == "accepted"
+                        and row.get("latest_review_category") and row.get("latest_review_family"))
+            if accepted:
+                raise HTTPException(status_code=409, detail="classification is already accepted; use its classified target")
+            source_path = str(row.get("current_physical_path") or row.get("path") or "")
+            if "/Te beoordelen/" in source_path:
+                raise HTTPException(status_code=409, detail="file is already located in Te beoordelen")
+            lifecycle = resolve_effective_lifecycle(
+                row.get("workset_status"), row.get("latest_corrected_lifecycle"),
+                row.get("latest_lifecycle_active_until"),
+            )["effective_lifecycle"]
+            if lifecycle not in {"active", "archive"}:
+                raise HTTPException(status_code=409, detail="active or inactive lifecycle must be decided first")
+            zone = "Actief" if lifecycle == "active" else "Inactief"
+            target_path = str(PurePosixPath("/volume1/data/Persoonlijk") / zone /
+                              "Te beoordelen" / PurePosixPath(source_path).name)
+            latest = query_all(conn, "SELECT id FROM public.v_latest_staging_placement_review WHERE file_id=%s", (file_id,))
+            supersedes = latest[0]["id"] if latest else None
+            with conn.cursor() as cur:
+                cur.execute("""
+                  INSERT INTO public.document_review_events (
+                    idempotency_key, review_contract_version, channel, review_type,
+                    file_id, content_group_id, content_sha256, proposal_lifecycle,
+                    proposal_target_path, proposal_confidence, proposal_reason_code,
+                    proposal_evidence, decision, review_notes, reviewer, supersedes_event_id
+                  ) VALUES (%s,'scrum-158-staging-placement-v1','workset_portal','staging_placement',
+                            %s,%s,%s,%s,%s,'high','classification_unknown',%s::jsonb,
+                            'accepted',%s,%s,%s)
+                  ON CONFLICT (idempotency_key) DO NOTHING
+                  RETURNING id, created_at, file_id, content_sha256
+                """, (idempotency_key, file_id, row["content_group_id"], row["content_sha256"],
+                      lifecycle, target_path, json.dumps({"source_path": source_path}), notes,
+                      os.getenv("CORE_REVIEWER", "hugo"), supersedes))
+                created = cur.fetchone()
+                if not created:
+                    cur.execute("SELECT id, created_at, file_id, content_sha256 FROM public.document_review_events WHERE idempotency_key=%s", (idempotency_key,))
+                    created = cur.fetchone()
+                if int(created[2]) != file_id or str(created[3]) != str(row["content_sha256"]):
+                    raise HTTPException(status_code=409, detail="idempotency key belongs to another placement")
+        return {"status": "accepted", "review_id": str(created[0]), "created_at": iso(created[1]),
+                "file_id": file_id, "source_path": source_path, "target_path": target_path,
+                "lifecycle": lifecycle, "file_mutations": False}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"staging placement unavailable: {type(exc).__name__}: {exc}") from exc
 
 
 @app.post("/api/v1/workset/reviews")

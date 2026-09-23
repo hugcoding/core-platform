@@ -311,6 +311,32 @@ function decorateNominationCards() {
 }
 document.addEventListener('workset:rendered', decorateNominationCards);
 document.addEventListener('workset:rendered', () => { state.lifecycleReviewEnabled = state.reviewEnabled; decorateLifecycleCards() });
+function decorateStagingPlacement() {
+  if (!state.reviewEnabled) return;
+  document.querySelectorAll('.document-card').forEach((card, index) => {
+    const doc = state.documents[index];
+    if (!doc?.can_stage_for_review || card.querySelector('.staging-placement')) return;
+    const review = card.querySelector('.review-panel'); if (!review) return;
+    const placement = document.createElement('div'); placement.className = 'staging-placement'; placement.dataset.fileId = doc.file_id;
+    placement.innerHTML = '<button type="button" data-stage-for-review>Naar Te beoordelen plaatsen</button><small>Alleen gebruiken als je de classificatie bewust open wilt laten. De plaatsing komt daarna in gecontroleerde uitvoering.</small><span class="staging-message" aria-live="polite"></span>';
+    review.before(placement);
+  });
+}
+document.addEventListener('workset:rendered', decorateStagingPlacement);
+async function submitStagingPlacement(panel) {
+  const button = panel.querySelector('[data-stage-for-review]'), message = panel.querySelector('.staging-message');
+  button.disabled = true; message.textContent = 'Besluit opslaan…';
+  try {
+    const response = await fetch('/api/v1/workset/staging-placement-reviews', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file_id: Number(panel.dataset.fileId), idempotency_key: reviewId() }) });
+    const data = await response.json(); if (!response.ok) throw Error(data.detail || response.status);
+    message.textContent = 'Expliciet goedgekeurd; klaar voor gecontroleerde uitvoering.'; button.remove();
+    window.dispatchEvent(new CustomEvent('core:execution-queue-refresh'));
+  } catch (error) { message.textContent = `Plaatsing niet opgeslagen: ${error.message}`; button.disabled = false }
+}
+ws('worksetDocuments').addEventListener('click', event => {
+  const button = event.target.closest('[data-stage-for-review]');
+  if (button) { event.preventDefault(); event.stopImmediatePropagation(); submitStagingPlacement(button.closest('.staging-placement')) }
+}, true);
 function params() { return new URLSearchParams({ status: ws('worksetStatus').value, review_state: ws('worksetReview').value, review_decision: ws('worksetDecision').value, nomination: ws('worksetNomination').value, extension: ws('worksetExtension').value, family: ws('worksetFamily').value, sort: ws('worksetSort').value, search: ws('worksetSearch').value.trim(), limit: state.limit, offset: state.offset }) }
 function renderReviewStats() { const s = state.reviewSummary; ws('worksetReviewStats').innerHTML = [['Lifecycle beoordelen', state.worksetSummary.needs_review], ['Open', s.pending], ['Beoordeeld', s.reviewed], ['Akkoord', s.accepted], ['Uitgesteld', s.needs_review], ['Niet akkoord', s.rejected], ['Niet beoordelen', s.passed]].map(([label, value]) => `<span class="review-stat">${label}<b>${wsNf.format(value || 0)}</b></span>`).join('') }
 function renderNominationStats() { const s = state.nominationSummary; ws('worksetNominationStats').innerHTML = `<span class="review-stat nomination-archive">Voor archief<b>${wsNf.format(s.archive || 0)}</b></span><span class="review-stat nomination-deletion">Voor verwijderreview<b>${wsNf.format(s.deletion || 0)}</b></span><small>Nominaties veranderen de actieve werkset en bestanden niet.</small>` }
