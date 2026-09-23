@@ -5,7 +5,9 @@ import time
 import socket
 import logging
 import uuid
-from datetime import datetime, timezone
+import json
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import redis
 import psycopg2
@@ -39,6 +41,8 @@ LAST_INTERVAL_ROOT_KEY = "scanner:last_interval_root"
 INTERVAL_ROOT_INDEX_KEY = "scanner:interval:root_index"
 DIRTY_ROOTS_KEY = "scanner:dirty_roots"
 FULL_SCAN_REQUEST_KEY = "scanner:request:full"
+SETTINGS_KEY = "scanner:runtime_settings"
+DEFERRED_ROOTS_KEY = "scanner:deferred_roots"
 HASH_BACKFILL_REQUEST_KEY = "scanner:request:hash_backfill"
 HEARTBEAT_TTL = 120
 FULL_HASH_EXTENSIONS = (
@@ -100,6 +104,60 @@ def session_call(query, params=(), fetch=False):
 
 def utc_now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def default_runtime_settings():
+    return {
+        "incremental_polling_enabled": False,
+        "dirty_parent_levels": 1,
+        "dirty_min_depth": 3,
+        "dirty_settle_seconds": 60,
+        "full_scan_time": "02:30",
+        "timezone": "Europe/Amsterdam",
+        "missed_full_scan_policy": "next_window",
+        "full_scan_window_minutes": 30,
+    }
+
+
+def load_runtime_settings():
+    settings = default_runtime_settings()
+    try:
+        row = session_call(
+            "SELECT configuration::text FROM public.scan_runtime_settings WHERE id = 1",
+            fetch=True,
+        )
+        if row:
+            settings.update(json.loads(row))
+            r.set(SETTINGS_KEY, json.dumps(settings, separators=(",", ":")))
+        else:
+            cached = r.get(SETTINGS_KEY)
+            if cached:
+                settings.update(json.loads(cached))
+    except (TypeError, ValueError, redis.RedisError):
+        logger.warning("Unable to load runtime settings; using safe defaults")
+    return settings
+
+
+def scheduled_full_scan_due(now, settings, last_full=None):
+    try:
+        zone = ZoneInfo(str(settings["timezone"]))
+        hour, minute = (int(value) for value in str(settings["full_scan_time"]).split(":"))
+    except (KeyError, ValueError, ZoneInfoNotFoundError):
+        return False
+    local_now = now.astimezone(zone)
+    scheduled = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    window = timedelta(minutes=max(1, int(settings.get("full_scan_window_minutes", 30))))
+    in_window = scheduled <= local_now < scheduled + window
+    if not in_window:
+        if settings.get("missed_full_scan_policy") != "run_immediately" or local_now < scheduled + window:
+            return False
+    if last_full:
+        try:
+            if datetime.fromisoformat(last_full).astimezone(zone).date() == local_now.date():
+                return False
+        except ValueError:
+            pass
+    return True
 
 
 def should_skip_path(path):
@@ -286,14 +344,20 @@ def select_interval_root(roots):
     return root
 
 
-def select_dirty_root(roots):
-    allowed = set(roots)
+def select_dirty_root(roots, settle_seconds=0, now=None):
     dirty = r.hgetall(DIRTY_ROOTS_KEY)
-    candidates = [
-        (marked_at, root)
-        for root, marked_at in dirty.items()
-        if root in allowed
-    ]
+    now = now or datetime.now(timezone.utc)
+    candidates = []
+    for root, marked_at in dirty.items():
+        if not any(root == allowed or root.startswith(allowed.rstrip("/") + "/") for allowed in roots):
+            continue
+        try:
+            age = (now - datetime.fromisoformat(marked_at)).total_seconds()
+            if age < settle_seconds:
+                continue
+        except ValueError:
+            pass
+        candidates.append((marked_at, root))
     if not candidates:
         return None, None
     marked_at, root = min(candidates)
@@ -460,20 +524,25 @@ def scan_once():
     roots = discover_roots()
     if not roots:
         raise RuntimeError("Full scan aborted: no scan roots discovered")
-    return run_scan("full", roots)
+    result = run_scan("full", roots)
+    r.delete(DEFERRED_ROOTS_KEY)
+    return result
 
 
-def scan_interval_once():
+def scan_interval_once(settings=None):
     roots = discover_roots()
-    dirty_root, dirty_marker = select_dirty_root(roots)
+    settings = settings or default_runtime_settings()
+    dirty_root, dirty_marker = select_dirty_root(
+        roots, settle_seconds=int(settings.get("dirty_settle_seconds", 60))
+    )
+    if not dirty_root and not settings.get("incremental_polling_enabled", False):
+        return None
     root = dirty_root or select_interval_root(roots)
     if dirty_root:
         result = run_scan(
             "interval",
             [dirty_root],
-            full_sweep=True,
-            reconcile_scope=dirty_root,
-            missing_threshold=1,
+            full_sweep=False,
         )
     else:
         result = run_scan("interval", [root] if root else [])
@@ -566,8 +635,6 @@ def main():
         SCAN_INTERVAL,
         FULL_SCAN_INTERVAL,
     )
-    next_full_at = 0.0
-
     try:
         while True:
             refresh_lock()
@@ -575,18 +642,29 @@ def main():
 
             started = time.time()
             try:
+                settings = load_runtime_settings()
                 backfill_source = consume_hash_backfill_request()
                 if backfill_source:
                     enqueued = run_hash_backfill(backfill_source)
                     discovered, missing, deleted = enqueued, 0, 0
                     scan_type = "hash_backfill"
-                elif consume_full_scan_request() or time.monotonic() >= next_full_at:
+                elif consume_full_scan_request() or scheduled_full_scan_due(
+                    datetime.now(timezone.utc), settings, r.get(LAST_FULL_SCAN_KEY)
+                ):
                     discovered, enqueued, missing, deleted = scan_once()
-                    next_full_at = time.monotonic() + FULL_SCAN_INTERVAL
                     scan_type = "full"
-                else:
-                    discovered, enqueued, missing, deleted = scan_interval_once()
+                elif r.hlen(DIRTY_ROOTS_KEY) or settings.get("incremental_polling_enabled", False):
+                    interval_result = scan_interval_once(settings)
+                    if interval_result is None:
+                        heartbeat("settling")
+                        wait_for_next_scan(min(SCAN_INTERVAL, 30))
+                        continue
+                    discovered, enqueued, missing, deleted = interval_result
                     scan_type = "interval"
+                else:
+                    heartbeat("idle")
+                    wait_for_next_scan(min(SCAN_INTERVAL, 30))
+                    continue
                 elapsed = time.time() - started
                 heartbeat("idle")
                 logger.info(
@@ -602,7 +680,7 @@ def main():
                 heartbeat("error")
                 logger.exception("Scan loop failed: %s", e)
 
-            wait_for_next_scan(SCAN_INTERVAL)
+            wait_for_next_scan(min(SCAN_INTERVAL, 30))
 
     finally:
         heartbeat("stopped")

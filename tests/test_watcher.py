@@ -35,8 +35,17 @@ class FakeRedis:
         self.values[key] = value
         return True
 
+    def get(self, key):
+        return self.values.get(key)
+
     def hset(self, key, field, value):
         self.hashes.setdefault(key, {})[field] = value
+
+    def hgetall(self, key):
+        return dict(self.hashes.get(key, {}))
+
+    def hdel(self, key, field):
+        self.hashes.get(key, {}).pop(field, None)
 
     def xadd(self, stream, payload):
         self.events.append((stream, payload))
@@ -65,7 +74,7 @@ class WatcherTests(unittest.TestCase):
         self.assertNotIn("scan_session_id", payload)
         self.assertIn(
             os.path.normpath("/volume1/data"),
-            watcher.r.hashes[watcher.DIRTY_ROOTS_KEY],
+            watcher.r.hashes[watcher.DEFERRED_ROOTS_KEY],
         )
 
     def test_duplicate_event_is_debounced(self):
@@ -90,10 +99,9 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(os.path.normpath("/volume1/homes/old.txt"), payload["old_path"])
         self.assertEqual(
             {
-                os.path.normpath("/volume1/homes"),
                 os.path.normpath("/volume1/data"),
             },
-            set(watcher.r.hashes[watcher.DIRTY_ROOTS_KEY]),
+            set(watcher.r.hashes[watcher.DEFERRED_ROOTS_KEY]),
         )
 
     def test_ignored_path_is_not_published(self):
@@ -125,6 +133,19 @@ class WatcherTests(unittest.TestCase):
             set(roots),
         )
         self.assertEqual(2, watcher.r.values[watcher.RECOVERY_ROOTS_KEY])
+
+    def test_event_scope_is_one_level_above_changed_directory(self):
+        scope, reason = watcher.scope_for_path(
+            "/volume1/data/Persoonlijk/Actief/Werk/Sollicitaties/cv.pdf",
+            {"dirty_parent_levels": 1, "dirty_min_depth": 3},
+        )
+        self.assertEqual(os.path.normpath("/volume1/data/Persoonlijk/Actief/Werk"), scope)
+        self.assertIsNone(reason)
+
+    def test_broad_event_is_deferred(self):
+        watcher.mark_dirty("/volume1/data/file.pdf")
+        self.assertEqual({}, watcher.r.hashes.get(watcher.DIRTY_ROOTS_KEY, {}))
+        self.assertIn(os.path.normpath("/volume1/data"), watcher.r.hashes[watcher.DEFERRED_ROOTS_KEY])
 
 
 if __name__ == "__main__":

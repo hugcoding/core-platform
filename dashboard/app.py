@@ -12,6 +12,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pathlib import Path, PurePosixPath
 from typing import Any, Optional
 from collections import Counter
@@ -72,6 +73,19 @@ app.middleware('http')(finance_boundary)
 app.include_router(finance_router)
 app.mount("/coredashboard/assets", StaticFiles(directory=APP_DIR / "static"), name="assets")
 
+SCAN_SETTINGS_KEY = "scanner:runtime_settings"
+SCAN_FULL_REQUEST_KEY = "scanner:request:full"
+SCAN_SETTINGS_DEFAULTS = {
+    "incremental_polling_enabled": False,
+    "dirty_parent_levels": 1,
+    "dirty_min_depth": 3,
+    "dirty_settle_seconds": 60,
+    "full_scan_time": "02:30",
+    "timezone": "Europe/Amsterdam",
+    "missed_full_scan_policy": "next_window",
+    "full_scan_window_minutes": 30,
+}
+
 
 def db_connect():
     return psycopg2.connect(
@@ -87,6 +101,47 @@ def db_connect():
 def redis_connect():
     return redis.Redis(host=os.getenv("REDIS_HOST", "redis"), decode_responses=True,
                        socket_connect_timeout=2, socket_timeout=2)
+
+
+def validate_scan_settings(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=422, detail="settings must be an object")
+    unknown = set(raw) - set(SCAN_SETTINGS_DEFAULTS)
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"unknown settings: {', '.join(sorted(unknown))}")
+    result = {**SCAN_SETTINGS_DEFAULTS, **raw}
+    if not isinstance(result["incremental_polling_enabled"], bool):
+        raise HTTPException(status_code=422, detail="incremental_polling_enabled must be boolean")
+    limits = {
+        "dirty_parent_levels": (0, 4),
+        "dirty_min_depth": (1, 12),
+        "dirty_settle_seconds": (5, 3600),
+        "full_scan_window_minutes": (5, 180),
+    }
+    for key, (minimum, maximum) in limits.items():
+        value = result[key]
+        if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+            raise HTTPException(status_code=422, detail=f"{key} must be between {minimum} and {maximum}")
+    if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", str(result["full_scan_time"])):
+        raise HTTPException(status_code=422, detail="full_scan_time must use HH:MM")
+    try:
+        ZoneInfo(str(result["timezone"]))
+    except ZoneInfoNotFoundError as exc:
+        raise HTTPException(status_code=422, detail="unknown timezone") from exc
+    if result["missed_full_scan_policy"] not in {"next_window", "run_immediately"}:
+        raise HTTPException(status_code=422, detail="invalid missed_full_scan_policy")
+    return result
+
+
+def next_full_scan_at(settings: dict[str, Any], now: datetime | None = None) -> str:
+    now = now or datetime.now(timezone.utc)
+    zone = ZoneInfo(settings["timezone"])
+    local = now.astimezone(zone)
+    hour, minute = (int(value) for value in settings["full_scan_time"].split(":"))
+    scheduled = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if scheduled <= local:
+        scheduled += timedelta(days=1)
+    return scheduled.astimezone(timezone.utc).isoformat()
 
 
 def query_one(conn, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any]:
@@ -360,6 +415,61 @@ def health():
     return {"status": "ok", "service": "core-pulse", "uptime_seconds": round(time.monotonic() - STARTED)}
 
 
+@app.get("/api/v1/scan-settings")
+def get_scan_settings():
+    with db_connect() as conn:
+        rows = query_all(conn, """
+            SELECT configuration, updated_at, updated_by
+            FROM public.scan_runtime_settings WHERE id = 1
+        """)
+    settings = validate_scan_settings(rows[0]["configuration"] if rows else {})
+    client = redis_connect()
+    return {
+        "settings": settings,
+        "updated_at": iso(rows[0]["updated_at"]) if rows else None,
+        "updated_by": rows[0]["updated_by"] if rows else None,
+        "scan_roots": [value.strip() for value in os.getenv("SCAN_ROOTS", "").split(",") if value.strip()],
+        "watch_roots": [value.strip() for value in os.getenv("WATCH_ROOTS", "/volume1/data").split(",") if value.strip()],
+        "last_full_scan": client.get("scanner:last_full_scan"),
+        "last_dirty_scan": client.get("scanner:last_interval_scan"),
+        "open_dirty_scopes": client.hlen("scanner:dirty_roots"),
+        "deferred_scopes": client.hlen("scanner:deferred_roots"),
+        "next_full_scan": next_full_scan_at(settings),
+    }
+
+
+@app.put("/api/v1/scan-settings")
+def update_scan_settings(payload: dict[str, Any] = Body(...)):
+    updated_by = str(payload.get("updated_by") or "core-pulse-ui").strip()[:100]
+    settings = validate_scan_settings(payload.get("settings"))
+    with db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT configuration FROM public.scan_runtime_settings WHERE id = 1 FOR UPDATE")
+            row = cur.fetchone()
+            old = row[0] if row else None
+            cur.execute("""
+                INSERT INTO public.scan_runtime_settings (id, configuration, updated_at, updated_by)
+                VALUES (1, %s::jsonb, now(), %s)
+                ON CONFLICT (id) DO UPDATE SET configuration = EXCLUDED.configuration,
+                    updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by
+            """, (json.dumps(settings), updated_by))
+            cur.execute("""
+                INSERT INTO public.scan_runtime_settings_audit
+                    (old_configuration, new_configuration, changed_by)
+                VALUES (%s::jsonb, %s::jsonb, %s)
+            """, (json.dumps(old) if old is not None else None, json.dumps(settings), updated_by))
+        conn.commit()
+    redis_connect().set(SCAN_SETTINGS_KEY, json.dumps(settings, separators=(",", ":")))
+    return {"status": "saved", "settings": settings, "next_full_scan": next_full_scan_at(settings)}
+
+
+@app.post("/api/v1/scans/full-request")
+def request_full_scan():
+    requested_at = datetime.now(timezone.utc).isoformat()
+    created = redis_connect().set(SCAN_FULL_REQUEST_KEY, requested_at, nx=True)
+    return {"status": "requested" if created else "already_requested", "requested_at": requested_at}
+
+
 @app.get("/api/v1/overview")
 def overview():
     errors: list[str] = []
@@ -427,6 +537,7 @@ def overview():
             realtime_queue=redis_key_size(client, "scan_stream_realtime"),
             dlq=redis_key_size(client, "scan_stream_dlq"),
             dirty_roots=redis_key_size(client, "scanner:dirty_roots"),
+            deferred_roots=redis_key_size(client, "scanner:deferred_roots"),
         )
     except Exception as exc:
         errors.append(f"redis: {type(exc).__name__}")
