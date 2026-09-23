@@ -8,6 +8,10 @@ Open `/corefinance` en ontgrendel met de persoonlijke toegangscode uit het lokal
 
 Ondersteund: losse UTF-8 ASN CAMT `camt.053.001.02` XML-bestanden, geboekte EUR-mutaties, één eigenaar. Een `Ntry` is één transactie; onderliggende `TxDtls` zijn aanvullende broninformatie. Begin/eindsaldi worden gecontroleerd indien aanwezig. Andere versies, valuta, ZIP, CSV, PDF, MT940 en Open Banking volgen later. De UI heeft geen AI-laag.
 
+## Vermogensgroepen
+
+Via **Rekeningen beheren** kun je rekeningen indelen, de relatie vastleggen en groepen aanmaken/hernoemen. Het overzicht filtert op de actuele groep. Zie [SCRUM-157: vermogensgroepen](scrum-157-finance-wealth-groups.md). Hiervoor is eenmalig `20260923_add_finance_wealth_groups.sql` nodig. Bestaande rekeningen starten als Nog indelen.
+
 ## Flexibele classificatie
 
 Het [classificatiemodel](scrum-118-finance-classification.md) voegt afzonderlijke transactietypen, configureerbare hoofd-/subcategorieen, versleutelde merchants en classificatiehistorie toe. Bestaande bankmutatietotalen blijven behouden; aparte geclassificeerde totalen sluiten interne transfers uit van uitgaven. Installatie vereist de migratie `20260918_add_finance_classification.sql`.
