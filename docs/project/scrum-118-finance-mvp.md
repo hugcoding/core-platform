@@ -71,3 +71,8 @@ Accounts, bronnen, bronvoorkomens, batches, records, transacties en bronlinks zi
 De acceptance-deployment gebruikt een geïsoleerde builddirectory en `tools/runtime/finance-compose.override.yml`, met de oorspronkelijke Compose-projectnaam, `.env` en projectdirectory. De bestaande NAS-checkout en gebruikersbestanden blijven intact. `tools/runtime/finance_bootstrap.py` maakt lokale sleutels en toegangscode aan zonder ze af te drukken. Finance staat standaard uit; het Compose-profiel `finance` activeert de worker. Het brondirectory en de sleutelmap zijn read-only gemount voor de worker.
 
 Tests gebruiken uitsluitend fictieve data. De aparte PostgreSQL-teststack gebruikt database `core_finance_test`, tmpfs en geen bankmounts. De suite controleert onder meer concurrency, bestand-idempotency, gelijke afzonderlijke betalingen, ambiguity-review, append-only categorieën, bronlinks, afgeschermde downloads, rollback en voorrang van gecontroleerde uitvoering. De UI-preview gebruikt uitsluitend synthetische responses. Werkelijke imports mogen alleen lokaal plaatsvinden; uitlezen voor oplevercontrole blijft beperkt tot statussen en aantallen.
+
+## Banksaldi
+
+Zie [Banksaldi uit CAMT](finance-bank-balances.md) voor saldoankers, historische
+aanvulling en de NAS-uitrolstappen (dashboard en Finance-worker).

@@ -90,6 +90,7 @@ class Parsed:
     entries: tuple
     statements: int
     balances_checked: int
+    bank_balances: tuple = ()
 
 
 def parse(data: bytes) -> Parsed:
@@ -111,17 +112,19 @@ def parse(data: bytes) -> Parsed:
     statements = elements(root, 'BkToCstmrStmt/Stmt')
     if not statements or len(statements) > 1000:
         raise ImportErrorCode('invalid_statement_count')
-    entries, accounts, checked = [], set(), 0
+    entries, accounts, checked, bank_balances = [], set(), 0, []
     for si, statement in enumerate(statements, 1):
         account = account_id(text(statement, 'Acct/Id/IBAN', True))
         accounts.add(account)
         balances = {}
+        balance_dates = {}
         for balance in elements(statement, 'Bal'):
             kind = text(balance, 'Tp/CdOrPrtry/Cd')
             if kind in ('OPBD', 'CLBD'):
                 if kind in balances:
                     raise ImportErrorCode('ambiguous_balances')
                 balances[kind] = signed_amount(balance)[0]
+                balance_dates[kind] = bank_date(balance, 'Dt/Dt', False)
         total = Decimal(0)
         for ei, entry in enumerate(elements(statement, 'Ntry'), 1):
             if len(entries) >= MAX_ENTRIES:
@@ -156,6 +159,9 @@ def parse(data: bytes) -> Parsed:
             if balances['OPBD'] + total != balances['CLBD']:
                 raise ImportErrorCode('balance_mismatch')
             checked += 1
+            bank_balances.append({'locator': f'stmt:{si}', 'account': account,
+                'opening': format(balances['OPBD'], '.2f'), 'closing': format(balances['CLBD'], '.2f'),
+                'opening_date': balance_dates['OPBD'], 'closing_date': balance_dates['CLBD'], 'currency': 'EUR'})
         elif balances:
             raise ImportErrorCode('incomplete_balances')
-    return Parsed(tuple(sorted(accounts)), tuple(entries), len(statements), checked)
+    return Parsed(tuple(sorted(accounts)), tuple(entries), len(statements), checked, tuple(bank_balances))
