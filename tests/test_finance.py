@@ -114,6 +114,9 @@ class IntegrationTests(unittest.TestCase):
             classification_up=Path('database/migrations/20260918_add_finance_classification.sql').read_text(encoding='utf-8')
             classification_down=Path('database/migrations/rollback/20260918_add_finance_classification.sql').read_text(encoding='utf-8')
             cur.execute(classification_up);cur.execute(classification_down);cur.execute(classification_up)
+            groups_up=Path('database/migrations/20260923_add_finance_wealth_groups.sql').read_text(encoding='utf-8')
+            groups_down=Path('database/migrations/rollback/20260923_add_finance_wealth_groups.sql').read_text(encoding='utf-8')
+            cur.execute(groups_up);cur.execute(groups_down);cur.execute(groups_up)
         app=FastAPI();app.middleware('http')(finance_boundary);app.include_router(router)
         cls.client=TestClient(app);cls.client.headers['origin']='http://testserver'
         response=cls.client.post('/api/v1/finance/session',json={'code':'synthetic-access'})
@@ -614,6 +617,139 @@ class IntegrationTests(unittest.TestCase):
             with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20260918_add_finance_classification.sql').read_text(encoding='utf-8'))
         with self.admin.cursor() as cur:cur.execute('ROLLBACK')
         self.assertEqual(200,self.client.get('/api/v1/finance/data?year=2018').status_code)
+
+
+    def test_21_group_creation_rename_privacy_and_access(self):
+        from fastapi.testclient import TestClient
+        initial=self.client.get('/api/v1/finance/account-management')
+        self.assertEqual(200,initial.status_code);self.assertEqual('no-store',initial.headers['cache-control'])
+        self.assertEqual([],initial.json()['groups'])
+        self.assertTrue(all(a['group_id'] is None and a['relationship']=='UNASSIGNED' for a in initial.json()['accounts']))
+        anonymous=TestClient(self.client.app)
+        self.assertEqual(401,anonymous.get('/api/v1/finance/account-management').status_code)
+        route='/api/v1/finance/wealth-groups';payload={'name':'Synthetic private','key':str(uuid.uuid4())}
+        self.assertEqual(401,anonymous.post(route,json=payload,headers={'Origin':'http://testserver'}).status_code)
+        self.assertEqual(403,self.client.post(route,json=payload,headers={'Origin':'http://other.invalid'}).status_code)
+        for name in ('', 'x'*81, 'bad\nname', None):
+            self.assertEqual(422,self.client.post(route,json={**payload,'name':name}).status_code)
+        result=self.client.post(route,json=payload);self.assertEqual(200,result.status_code)
+        gid=result.json()['group_id'];self.assertEqual(gid,self.client.post(route,json=payload).json()['group_id'])
+        self.assertEqual(409,self.client.post(route,json={**payload,'name':'Changed request'}).status_code)
+        g=self.client.get('/api/v1/finance/account-management').json()['groups'][0]
+        change={'name':'Synthetic private renamed','previous':g['event_id'],'key':str(uuid.uuid4())}
+        for _ in range(2):self.assertEqual(200,self.client.post(route+'/'+gid+'/name',json=change).status_code)
+        self.assertEqual(409,self.client.post(route+'/'+gid+'/name',json={**change,'key':str(uuid.uuid4())}).status_code)
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT private_data FROM finance.finance_wealth_group_events WHERE group_id=%s',(gid,))
+            names=cur.fetchall();self.assertEqual(2,len(names));self.assertTrue(all('Synthetic' not in n[0] for n in names))
+
+    def test_22_account_management_and_consistent_filters(self):
+        # Valid but wholly fabricated IBANs; never use real account data in fixtures.
+        def iban(n):
+            bban='TEST'+str(n).zfill(10)
+            numeric=''.join(str(ord(c)-55) if c.isalpha() else c for c in bban+'NL00')
+            return 'NL'+str(98-int(numeric)%97).zfill(2)+bban
+        ibans=[iban(i) for i in range(1,6)]
+        entries=[(0,'group seed',1),(0,'group candidate',1),(1,'group savings',0),(1,'group self',1),
+                 (2,'group joint',1),(3,'group child',1),(4,'group unassigned',1)]
+        for index,description,counter in entries:
+            xml=sample(description=description,amount='10.00').replace(IBAN.encode(),ibans[index].encode()).replace(b'2026-09-01',b'2016-01-01')
+            xml=xml.replace(b'Synthetische winkel',b'Synthetic managed transfer').replace(b'</RltdPties>',
+                ('<CdtrAcct><Id><IBAN>'+ibans[counter]+'</IBAN></Id></CdtrAcct></RltdPties>').encode())
+            self.import_file(xml)
+        rows={r['description']:r for r in self.client.get('/api/v1/finance/data?year=2016').json()['transactions']}
+        type(self).group_rows=rows
+        private=self.client.get('/api/v1/finance/account-management').json()['groups'][0]['id']
+        joint=self.client.post('/api/v1/finance/wealth-groups',json={'name':'Synthetic joint','key':str(uuid.uuid4())}).json()['group_id']
+        child=self.client.post('/api/v1/finance/wealth-groups',json={'name':'Synthetic child','key':str(uuid.uuid4())}).json()['group_id']
+        type(self).group_ids=(private,joint,child)
+        for desc,gid,relation in [('group seed',private,'OWN'),('group savings',private,'OWN'),('group joint',joint,'JOINT'),('group child',child,'MANAGED')]:
+            aid=rows[desc]['account_id'];a=next(a for a in self.client.get('/api/v1/finance/account-management').json()['accounts'] if a['id']==aid)
+            payload={'group_id':gid,'relationship':relation,'name':'Synthetic '+desc,'previous':a['group_event_id'],
+                     'previous_name':a['name_event_id'],'key':str(uuid.uuid4())}
+            route='/api/v1/finance/accounts/'+aid+'/management'
+            self.assertEqual(422,self.client.post(route,json={**payload,'relationship':'UNASSIGNED'}).status_code)
+            self.assertEqual(422,self.client.post(route,json={**payload,'group_id':None}).status_code)
+            self.assertEqual(422,self.client.post(route,json={**payload,'group_id':str(uuid.uuid4())}).status_code)
+            for _ in range(2):self.assertEqual(200,self.client.post(route,json=payload).status_code)
+            self.assertEqual(409,self.client.post(route,json={**payload,'name':'Changed same key'}).status_code)
+            with self.admin.cursor() as cur:
+                cur.execute('SELECT count(*) FROM finance.finance_account_group_events WHERE account_id=%s',(aid,));self.assertEqual(1,cur.fetchone()[0])
+                cur.execute('SELECT private_data FROM finance.finance_account_name_events WHERE account_id=%s',(aid,));self.assertNotIn('Synthetic',cur.fetchone()[0])
+        for group,total in [(private,'4'),(joint,'1'),(child,'1'),('unassigned','1')]:
+            for sort in ('amount','description'):
+                data=self.client.get('/api/v1/finance/data',params={'year':'2016','group':group,'sort':sort}).json()
+                self.assertEqual(total,data['totals']['total']);self.assertEqual(-10*int(total),float(data['totals']['debits']))
+                self.assertEqual(int(total),len(data['transactions']))
+                self.assertTrue(all(a['group_id']==group for a in data['accounts']) if group!='unassigned' else all(a['group_id'] is None for a in data['accounts']))
+        incompatible=self.client.get('/api/v1/finance/data',params={'year':'2016','group':private,'account':rows['group child']['account_id']}).json()
+        self.assertEqual('0',incompatible['totals']['total']);self.assertEqual([],incompatible['transactions'])
+        self.assertEqual(200,self.client.get('/api/v1/finance/data',params={'group':private.upper()}).status_code)
+        self.assertEqual(404,self.client.get('/api/v1/finance/data',params={'group':str(uuid.uuid4())}).status_code)
+        aid=rows['group seed']['account_id']
+        history=self.client.get('/api/v1/finance/accounts/'+aid+'/management-history').json()['events']
+        self.assertEqual(1,len(history));self.assertEqual('OWN',history[0]['relationship']);self.assertNotIn('payload_digest',history[0])
+
+    def test_23_stale_name_and_concurrent_membership_edits(self):
+        from fastapi.testclient import TestClient
+        aid=self.group_rows['group seed']['account_id']
+        def current():return next(a for a in self.client.get('/api/v1/finance/account-management').json()['accounts'] if a['id']==aid)
+        a=current();route='/api/v1/finance/accounts/'+aid+'/management'
+        payload={'name':'New management name','group_id':self.group_ids[1],'relationship':'JOINT',
+                 'previous':a['group_event_id'],'previous_name':a['name_event_id'],'key':str(uuid.uuid4())}
+        self.assertEqual(200,self.client.post('/api/v1/finance/accounts/'+aid+'/name',json={'name':'Concurrent rename','previous':a['name_event_id'],'key':str(uuid.uuid4())}).status_code)
+        self.assertEqual(409,self.client.post(route,json=payload).status_code)
+        self.assertEqual(self.group_ids[0],current()['group_id']);self.assertEqual('Concurrent rename',current()['display_name'])
+        a=current();payload.update(group_id=self.group_ids[0],relationship='OWN',previous_name=a['name_event_id'])
+        def submit(i):
+            c=TestClient(self.client.app);c.cookies.update(self.client.cookies)
+            return c.post(route,json={**payload,'name':'Concurrent '+str(i),'key':str(uuid.uuid4())},headers={'Origin':'http://testserver'}).status_code
+        with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(submit,[1,2]))
+        self.assertEqual([200,409],sorted(results));self.assertEqual(self.group_ids[0],current()['group_id'])
+
+    def test_24_transfer_boundary_rechecked_without_rewriting_history(self):
+        rows=self.group_rows;seed=rows['group seed'];target=rows['group candidate'];savings=rows['group savings']
+        self.assertEqual(200,self.client.post('/api/v1/finance/transactions/'+seed['id']+'/classification',json={
+            'transaction_type':'TRANSFER','category':'overboekingen','subcategory':'overboekingen_eigen_rekening','merchant':'',
+            'previous':None,'key':str(uuid.uuid4())}).status_code)
+        route='/api/v1/finance/transactions/'+seed['id']+'/suggestions'
+        proposal=self.client.get(route).json();self.assertEqual([target['id']],[r['id'] for r in proposal['transactions']])
+        payload={'seed_transaction_id':seed['id'],'seed_review_id':proposal['seed_review_id'],
+                 'items':[{'id':target['id'],'previous':None}],'key':str(uuid.uuid4())}
+        def move(gid,relation):
+            a=next(a for a in self.client.get('/api/v1/finance/account-management').json()['accounts'] if a['id']==savings['account_id'])
+            return self.client.post('/api/v1/finance/accounts/'+a['id']+'/management',json={'name':a['display_name'] or '',
+                'group_id':gid,'relationship':relation,'previous':a['group_event_id'],'previous_name':a['name_event_id'],'key':str(uuid.uuid4())})
+        self.assertEqual(200,move(self.group_ids[1],'JOINT').status_code)
+        self.assertEqual('transfer_group_required',self.client.get(route).json()['reason'])
+        self.assertEqual(409,self.client.post('/api/v1/finance/suggestions/approve',json=payload).status_code)
+        current=next(r for r in self.client.get('/api/v1/finance/data?year=2016').json()['transactions'] if r['id']==seed['id'])
+        self.assertEqual(proposal['seed_review_id'],current['review_id']);self.assertEqual('TRANSFER',current['transaction_type'])
+        self.assertEqual(200,move(None,'UNASSIGNED').status_code)
+        self.assertEqual(0,self.client.get(route).json()['total'])
+        self.assertEqual(200,move(self.group_ids[0],'OWN').status_code)
+        self.assertEqual(200,self.client.post('/api/v1/finance/suggestions/approve',json=payload).status_code)
+        totals=self.client.get('/api/v1/finance/data',params={'group':self.group_ids[0],'year':'2016','category':'overboekingen','transaction_type':'TRANSFER'}).json()['totals']
+        self.assertEqual('2',totals['total']);self.assertEqual('20.00',totals['transfer_out']);self.assertEqual('0',totals['expenses'])
+
+    def test_25_membership_constraints_append_only_and_rollback(self):
+        from core.finance.store import connection
+        import psycopg2
+        a,b=self.group_rows['group seed']['account_id'],self.group_rows['group savings']['account_id']
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT id FROM finance.finance_account_group_events WHERE account_id=%s ORDER BY sequence_no DESC LIMIT 1',(a,));wrong_previous=cur.fetchone()[0]
+        with self.assertRaises(psycopg2.Error):
+            with connection() as conn,conn.cursor() as cur:
+                cur.execute("""INSERT INTO finance.finance_account_group_events(account_id,relationship,supersedes_event_id,actor,idempotency_key,payload_digest)
+                    VALUES (%s,'UNASSIGNED',%s,'test',%s,'test')""",(b,wrong_previous,str(uuid.uuid4())))
+        for table in ('finance_wealth_groups','finance_wealth_group_events','finance_account_group_events'):
+            for sql in ('DELETE FROM finance.'+table,'TRUNCATE finance.'+table):
+                with self.assertRaises(psycopg2.Error):
+                    with self.admin.cursor() as cur:cur.execute(sql)
+        with self.assertRaises(psycopg2.Error):
+            with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20260923_add_finance_wealth_groups.sql').read_text(encoding='utf-8'))
+        with self.admin.cursor() as cur:cur.execute('ROLLBACK')
+        self.assertEqual(200,self.client.get('/api/v1/finance/account-management').status_code)
 
 
 if __name__=='__main__': unittest.main()

@@ -17,6 +17,7 @@ from core.finance.account_names import account_view, normalize_name
 from core.finance.periods import period_bounds
 from core.finance.suggestions import identity as merchant_identity, METHOD as SUGGESTION_METHOD, MAX_SCAN, recognized_merchant
 from core.finance.classification import merchant_name, merchant_id, validate_category, conflicts, insert_suggestion, predecessor
+from core.finance.account_groups import groups as wealth_groups, accounts as managed_accounts, group_name, RELATIONSHIPS, transfer_scope, internal_transfer_group
 from core.finance.store import connection, enqueue, event, publish_record, IMPORT_LOCK
 
 router = APIRouter()
@@ -120,12 +121,17 @@ def transaction(row):
 
 
 @router.get('/api/v1/finance/data')
-def data(account:str='',month:str='',category:str='',page:int=0,sort:str='booking_date',direction:str='desc',year:str='',date_from:str='',date_to:str='',transaction_type:str='',subcategory:str=''):
+def data(account:str='',month:str='',category:str='',page:int=0,sort:str='booking_date',direction:str='desc',year:str='',date_from:str='',date_to:str='',transaction_type:str='',subcategory:str='',group:str=''):
     columns={'booking_date':'t.booking_date','amount':'t.amount',
              'category':"lower(COALESCE(c.label,'Nog te categoriseren'))"}
     if sort not in (*columns,'counterparty','description') or direction not in ('asc','desc'):
         raise HTTPException(422,'invalid_sort')
     clauses,params=['true'],[]
+    if group:
+        if group=='unassigned':clauses.append('t.account_id IN (SELECT account_id FROM finance.v_account_groups WHERE group_id IS NULL)')
+        else:
+            group=uid(group)
+            clauses.append('t.account_id IN (SELECT account_id FROM finance.v_account_groups WHERE group_id=%s)');params.append(group)
     if account:
         clauses.append('t.account_id=%s'); params.append(uid(account))
     try:
@@ -146,17 +152,17 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
         raise HTTPException(422,'invalid_page')
     where=' AND '.join(clauses)
     with connection() as conn, conn.cursor() as cur:
-        cur.execute("""SELECT a.id,a.private_data,n.id AS name_event_id,n.private_data AS name_data
-            FROM finance.finance_accounts a LEFT JOIN LATERAL (
-                SELECT id,private_data FROM finance.finance_account_name_events
-                WHERE account_id=a.id ORDER BY sequence_no DESC LIMIT 1
-            ) n ON true ORDER BY a.created_at,a.id""")
-        accounts=[account_view(r) for r in cur.fetchall()]
+        cur.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+        groups=wealth_groups(cur)
+        if group and group!='unassigned' and not any(g['id']==group for g in groups):raise HTTPException(404,'group_not_found')
+        accounts=managed_accounts(cur)
+        if group:
+            accounts=[a for a in accounts if (a['group_id'] is None if group=='unassigned' else a['group_id']==group)]
         cur.execute('SELECT * FROM finance.finance_categories ORDER BY sort_order,name')
         categories=cur.fetchall()
         cur.execute('SELECT * FROM finance.finance_transaction_types ORDER BY code')
         transaction_types=cur.fetchall()
-        cur.execute('SELECT DISTINCT to_char(booking_date,\'YYYY-MM\') AS month FROM finance.v_transactions ORDER BY month DESC')
+        cur.execute("SELECT DISTINCT to_char(booking_date,'YYYY-MM') AS month FROM finance.v_transactions WHERE account_id=ANY(%s::uuid[]) ORDER BY month DESC",([a['id'] for a in accounts],))
         months=[r['month'] for r in cur.fetchall()]
         cur.execute(f'''SELECT count(*) AS total,coalesce(sum(amount) FILTER(WHERE amount>0),0) AS credits,
             coalesce(sum(amount) FILTER(WHERE amount<0),0) AS debits,coalesce(sum(amount),0) AS net,
@@ -204,7 +210,7 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
             WHERE r.initial_outcome='unresolved' AND b.status IN ('partial','imported')
             AND NOT EXISTS(SELECT 1 FROM finance.finance_duplicate_events e WHERE e.record_id=r.id)''')
         unresolved=cur.fetchone()['n']
-    return {'accounts':accounts,'categories':categories,'transaction_types':transaction_types,'months':months,'years':sorted({m[:4] for m in months},reverse=True),'totals':totals,'transactions':rows,
+    return {'accounts':accounts,'groups':groups,'group':group,'categories':categories,'transaction_types':transaction_types,'months':months,'years':sorted({m[:4] for m in months},reverse=True),'totals':totals,'transactions':rows,
         'imports':imports,'jobs':jobs,'unresolved':unresolved,'page':page,'currency':'EUR','sort':sort,'direction':direction}
 
 
@@ -242,6 +248,99 @@ def replay(cur,table,key,digest):
     row=cur.fetchone()
     if row and row['payload_digest']!=digest: raise HTTPException(409,'idempotency_conflict')
     return row is not None
+
+
+@router.get('/api/v1/finance/account-management')
+def account_management():
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+        return {'accounts':managed_accounts(cur),'groups':wealth_groups(cur),'relationships':RELATIONSHIPS}
+
+
+@router.post('/api/v1/finance/wealth-groups')
+def create_wealth_group(payload:dict=Body(...)):
+    key=uid(payload.get('key'))
+    try:name=group_name(payload.get('name'))
+    except ValueError:raise HTTPException(422,'invalid_group_name') from None
+    digest=fingerprint('wealth-group-create-v1',[name])
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-category-learning'))")
+        if replay(cur,'finance_wealth_group_events',key,digest):
+            cur.execute('SELECT group_id FROM finance.finance_wealth_group_events WHERE idempotency_key=%s',(key,))
+            return {'status':'saved','group_id':str(cur.fetchone()['group_id'])}
+        cur.execute('INSERT INTO finance.finance_wealth_groups DEFAULT VALUES RETURNING id')
+        gid=cur.fetchone()['id']
+        cur.execute("""INSERT INTO finance.finance_wealth_group_events(group_id,private_data,actor,idempotency_key,payload_digest)
+            VALUES (%s,%s,'owner',%s,%s)""",(gid,encrypt({'name':name}),key,digest))
+    return {'status':'saved','group_id':str(gid)}
+
+
+@router.post('/api/v1/finance/wealth-groups/{group_id}/name')
+def rename_wealth_group(group_id:str,payload:dict=Body(...)):
+    gid=uid(group_id);key=uid(payload.get('key'));expected=uid(payload.get('previous'))
+    try:name=group_name(payload.get('name'))
+    except ValueError:raise HTTPException(422,'invalid_group_name') from None
+    digest=fingerprint('wealth-group-name-v1',[gid,name,expected])
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-category-learning'))")
+        if replay(cur,'finance_wealth_group_events',key,digest):return {'status':'saved'}
+        cur.execute('SELECT id FROM finance.finance_wealth_group_events WHERE group_id=%s ORDER BY sequence_no DESC LIMIT 1',(gid,))
+        row=cur.fetchone()
+        if not row:raise HTTPException(404,'group_not_found')
+        if str(row['id'])!=expected:raise HTTPException(409,'group_changed')
+        cur.execute("""INSERT INTO finance.finance_wealth_group_events(group_id,private_data,supersedes_event_id,actor,idempotency_key,payload_digest)
+            VALUES (%s,%s,%s,'owner',%s,%s)""",(gid,encrypt({'name':name}),expected,key,digest))
+    return {'status':'saved'}
+
+
+@router.post('/api/v1/finance/accounts/{account_id}/management')
+def save_account_management(account_id:str,payload:dict=Body(...)):
+    aid=uid(account_id);key=uid(payload.get('key'))
+    gid=uid(payload['group_id']) if payload.get('group_id') else None
+    relation=payload.get('relationship','UNASSIGNED')
+    expected=uid(payload['previous']) if payload.get('previous') else None
+    expected_name=uid(payload['previous_name']) if payload.get('previous_name') else None
+    try:name=normalize_name(payload.get('name'))
+    except ValueError:raise HTTPException(422,'invalid_account_name') from None
+    if not isinstance(relation,str) or relation not in RELATIONSHIPS or (gid is None)!=(relation=='UNASSIGNED'):
+        raise HTTPException(422,'invalid_relationship')
+    digest=fingerprint('account-management-v1',[aid,gid,relation,name,expected,expected_name])
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-category-learning'))")
+        if replay(cur,'finance_account_group_events',key,digest):return {'status':'saved'}
+        # Share the existing name writer's locks; a name/group edit commits together.
+        cur.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',('finance-account-name-key:'+key,))
+        cur.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',('finance-account-name:'+aid,))
+        account=next((a for a in managed_accounts(cur) if a['id']==aid),None)
+        if not account:raise HTTPException(404,'account_not_found')
+        if account['group_event_id']!=expected or account['name_event_id']!=expected_name:
+            raise HTTPException(409,'account_management_changed')
+        if gid:
+            cur.execute('SELECT 1 FROM finance.finance_wealth_groups WHERE id=%s',(gid,))
+            if not cur.fetchone():raise HTTPException(422,'group_not_found')
+        name_event=expected_name
+        if name!=account['display_name']:
+            if replay(cur,'finance_account_name_events',key,digest):raise HTTPException(409,'idempotency_conflict')
+            cur.execute("""INSERT INTO finance.finance_account_name_events(account_id,private_data,supersedes_event_id,actor,idempotency_key,payload_digest)
+                VALUES (%s,%s,%s,'owner',%s,%s) RETURNING id""",(aid,encrypt({'display_name':name}),expected_name,key,digest))
+            name_event=cur.fetchone()['id']
+        cur.execute("""INSERT INTO finance.finance_account_group_events(account_id,group_id,relationship,name_event_id,supersedes_event_id,actor,idempotency_key,payload_digest)
+            VALUES (%s,%s,%s,%s,%s,'owner',%s,%s)""",(aid,gid,relation,name_event,expected,key,digest))
+    return {'status':'saved'}
+
+
+@router.get('/api/v1/finance/accounts/{account_id}/management-history')
+def account_management_history(account_id:str):
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute("""SELECT e.*,n.private_data AS name_data FROM finance.finance_account_group_events e
+            LEFT JOIN finance.finance_account_name_events n ON n.id=e.name_event_id
+            WHERE e.account_id=%s ORDER BY e.sequence_no DESC LIMIT 100""",(uid(account_id),))
+        events=[]
+        for r in cur.fetchall():
+            item={k:v for k,v in serial(r).items() if k not in ('name_data','payload_digest','idempotency_key')}
+            item['display_name']=decrypt(r['name_data'])['display_name'] if r['name_data'] else None
+            events.append(item)
+        return {'events':events}
 
 
 @router.post('/api/v1/finance/accounts/{account_id}/name')
@@ -345,7 +444,11 @@ def category_suggestion_context(cur,seed_id):
     seed=cur.fetchone()
     if not seed or not seed['category_code'] or seed['source_review_id']:
         raise HTTPException(409,'suggestion_needs_manual_example')
-    identity=merchant_identity(decrypt(seed['private_data']),seed['amount'],seed['currency'])
+    seed_payload=decrypt(seed['private_data']);scope=None;seed_group=None
+    if seed['transaction_type']=='TRANSFER':
+        scope=transfer_scope(cur);seed_group=internal_transfer_group(seed['account_id'],seed_payload,scope)
+        if not seed_group:return seed,[],'transfer_group_required'
+    identity=merchant_identity(seed_payload,seed['amount'],seed['currency'])
     if identity is None: return seed,[],'unsupported_pattern'
     cur.execute("""SELECT count(*) AS n FROM finance.v_transactions
         WHERE currency=%s AND (amount<0)=%s""",(seed['currency'],seed['amount']<0))
@@ -356,7 +459,9 @@ def category_suggestion_context(cur,seed_id):
         (seed['currency'],seed['amount']<0))
     candidates=[]
     for row in cur.fetchall():
-        if merchant_identity(decrypt(row['private_data']),row['amount'],row['currency'])!=identity: continue
+        payload=decrypt(row['private_data'])
+        if scope is not None and internal_transfer_group(row['account_id'],payload,scope)!=seed_group:continue
+        if merchant_identity(payload,row['amount'],row['currency'])!=identity: continue
         if row['category_code'] and row['source_review_id'] is None and conflicts(row,seed):
             return seed,[],'conflicting_examples'
         if row['review_id'] is None and row['id']!=seed['id']: candidates.append(row)
