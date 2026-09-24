@@ -40,7 +40,7 @@ def data(group:str="",account:str=""):
     return dict(accounts=selected,groups=groups,group=group,categories=[{'id':'income','code':'inkomen','name':'Inkomsten','active':True,'parent_id':None,'transaction_type':'INCOME'},
         {'id':'groceries','code':'boodschappen','name':'Boodschappen','active':True,'parent_id':None,'transaction_type':'EXPENSE'},
         {'id':'supermarket','code':'boodschappen_supermarkt','name':'Supermarkt','active':True,'parent_id':'groceries','transaction_type':'EXPENSE'}],transaction_types=[{'code':k,'name':v} for k,v in [('UNKNOWN','Nog niet bepaald'),('EXPENSE','Uitgaven'),('INCOME','Inkomsten'),('TRANSFER','Eigen overboeking')]],months=['2026-09'],totals=totals,
-        transactions=rows,imports=[],jobs=[],unresolved=0,page=0,currency='EUR',bank_balances={
+        transactions=rows,imports=[],jobs=[],unresolved=1,page=0,currency='EUR',bank_balances={
             'pending':0,'total':'1234.56' if account else None,'as_of':'2026-09-01','requested_end':'2026-09-23',
             'accounts':[dict(account_id=a['id'],label=a['label'],status='reported' if i<2 else 'unavailable',
                 opening='1500.00',closing='1234.56',opening_date='2026-08-31',closing_date='2026-09-01',
@@ -48,6 +48,19 @@ def data(group:str="",account:str=""):
 
 @app.post('/api/v1/finance/balances/refresh')
 def balances_refresh():return {'status':'pending'}
+
+@app.post('/api/v1/finance/duplicates/reconcile')
+def reference_refresh():return {'status':'pending'}
+
+@app.get('/api/v1/finance/unresolved')
+def duplicate_preview():
+    original=dict(id='00000000-0000-4000-8000-000000000001',booking_date='2026-09-01',amount='-12.34',
+        description='Synthetische betaling openbaar vervoer',counterparty='Demo vervoer',counteraccount='SYNTHETISCH',
+        entry_reference='DEMO-0001',can_link=False,category_code='boodschappen',transaction_type='EXPENSE',
+        confirmed=True,classification_source='MANUAL')
+    return {'records':[dict(id='demo-import',booking_date='2026-09-01',amount='-99.99',
+        description='Synthetisch afwijkend bedrag bij hetzelfde nummer',counterparty='Demo vervoer',
+        entry_reference='DEMO-0001',locator='stmt:1/entry:1',candidates=[original])]}
 
 @app.get('/api/v1/finance/transactions/{tid}/sources')
 def sources(tid:str):return {'sources':[]}

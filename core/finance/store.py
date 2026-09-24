@@ -160,6 +160,8 @@ def import_bytes(conn, path, data):
             accounts[account] = cur.fetchone()['id']
         from core.finance.balances import persist
         persist(cur, batch, parsed)
+        from core.finance import bank_references
+        numbered = []
         unresolved = 0
         for entry in parsed.entries:
             account = accounts[entry.account]
@@ -169,23 +171,33 @@ def import_bytes(conn, path, data):
                 WHERE r.account_id=%s AND r.fingerprint=%s AND r.batch_id<>%s
                 AND b.status IN ('imported','partial','rolled_back') LIMIT 1''',(account,match,batch))
             ambiguous = cur.fetchone() is not None
+            has_reference = bank_references.usable(entry)
             payload = asdict(entry)
             # Account identifier is already in the encrypted account table.
             payload.pop('account')
             cur.execute('''INSERT INTO finance.finance_import_records(batch_id,locator,account_id,fingerprint,private_data,initial_outcome)
                 VALUES (%s,%s,%s,%s,%s,%s) RETURNING *''',
-                (batch,entry.locator,account,match,encrypt(payload),'unresolved' if ambiguous else 'new'))
+                (batch,entry.locator,account,match,encrypt(payload),'unresolved' if ambiguous or has_reference else 'new'))
             record = cur.fetchone()
-            if ambiguous:
+            if has_reference:
+                bank_references.persist(cur, record, entry)
+                numbered.append(record)
+            elif ambiguous:
                 unresolved += 1
             else:
                 publish_record(cur,record,payload)
+        # Index the whole source first: detect conflicting reuse inside one file.
+        for record in numbered:
+            if not bank_references.resolve_record(cur, record):
+                unresolved += 1
+        bank_references.mark_extracted(cur, batch)
         status = 'partial' if unresolved else 'imported'
         event(cur,batch,status,len(parsed.entries),unresolved)
         return {'status':status,'records':len(parsed.entries),'unresolved':unresolved,'replay':False}
 
 
 def enqueue(cur, kind='import'):
+    cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-job-enqueue'))")
     cur.execute('''INSERT INTO finance.finance_ingest_jobs(job_kind) VALUES (%s)
         ON CONFLICT DO NOTHING RETURNING id''',(kind,))
     row = cur.fetchone()

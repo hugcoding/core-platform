@@ -231,6 +231,17 @@ def request_balance_refresh():
     return {'job_id':job,'status':'pending'}
 
 
+@router.post('/api/v1/finance/duplicates/reconcile')
+def request_duplicate_reconciliation():
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-job-enqueue'))")
+        cur.execute("SELECT job_kind FROM finance.finance_ingest_jobs WHERE status IN ('pending','running')")
+        active=cur.fetchone()
+        if active and active['job_kind']!='references':raise HTTPException(409,'finance_job_busy')
+        job=enqueue(cur,'references')
+    return {'job_id':job,'status':'pending'}
+
+
 @router.get('/api/v1/finance/transactions/{transaction_id}/sources')
 def sources(transaction_id:str):
     with connection() as conn, conn.cursor() as cur:
@@ -552,15 +563,37 @@ def approve_category_selection(payload:dict=Body(...)):
 def unresolved():
     with connection() as conn, conn.cursor() as cur:
         cur.execute('''SELECT r.* FROM finance.finance_import_records r JOIN finance.v_import_status b ON b.id=r.batch_id
-            WHERE r.initial_outcome='unresolved' AND b.status='partial'
+            WHERE r.initial_outcome='unresolved' AND b.status IN ('partial','imported')
             AND NOT EXISTS(SELECT 1 FROM finance.finance_duplicate_events e WHERE e.record_id=r.id)
             ORDER BY r.created_at,r.id LIMIT 50''')
         records=cur.fetchall(); result=[]
         for r in records:
-            cur.execute('''SELECT id,booking_date,amount FROM finance.v_transactions
-                WHERE account_id=%s AND fingerprint=%s ORDER BY created_at LIMIT 50''',(r['account_id'],r['fingerprint']))
+            cur.execute('SELECT identity_key,private_data FROM finance.finance_record_bank_references WHERE record_id=%s',(r['id'],))
+            reference=cur.fetchone()
+            identity=reference['identity_key'] if reference else None
+            cur.execute('''WITH candidate_ids AS (
+                SELECT id FROM finance.finance_transactions WHERE account_id=%s AND fingerprint=%s
+                UNION SELECT s.transaction_id FROM finance.finance_record_bank_references x
+                JOIN finance.finance_transaction_sources s ON s.record_id=x.record_id
+                WHERE x.account_id=%s AND x.identity_key=%s)
+                SELECT t.*,k.identity_key,k.private_data AS reference_data FROM candidate_ids c
+                JOIN finance.v_transactions t ON t.id=c.id
+                LEFT JOIN LATERAL (SELECT x.identity_key,x.private_data FROM finance.finance_transaction_sources s
+                    JOIN finance.finance_record_bank_references x ON x.record_id=s.record_id
+                    WHERE s.transaction_id=t.id ORDER BY x.created_at,x.record_id LIMIT 1) k ON true
+                WHERE t.account_id=%s ORDER BY t.created_at,t.id LIMIT 50''',
+                (r['account_id'],r['fingerprint'],r['account_id'],identity,r['account_id']))
+            candidates=[]
+            for candidate in cur.fetchall():
+                candidate_identity=candidate.pop('identity_key')
+                reference_data=candidate.pop('reference_data')
+                candidates.append({**transaction(candidate),
+                    'entry_reference':decrypt(reference_data)['entry_reference'] if reference_data else '',
+                    'can_link':candidate['fingerprint']==r['fingerprint'] and not
+                        (identity and candidate_identity and identity!=candidate_identity)})
             result.append({'id':str(r['id']),'locator':r['locator'],**decrypt(r['private_data']),
-                'candidates':[serial(c) for c in cur.fetchall()]})
+                'entry_reference':decrypt(reference['private_data'])['entry_reference'] if reference else '',
+                'candidates':candidates})
     return {'records':result}
 
 
@@ -582,6 +615,13 @@ def resolve(record_id:str,payload:dict=Body(...)):
             cur.execute('SELECT id FROM finance.v_transactions WHERE id=%s AND account_id=%s AND fingerprint=%s',
                 (tid,record['account_id'],record['fingerprint']))
             if not cur.fetchone(): raise HTTPException(409,'candidate_changed')
+            cur.execute('''SELECT 1 FROM finance.finance_record_bank_references own
+                WHERE own.record_id=%s AND EXISTS(SELECT 1 FROM finance.finance_transaction_sources s
+                    JOIN finance.finance_record_bank_references k ON k.record_id=s.record_id WHERE s.transaction_id=%s)
+                AND NOT EXISTS(SELECT 1 FROM finance.finance_transaction_sources s
+                    JOIN finance.finance_record_bank_references k ON k.record_id=s.record_id
+                    WHERE s.transaction_id=%s AND k.identity_key=own.identity_key)''',(rid,tid,tid))
+            if cur.fetchone():raise HTTPException(409,'bank_reference_differs')
             cur.execute('INSERT INTO finance.finance_transaction_sources(record_id,transaction_id) VALUES (%s,%s)',(rid,tid))
         else: tid=publish_record(cur,record,decrypt(record['private_data']))
         cur.execute('''INSERT INTO finance.finance_duplicate_events(record_id,transaction_id,decision,actor,idempotency_key,payload_digest)

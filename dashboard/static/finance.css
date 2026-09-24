@@ -13,3 +13,5 @@
 .management-section{border-top:1px solid var(--line);padding-top:18px;margin-top:18px}.management-section label,.management-section input,.management-section select{display:block;width:100%;box-sizing:border-box;margin:8px 0}.management-section button{margin-top:12px}.management-section summary{cursor:pointer}#managementStatus{min-height:1.5em}
 
 .bank-balances{margin-bottom:24px}.bank-balances td{vertical-align:top}.bank-balances .section-title{gap:16px;flex-wrap:wrap}
+
+.duplicate-comparison{display:grid;grid-template-columns:1fr 1fr;gap:24px}.duplicate-comparison p{white-space:pre-wrap;overflow-wrap:anywhere}.duplicate-existing{border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:12px}@media(max-width:700px){.duplicate-comparison{grid-template-columns:1fr}}

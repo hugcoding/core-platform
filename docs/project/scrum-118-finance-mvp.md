@@ -76,3 +76,8 @@ Tests gebruiken uitsluitend fictieve data. De aparte PostgreSQL-teststack gebrui
 
 Zie [Banksaldi uit CAMT](finance-bank-balances.md) voor saldoankers, historische
 aanvulling en de NAS-uitrolstappen (dashboard en Finance-worker).
+
+## ASN-transactienummers
+
+Zie [ASN-transactienummers](finance-asn-entry-reference.md) voor automatische
+duplicaatkoppeling, herstel vanuit bestaande bronnen en de NAS-uitrolstappen.
