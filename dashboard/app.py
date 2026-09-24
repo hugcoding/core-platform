@@ -57,7 +57,6 @@ from tools.runtime.personal_migration_executor import (
 
 APP_DIR = Path(__file__).parent
 EXPORT_DIR = Path(os.getenv("EXPORT_DIR", "/exports/migration-inventory"))
-HOST_PROC = Path(os.getenv("HOST_PROC", "/host/proc"))
 STORAGE_PATH = Path(os.getenv("STORAGE_PATH", "/volume1"))
 STARTED = time.monotonic()
 CLASSIFIABLE_WORKSET_STATUSES = {"active", "inactive", "quarantine"}
@@ -309,31 +308,16 @@ def latest_classifier_progress() -> dict[str, Any]:
 
 def host_metrics() -> dict[str, Any]:
     result: dict[str, Any] = {}
+    from core.runtime.capacity import read_snapshot, CapacityUnavailable
     try:
-        lines = (HOST_PROC / "meminfo").read_text().splitlines()
-        values = {line.split(":", 1)[0]: int(line.split()[1]) * 1024 for line in lines}
-        total = values["MemTotal"]
-        if total <= 0:
-            raise ValueError("Invalid memory total")
-        estimated = "MemAvailable" not in values
-        # Older NAS kernels lack MemAvailable. This is an estimate, not
-        # the kernel's watermark-aware available-memory calculation.
-        cache = max(0, values.get("Buffers", 0) + values.get("Cached", 0)
-                    + values.get("SReclaimable", 0) - values.get("Shmem", 0))
-        available = values["MemFree"] + cache if estimated else values["MemAvailable"]
-        available = min(total, max(0, available))
-        result.update(memory_total=total, memory_used=total - available,
-                      memory_available=available, memory_estimated=estimated)
-    except (OSError, KeyError, ValueError, IndexError):
-        pass
+        result.update(read_snapshot())
+        result['capacity_status']='ready'
+    except CapacityUnavailable:
+        result['capacity_status']='capacity_unavailable'
     try:
         usage = shutil.disk_usage(STORAGE_PATH)
         result.update(storage_total=usage.total, storage_used=usage.used, storage_free=usage.free)
     except OSError:
-        pass
-    try:
-        result["load_1m"] = float((HOST_PROC / "loadavg").read_text().split()[0])
-    except (OSError, ValueError):
         pass
     return result
 
@@ -522,6 +506,7 @@ def overview():
         client.ping()
         services.append({"name": "redis", "state": "healthy", "detail": "queue connected"})
         services.extend([
+            heartbeat_service(client, "capacity_worker"),
             heartbeat_service(client, "scanner"),
             heartbeat_service(client, "metadata_worker"),
             heartbeat_service(client, "watcher", intentionally_paused=True),

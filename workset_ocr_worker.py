@@ -16,6 +16,7 @@ from typing import Any
 import psycopg2
 import psycopg2.extras
 import redis
+from core.runtime.capacity import worker_resources as host_resources
 
 from core.integrity.ocr_duplicate_similarity import (
     ANALYZER_VERSION, compare_ocr_artifacts, group_key, metadata_json,
@@ -41,24 +42,6 @@ def db_connect():
     )
 
 
-def available_memory_mib(proc_root: Path = Path("/host/proc")) -> float:
-    values = {}
-    for line in (proc_root / "meminfo").read_text().splitlines():
-        key, value = line.split(":", 1)
-        values[key] = int(value.strip().split()[0])
-    available = values.get("MemAvailable")
-    if available is None:
-        available = sum(values.get(key, 0) for key in ("MemFree", "Buffers", "Cached", "SReclaimable"))
-    return round(available / 1024, 1)
-
-
-def cpu_load_percent(proc_root: Path = Path("/host/proc")) -> float:
-    load_1m = float((proc_root / "loadavg").read_text().split()[0])
-    cpu_count = max(1, sum(
-        line.startswith("processor")
-        for line in (proc_root / "cpuinfo").read_text().splitlines()
-    ))
-    return round(load_1m / cpu_count * 100, 2)
 
 
 def stream_lag(client: redis.Redis) -> int:
@@ -271,9 +254,12 @@ def main() -> int:
     while True:
         try:
             reason = service_gate(client)
-            if reason is None and cpu_load_percent() > CPU_LIMIT_PERCENT:
+            resources=host_resources()
+            if reason is None and not resources.get("capacity_available",1):
+                reason="capacity_unavailable"
+            if reason is None and resources["cpu_load_percent"] > CPU_LIMIT_PERCENT:
                 reason = "waiting_for_cpu"
-            elif reason is None and available_memory_mib() < MIN_AVAILABLE_MIB:
+            elif reason is None and resources["available_memory_mib"] < MIN_AVAILABLE_MIB:
                 reason = "waiting_for_memory"
             elif reason is None and stream_lag(client) > MAX_STREAM_LAG:
                 reason = "core_pipeline_priority"

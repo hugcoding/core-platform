@@ -20,11 +20,11 @@ class ControlledExecutionWorkerTests(unittest.TestCase):
 
     def test_resource_gate_prioritizes_memory_and_core_streams(self):
         self.assertEqual("waiting_for_memory", self.worker.resource_block(
-            {"available_memory_mib": 100, "load_per_cpu": 0.1}, 0))
+            {"available_memory_mib": 100, "cpu_load_percent": 10}, 0))
         self.assertEqual("waiting_for_cpu", self.worker.resource_block(
-            {"available_memory_mib": 9000, "load_per_cpu": 9}, 0))
+            {"available_memory_mib": 9000, "cpu_load_percent": 99}, 0))
         self.assertEqual("core_pipeline_priority", self.worker.resource_block(
-            {"available_memory_mib": 9000, "load_per_cpu": 0.1}, 999999))
+            {"available_memory_mib": 9000, "cpu_load_percent": 10}, 999999))
 
     def test_forward_batch_records_started_and_verified(self):
         item = {"id": "item", "current_status": "queued", "action_type": "migrate_active"}
@@ -69,7 +69,7 @@ class ControlledExecutionWorkerTests(unittest.TestCase):
         item = {"id": "item", "current_status": "queued", "action_type": "migrate_active"}
         with mock.patch.object(self.worker, "batch_items", return_value=[item]), \
              mock.patch.object(self.worker, "latest_batch_status", return_value="started"), \
-             mock.patch.object(self.worker, "host_resources", return_value={"available_memory_mib": 10, "load_per_cpu": 0.1}), \
+             mock.patch.object(self.worker, "host_resources", return_value={"available_memory_mib": 10, "cpu_load_percent": 10}), \
              mock.patch.object(self.worker, "stream_lag", return_value=0), \
              mock.patch.object(self.worker, "append_event") as event:
             self.worker.process_forward(mock.Mock(), {"id": "batch"}, mock.Mock())
@@ -115,7 +115,7 @@ class ControlledExecutionWorkerTests(unittest.TestCase):
                 "action_type": "migrate_active"}
         with mock.patch.object(self.worker, "batch_items", side_effect=[[item], [{**item, "current_status": "blocked"}]]), \
              mock.patch.object(self.worker, "latest_batch_status", return_value="started"), \
-             mock.patch.object(self.worker, "host_resources", return_value={"available_memory_mib": 9000, "load_per_cpu": 0.1}), \
+             mock.patch.object(self.worker, "host_resources", return_value={"available_memory_mib": 9000, "cpu_load_percent": 10}), \
              mock.patch.object(self.worker, "stream_lag", return_value=0), \
              mock.patch.object(self.worker, "start_details", side_effect=self.worker.MigrationSafetyError("source_size_changed")), \
              mock.patch.object(self.worker, "enqueue_source_reinventory", return_value={"reinventory_status": "queued"}) as enqueue, \
