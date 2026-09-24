@@ -158,6 +158,8 @@ def import_bytes(conn, path, data):
                 (identity,encrypt({'iban':account,'label':'Rekening •'+account[-4:]})))
             cur.execute('SELECT id FROM finance.finance_accounts WHERE identity_key=%s',(identity,))
             accounts[account] = cur.fetchone()['id']
+        from core.finance.balances import persist
+        persist(cur, batch, parsed)
         unresolved = 0
         for entry in parsed.entries:
             account = accounts[entry.account]
@@ -183,9 +185,9 @@ def import_bytes(conn, path, data):
         return {'status':status,'records':len(parsed.entries),'unresolved':unresolved,'replay':False}
 
 
-def enqueue(cur):
-    cur.execute('''INSERT INTO finance.finance_ingest_jobs DEFAULT VALUES
-        ON CONFLICT DO NOTHING RETURNING id''')
+def enqueue(cur, kind='import'):
+    cur.execute('''INSERT INTO finance.finance_ingest_jobs(job_kind) VALUES (%s)
+        ON CONFLICT DO NOTHING RETURNING id''',(kind,))
     row = cur.fetchone()
     if not row:
         cur.execute("SELECT id FROM finance.finance_ingest_jobs WHERE status IN ('pending','running')")

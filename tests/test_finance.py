@@ -117,6 +117,9 @@ class IntegrationTests(unittest.TestCase):
             groups_up=Path('database/migrations/20260923_add_finance_wealth_groups.sql').read_text(encoding='utf-8')
             groups_down=Path('database/migrations/rollback/20260923_add_finance_wealth_groups.sql').read_text(encoding='utf-8')
             cur.execute(groups_up);cur.execute(groups_down);cur.execute(groups_up)
+            balances_up=Path('database/migrations/20260923_add_finance_bank_balances.sql').read_text(encoding='utf-8')
+            balances_down=Path('database/migrations/rollback/20260923_add_finance_bank_balances.sql').read_text(encoding='utf-8')
+            cur.execute(balances_up);cur.execute(balances_down);cur.execute(balances_up)
         app=FastAPI();app.middleware('http')(finance_boundary);app.include_router(router)
         cls.client=TestClient(app);cls.client.headers['origin']='http://testserver'
         response=cls.client.post('/api/v1/finance/session',json={'code':'synthetic-access'})
@@ -750,6 +753,61 @@ class IntegrationTests(unittest.TestCase):
             with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20260923_add_finance_wealth_groups.sql').read_text(encoding='utf-8'))
         with self.admin.cursor() as cur:cur.execute('ROLLBACK')
         self.assertEqual(200,self.client.get('/api/v1/finance/account-management').status_code)
+
+
+    def test_26_bank_balances_backfill_replay_scope_and_rollback(self):
+        from tests.test_finance_balances import with_balances
+        from core.finance.balances import backfill_one
+        from core.finance.store import connection
+        import psycopg2
+        source=with_balances(sample(message='balance-legacy',description='BALANCE SYNTHETIC',amount='12.34'))
+        # Simulate an import made before balance extraction existed.
+        with patch('core.finance.balances.persist'):
+            self.import_file(source,'balance-legacy.xml')
+        with self.admin.cursor() as cur:
+            cur.execute("SELECT id FROM finance.finance_accounts WHERE identity_key=%s",(__import__('core.finance.crypto',fromlist=['fingerprint']).fingerprint('account-v1',IBAN),))
+            aid=str(cur.fetchone()[0])
+            cur.execute('SELECT count(*) FROM finance.finance_transactions');before=cur.fetchone()[0]
+        self.assertEqual(1,self.client.get('/api/v1/finance/data').json()['bank_balances']['pending'])
+        with connection(worker=True) as conn:self.assertTrue(backfill_one(conn))
+        with connection(worker=True) as conn:self.assertFalse(backfill_one(conn))
+        data=self.client.get('/api/v1/finance/data',params={'account':aid}).json()['bank_balances']
+        self.assertEqual('7.66',data['total']);self.assertEqual('2026-09-01',data['as_of'])
+        self.assertEqual('20.00',data['accounts'][0]['opening'])
+        self.assertEqual(data,self.client.get('/api/v1/finance/data',params={'account':aid,'category':'uncategorized','transaction_type':'INCOME'}).json()['bank_balances'])
+        historic=self.client.get('/api/v1/finance/data',params={'account':aid,'date_from':'2026-01-01','date_to':'2026-08-30'}).json()['bank_balances']
+        self.assertIsNone(historic['total'])
+        self.assertTrue(self.import_file(source,'balance-copy.xml')['replay'])
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT count(*) FROM finance.finance_transactions');self.assertEqual(before,cur.fetchone()[0])
+            cur.execute('SELECT private_data,batch_id FROM finance.finance_bank_balances')
+            rows=cur.fetchall();self.assertEqual(1,len(rows));self.assertNotIn('7.66',rows[0][0]);batch=str(rows[0][1])
+        for table in ('finance_bank_balances','finance_balance_extractions'):
+            for verb in ('DELETE FROM','TRUNCATE'):
+                with self.assertRaises(psycopg2.Error):
+                    with self.admin.cursor() as cur:cur.execute(verb+' finance.'+table)
+        with self.assertRaises(psycopg2.Error):
+            with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20260923_add_finance_bank_balances.sql').read_text())
+        with self.admin.cursor() as cur:cur.execute('ROLLBACK')
+        self.assertEqual(200,self.client.post('/api/v1/finance/imports/'+batch+'/rollback',json={'confirm':True}).status_code)
+        self.assertIsNone(self.client.get('/api/v1/finance/data',params={'account':aid}).json()['bank_balances']['total'])
+
+    def test_27_balance_snapshot_conflicts_and_refresh_authorization(self):
+        from tests.test_finance_balances import with_balances
+        from core.finance.crypto import fingerprint
+        from core.finance.store import connection
+        from fastapi.testclient import TestClient
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT id FROM finance.finance_accounts WHERE identity_key=%s',(fingerprint('account-v1',IBAN),));aid=str(cur.fetchone()[0])
+        self.import_file(with_balances(sample(message='bank-a',description='BANK A')))
+        self.import_file(with_balances(sample(message='bank-b',description='BANK B'),opening='30.00',closing='17.66'))
+        data=self.client.get('/api/v1/finance/data',params={'account':aid}).json()['bank_balances']
+        self.assertIsNone(data['total']);self.assertEqual('conflict',data['accounts'][0]['status'])
+        outsider=TestClient(self.client.app);outsider.headers['origin']='http://testserver'
+        self.assertEqual(401,outsider.post('/api/v1/finance/balances/refresh',json={}).status_code)
+        self.assertEqual(403,self.client.post('/api/v1/finance/balances/refresh',json={},headers={'origin':'http://other'}).status_code)
+        response=self.client.post('/api/v1/finance/balances/refresh',json={});self.assertEqual(200,response.status_code)
+        self.assertEqual(response.json(),self.client.post('/api/v1/finance/balances/refresh',json={}).json())
 
 
 if __name__=='__main__': unittest.main()

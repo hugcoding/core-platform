@@ -8,6 +8,7 @@ import redis
 from core.finance.privacy import source_root
 from core.finance.store import connection, read_source, import_bytes, ADMISSION_LOCK
 from core.finance.camt import ImportErrorCode
+from core.finance.balances import backfill_one
 from workset_ai_worker import host_resources, stream_lag
 
 STATUS = 'starting'
@@ -51,7 +52,7 @@ def scan(client):
         cursor.execute('SELECT pg_try_advisory_xact_lock(%s) AS acquired',(SINGLE_WORKER_LOCK,))
         if not cursor.fetchone()['acquired']: return
         # A dead process loses its DB lock. Replay every completed file is safe.
-        cursor.execute("SELECT id,attempts FROM finance.finance_ingest_jobs WHERE status IN ('pending','running') ORDER BY requested_at LIMIT 1")
+        cursor.execute("SELECT id,attempts,job_kind FROM finance.finance_ingest_jobs WHERE status IN ('pending','running') ORDER BY requested_at LIMIT 1")
         job=cursor.fetchone()
         if not job: STATUS='idle'; return
         jid=job['id']
@@ -62,6 +63,18 @@ def scan(client):
                 STATUS=reason;set_job(jid,'pending',reason);return
             with connection(worker=True) as conn, conn.cursor() as cur:
                 cur.execute("UPDATE finance.finance_ingest_jobs SET status='running',waiting_reason=NULL,attempts=attempts+1 WHERE id=%s",(jid,))
+            # One stored source per commit, under the same resource/admission gate.
+            while True:
+                with connection(worker=True) as conn, conn.cursor() as cur:
+                    cur.execute('SELECT pg_try_advisory_xact_lock(%s) AS acquired',(ADMISSION_LOCK,))
+                    reason=None if cur.fetchone()['acquired'] else 'controlled_execution_priority'
+                    reason=reason or gate(conn,client)
+                    if reason:
+                        STATUS=reason;set_job(jid,'pending',reason);return
+                    STATUS='processing'
+                    if not backfill_one(conn): break
+            if job['job_kind']=='balances':
+                set_job(jid,'done');STATUS='idle';return
             root=source_root()
             if not root.is_dir() or root.is_symlink(): raise ImportErrorCode('source_root_unavailable')
             paths=[]

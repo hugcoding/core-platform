@@ -210,14 +210,24 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
             WHERE r.initial_outcome='unresolved' AND b.status IN ('partial','imported')
             AND NOT EXISTS(SELECT 1 FROM finance.finance_duplicate_events e WHERE e.record_id=r.id)''')
         unresolved=cur.fetchone()['n']
+        from core.finance.balances import overview as balance_overview
+        bank_balances=balance_overview(cur,[a for a in accounts if not account or a['id']==account],
+                                       str(bounds[1]) if bounds else None)
     return {'accounts':accounts,'groups':groups,'group':group,'categories':categories,'transaction_types':transaction_types,'months':months,'years':sorted({m[:4] for m in months},reverse=True),'totals':totals,'transactions':rows,
-        'imports':imports,'jobs':jobs,'unresolved':unresolved,'page':page,'currency':'EUR','sort':sort,'direction':direction}
+        'imports':imports,'jobs':jobs,'unresolved':unresolved,'page':page,'currency':'EUR','sort':sort,'direction':direction,'bank_balances':bank_balances}
 
 
 @router.post('/api/v1/finance/import')
 def request_import():
     with connection() as conn, conn.cursor() as cur:
         job=enqueue(cur)
+    return {'job_id':job,'status':'pending'}
+
+
+@router.post('/api/v1/finance/balances/refresh')
+def request_balance_refresh():
+    with connection(worker=False) as conn, conn.cursor() as cur:
+        job=enqueue(cur,'balances')
     return {'job_id':job,'status':'pending'}
 
 

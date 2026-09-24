@@ -40,7 +40,14 @@ def data(group:str="",account:str=""):
     return dict(accounts=selected,groups=groups,group=group,categories=[{'id':'income','code':'inkomen','name':'Inkomsten','active':True,'parent_id':None,'transaction_type':'INCOME'},
         {'id':'groceries','code':'boodschappen','name':'Boodschappen','active':True,'parent_id':None,'transaction_type':'EXPENSE'},
         {'id':'supermarket','code':'boodschappen_supermarkt','name':'Supermarkt','active':True,'parent_id':'groceries','transaction_type':'EXPENSE'}],transaction_types=[{'code':k,'name':v} for k,v in [('UNKNOWN','Nog niet bepaald'),('EXPENSE','Uitgaven'),('INCOME','Inkomsten'),('TRANSFER','Eigen overboeking')]],months=['2026-09'],totals=totals,
-        transactions=rows,imports=[],jobs=[],unresolved=0,page=0,currency='EUR')
+        transactions=rows,imports=[],jobs=[],unresolved=0,page=0,currency='EUR',bank_balances={
+            'pending':0,'total':'1234.56' if account else None,'as_of':'2026-09-01','requested_end':'2026-09-23',
+            'accounts':[dict(account_id=a['id'],label=a['label'],status='reported' if i<2 else 'unavailable',
+                opening='1500.00',closing='1234.56',opening_date='2026-08-31',closing_date='2026-09-01',
+                source_id='synthetic-source',locator='stmt:1') for i,a in enumerate(selected) if not account or a['id']==account]})
+
+@app.post('/api/v1/finance/balances/refresh')
+def balances_refresh():return {'status':'pending'}
 
 @app.get('/api/v1/finance/transactions/{tid}/sources')
 def sources(tid:str):return {'sources':[]}
