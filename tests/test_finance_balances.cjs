@@ -18,6 +18,12 @@ function testFinanceBalances(source) {
   assert($('bankBalanceStatus').textContent.includes('Verwerking aangevraagd'),'Pending progress');
   render({accounts:[{status:'conflict',label:'Conflict',closing_date:'2026-09-01'}],total:null});
   assert($('bankBalances').innerHTML.includes('Tegenstrijdige'),'Surface conflicts');
+  render({accounts:[row],total:'80.00',as_of:'2026-09-01',groups:[{id:'g',name:'<Example>',
+    total:'80.00',as_of:'2026-09-01',accounts:[{...row,account_id:'a',group_id:'g'}]}]});
+  assert($('bankBalances').innerHTML.includes('&lt;Example&gt;'),'Escape group name');
+  assert($('bankBalances').innerHTML.includes('data-balance-group="g"'),'Group drilldown');
+  assert($('bankBalances').innerHTML.includes('data-balance-account="a"'),'Account drilldown');
+
 }
 if(typeof module!=='undefined') {
   module.exports=testFinanceBalances;

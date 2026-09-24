@@ -15,3 +15,5 @@
 .bank-balances{margin-bottom:24px}.bank-balances td{vertical-align:top}.bank-balances .section-title{gap:16px;flex-wrap:wrap}
 
 .duplicate-comparison{display:grid;grid-template-columns:1fr 1fr;gap:24px}.duplicate-comparison p{white-space:pre-wrap;overflow-wrap:anywhere}.duplicate-existing{border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:12px}@media(max-width:700px){.duplicate-comparison{grid-template-columns:1fr}}
+
+.balance-group{background:#102c3a}.balance-group th,.balance-group td{border-top:2px solid #31576c}.balance-link{background:transparent;border:0;color:var(--cyan);text-align:left;cursor:pointer}.balance-link:hover{text-decoration:underline}.balance-link:focus-visible{outline:2px solid var(--cyan)}#transactions[aria-busy="true"]{opacity:.5}#filterStatus{min-height:1.4em}

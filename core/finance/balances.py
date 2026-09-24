@@ -44,13 +44,13 @@ def backfill_one(conn):
         return True
 
 
-def summarize(accounts, snapshots, end=None, pending=0):
+def summarize(accounts, snapshots, end=None, pending=0, groups=None):
     rows = []
     for account in accounts:
         candidates = [s for s in snapshots if s['account_id'] == account['id']
                       and s.get('closing_date') and (not end or s['closing_date'] <= end)
                       and (not s.get('opening_date') or s['opening_date'] <= s['closing_date'])]
-        item = {'account_id': account['id'], 'label': account['label'], 'status': 'unavailable'}
+        item = {'account_id': account['id'], 'label': account['label'], 'group_id': account.get('group_id'), 'status': 'unavailable'}
         if candidates:
             latest = max(s['closing_date'] for s in candidates)
             at_date = [s for s in candidates if s['closing_date'] == latest]
@@ -62,12 +62,20 @@ def summarize(accounts, snapshots, end=None, pending=0):
         rows.append(item)
     complete = bool(rows) and not pending and all(r['status'] == 'reported' for r in rows)
     same_date = complete and len({r['closing_date'] for r in rows}) == 1
-    return {'accounts': rows, 'pending': pending, 'as_of': rows[0]['closing_date'] if same_date else None,
+    result = {'accounts': rows, 'pending': pending, 'as_of': rows[0]['closing_date'] if same_date else None,
             'total': format(sum(Decimal(r['closing']) for r in rows), '.2f') if same_date else None,
             'requested_end': end}
+    if groups is not None:
+        result['groups'] = []
+        for group in [*groups, {'id': None, 'name': 'Nog indelen'}]:
+            members = [a for a in accounts if a.get('group_id') == group['id']]
+            if members:
+                result['groups'].append({**summarize(members, snapshots, end, pending),
+                                         'id': group['id'], 'name': group['name']})
+    return result
 
 
-def overview(cur, accounts, end=None):
+def overview(cur, accounts, end=None, groups=None):
     cur.execute('''SELECT s.account_id,s.locator,s.private_data,b.source_id
         FROM finance.finance_bank_balances s JOIN finance.v_import_status b ON b.id=s.batch_id
         WHERE b.status IN ('imported','partial') AND s.account_id=ANY(%s::uuid[])''',
@@ -76,4 +84,4 @@ def overview(cur, accounts, end=None):
                   'source_id': str(r['source_id']), 'locator': r['locator']} for r in cur.fetchall()]
     cur.execute('''SELECT count(*) AS n FROM finance.v_import_status b WHERE b.status IN ('imported','partial')
         AND NOT EXISTS(SELECT 1 FROM finance.finance_balance_extractions e WHERE e.batch_id=b.id)''')
-    return summarize(accounts, snapshots, end, cur.fetchone()['n'])
+    return summarize(accounts, snapshots, end, cur.fetchone()['n'], groups)
