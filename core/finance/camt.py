@@ -82,6 +82,7 @@ class Entry:
     counteraccount: str
     references: tuple
     details: tuple
+    entry_reference: str = ''
 
 
 @dataclass(frozen=True)
@@ -154,7 +155,8 @@ def parse(data: bytes) -> Parsed:
                 raise ImportErrorCode('field_too_large')
             entries.append(Entry(f'stmt:{si}/entry:{ei}', account,
                 bank_date(entry, 'BookgDt/Dt'), bank_date(entry, 'ValDt/Dt', False),
-                format(amount, '.2f'), currency, *values, tuple(references), tuple(detail_values)))
+                format(amount, '.2f'), currency, *values, tuple(references), tuple(detail_values),
+                text(entry, 'NtryRef')))
         if set(balances) == {'OPBD','CLBD'}:
             if balances['OPBD'] + total != balances['CLBD']:
                 raise ImportErrorCode('balance_mismatch')

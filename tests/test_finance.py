@@ -120,6 +120,9 @@ class IntegrationTests(unittest.TestCase):
             balances_up=Path('database/migrations/20260923_add_finance_bank_balances.sql').read_text(encoding='utf-8')
             balances_down=Path('database/migrations/rollback/20260923_add_finance_bank_balances.sql').read_text(encoding='utf-8')
             cur.execute(balances_up);cur.execute(balances_down);cur.execute(balances_up)
+            refs_up=Path('database/migrations/20260924_add_finance_bank_references.sql').read_text(encoding='utf-8')
+            refs_down=Path('database/migrations/rollback/20260924_add_finance_bank_references.sql').read_text(encoding='utf-8')
+            cur.execute(refs_up);cur.execute(refs_down);cur.execute(refs_up)
         app=FastAPI();app.middleware('http')(finance_boundary);app.include_router(router)
         cls.client=TestClient(app);cls.client.headers['origin']='http://testserver'
         response=cls.client.post('/api/v1/finance/session',json={'code':'synthetic-access'})
@@ -808,6 +811,144 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(403,self.client.post('/api/v1/finance/balances/refresh',json={},headers={'origin':'http://other'}).status_code)
         response=self.client.post('/api/v1/finance/balances/refresh',json={});self.assertEqual(200,response.status_code)
         self.assertEqual(response.json(),self.client.post('/api/v1/finance/balances/refresh',json={}).json())
+
+
+    def test_28_asn_number_is_primary_duplicate_key(self):
+        from tests.test_finance_bank_references import numbered,account
+        from core.finance.crypto import fingerprint
+        source=numbered(description='NUMBERED SYNTHETIC')
+        first=self.import_file(source)
+        self.assertEqual('imported',first['status'])
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results=list(pool.map(lambda i:self.import_file(numbered(message='download-'+str(i),description='NUMBERED SYNTHETIC')),range(2)))
+        self.assertTrue(all(r['unresolved']==0 for r in results))
+        self.assertTrue(self.import_file(source)['replay'])
+        # Same amount/date/text, DIFFERENT bank number really is a second payment.
+        self.assertEqual(0,self.import_file(numbered(ref='SYNTHETIC-002',description='NUMBERED SYNTHETIC'))['unresolved'])
+        # Same number on another account must not collapse across accounts.
+        self.assertEqual(0,self.import_file(numbered(n=2,description='NUMBERED SYNTHETIC'))['unresolved'])
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT id FROM finance.finance_accounts WHERE identity_key=%s',(fingerprint('account-v1',account()),));aid=str(cur.fetchone()[0])
+            cur.execute('SELECT count(*) FROM finance.finance_transactions WHERE account_id=%s',(aid,));self.assertEqual(2,cur.fetchone()[0])
+            cur.execute("SELECT count(*) FROM finance.finance_duplicate_events WHERE actor='asn-ntryref-v1' AND decision='same'");self.assertEqual(2,cur.fetchone()[0])
+            cur.execute('SELECT private_data FROM finance.finance_record_bank_references');self.assertTrue(all('SYNTHETIC' not in r[0] for r in cur.fetchall()))
+        data=self.client.get('/api/v1/finance/data',params={'account':aid}).json()
+        self.assertEqual('2',data['totals']['total'])
+
+    def test_29_conflicting_ids_stay_visible_with_original_payment(self):
+        from tests.test_finance_bank_references import numbered
+        result=self.import_file(numbered(message='conflicting-download',description='NUMBERED SYNTHETIC',amount='99.99'))
+        self.assertEqual(1,result['unresolved'])
+        pending=self.client.get('/api/v1/finance/unresolved');self.assertEqual(200,pending.status_code)
+        row=next(r for r in pending.json()['records'] if r.get('entry_reference')=='SYNTHETIC-001')
+        self.assertEqual('NUMBERED SYNTHETIC',row['candidates'][0]['description'])
+        self.assertEqual('-12.34',row['candidates'][0]['amount'])
+        self.assertEqual('SYNTHETIC-001',row['candidates'][0]['entry_reference'])
+        self.assertFalse(row['candidates'][0]['can_link'])
+        self.assertNotIn('private_data',row['candidates'][0])
+        self.assertNotIn('identity_key',row['candidates'][0])
+        result=self.import_file(numbered(message='conflict-again',description='NUMBERED SYNTHETIC'))
+        self.assertEqual(1,result['unresolved']) # Historical conflict is not silently ignored.
+
+    def test_30_historical_reconciliation_without_reimport_and_resource_gate(self):
+        from dataclasses import asdict
+        from unittest.mock import MagicMock
+        from tests.test_finance_bank_references import numbered,account
+        from core.finance.store import connection
+        from core.finance.crypto import fingerprint
+        import finance_worker
+        # Simulate the previous importer: no indexed references or reference in payload.
+        with patch('core.finance.bank_references.usable',return_value=False),patch('core.finance.bank_references.mark_extracted'),patch('core.finance.store.asdict',side_effect=lambda e:{k:v for k,v in asdict(e).items() if k!='entry_reference'}):
+            self.import_file(numbered(ref='OLD-001',n=3,description='HISTORICAL SYNTHETIC'))
+            overlap=self.import_file(numbered(ref='OLD-001',n=3,description='HISTORICAL SYNTHETIC',message='overlap'))
+            distinct=self.import_file(numbered(ref='OLD-002',n=3,description='HISTORICAL SYNTHETIC',message='second-real-payment'))
+        self.assertEqual(1,overlap['unresolved']);self.assertEqual(1,distinct['unresolved'])
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT id FROM finance.finance_accounts WHERE identity_key=%s',(fingerprint('account-v1',account(3)),));aid=str(cur.fetchone()[0])
+            cur.execute('SELECT count(*) FROM finance.finance_import_batches');batches=cur.fetchone()[0]
+            cur.execute('SELECT count(*) FROM finance.finance_source_documents');sources=cur.fetchone()[0]
+            # Finish the unrelated synthetic balance request from test 27.
+            cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE status IN ('pending','running')")
+        response=self.client.post('/api/v1/finance/duplicates/reconcile',json={});self.assertEqual(200,response.status_code)
+        jid=response.json()['job_id']
+        self.assertEqual(jid,self.client.post('/api/v1/finance/duplicates/reconcile',json={}).json()['job_id'])
+        with patch('finance_worker.gate',return_value='controlled_execution_priority'),patch('finance_worker.source_root',side_effect=AssertionError('No filesystem import allowed')):
+            finance_worker.scan(MagicMock())
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT status,waiting_reason FROM finance.finance_ingest_jobs WHERE id=%s',(jid,));self.assertEqual(('pending','controlled_execution_priority'),cur.fetchone())
+            cur.execute('SELECT count(*) FROM finance.finance_transactions WHERE account_id=%s',(aid,));self.assertEqual(1,cur.fetchone()[0])
+        with patch('finance_worker.gate',return_value=None),patch('finance_worker.source_root',side_effect=AssertionError('No filesystem import allowed')):
+            finance_worker.scan(MagicMock())
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT status,error_code FROM finance.finance_ingest_jobs WHERE id=%s',(jid,));self.assertEqual(('done',None),cur.fetchone())
+            cur.execute('SELECT count(*) FROM finance.finance_transactions WHERE account_id=%s',(aid,));self.assertEqual(2,cur.fetchone()[0])
+            cur.execute('SELECT count(*) FROM finance.finance_import_batches');self.assertEqual(batches,cur.fetchone()[0])
+            cur.execute('SELECT count(*) FROM finance.finance_source_documents');self.assertEqual(sources,cur.fetchone()[0])
+            cur.execute("SELECT count(*) FROM finance.finance_import_records r WHERE r.account_id=%s AND r.initial_outcome='unresolved' AND NOT EXISTS(SELECT 1 FROM finance.finance_duplicate_events d WHERE d.record_id=r.id)",(aid,));self.assertEqual(0,cur.fetchone()[0])
+            cur.execute('SELECT count(*) FROM finance.finance_duplicate_events');decisions=cur.fetchone()[0]
+        # Re-run remains idempotent, including still unresolved conflicts elsewhere.
+        self.client.post('/api/v1/finance/duplicates/reconcile',json={})
+        with patch('finance_worker.gate',return_value=None),patch('finance_worker.source_root',side_effect=AssertionError('No filesystem import allowed')):
+            finance_worker.scan(MagicMock())
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT count(*) FROM finance.finance_duplicate_events');self.assertEqual(decisions,cur.fetchone()[0])
+
+    def test_31_reference_evidence_auth_constraints_and_rollback(self):
+        import psycopg2
+        from fastapi.testclient import TestClient
+        from core.finance.store import connection
+        outsider=TestClient(self.client.app);outsider.headers['origin']='http://testserver'
+        self.assertEqual(401,outsider.post('/api/v1/finance/duplicates/reconcile',json={}).status_code)
+        self.assertEqual(403,self.client.post('/api/v1/finance/duplicates/reconcile',json={},headers={'origin':'http://other'}).status_code)
+        for table in ('finance_record_bank_references','finance_reference_extractions'):
+            for sql in ('DELETE FROM finance.'+table,'TRUNCATE finance.'+table):
+                with self.assertRaises(psycopg2.Error):
+                    with self.admin.cursor() as cur:cur.execute(sql)
+        with self.assertRaises(psycopg2.Error):
+            with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20260924_add_finance_bank_references.sql').read_text())
+        with self.admin.cursor() as cur:cur.execute('ROLLBACK')
+        self.assertEqual(200,self.client.get('/api/v1/finance/data').status_code)
+
+
+    def test_32_manual_distinct_decisions_are_never_rewritten(self):
+        from tests.test_finance_bank_references import numbered,account
+        from core.finance.crypto import fingerprint
+        from core.finance.store import connection
+        from core.finance.bank_references import backfill_one,reconcile_chunk
+        with patch('core.finance.bank_references.usable',return_value=False),patch('core.finance.bank_references.mark_extracted'):
+            self.import_file(numbered(ref='MANUAL-001',n=4,description='MANUAL SYNTHETIC'))
+            self.import_file(numbered(ref='MANUAL-001',n=4,description='MANUAL SYNTHETIC',message='second'))
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT id FROM finance.finance_accounts WHERE identity_key=%s',(fingerprint('account-v1',account(4)),));aid=str(cur.fetchone()[0])
+            cur.execute("SELECT id FROM finance.finance_import_records WHERE account_id=%s AND initial_outcome='unresolved'",(aid,));rid=str(cur.fetchone()[0])
+        response=self.client.post('/api/v1/finance/unresolved/'+rid,json={'key':str(uuid.uuid4()),'decision':'distinct'})
+        self.assertEqual(200,response.status_code)
+        while True:
+            with connection(worker=True) as conn:more=backfill_one(conn)
+            if not more:break
+        incoming=self.import_file(numbered(ref='MANUAL-001',n=4,description='MANUAL SYNTHETIC',message='third'))
+        self.assertEqual(1,incoming['unresolved'])
+        after=None
+        while True:
+            with connection(worker=True) as conn:after=reconcile_chunk(conn,after,limit=1)
+            if after is None:break
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT count(*) FROM finance.finance_transactions WHERE account_id=%s',(aid,));self.assertEqual(2,cur.fetchone()[0])
+            cur.execute('SELECT actor,decision FROM finance.finance_duplicate_events WHERE record_id=%s',(rid,));self.assertEqual(('owner','distinct'),cur.fetchone())
+
+    def test_33_rolled_back_evidence_can_link_again_without_duplicate_booking(self):
+        from tests.test_finance_bank_references import numbered,account
+        from core.finance.crypto import fingerprint
+        self.import_file(numbered(ref='ROLLBACK-001',n=5,description='ROLLBACK SYNTHETIC'))
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT id FROM finance.finance_accounts WHERE identity_key=%s',(fingerprint('account-v1',account(5)),));aid=str(cur.fetchone()[0])
+            cur.execute('SELECT batch_id FROM finance.finance_import_records WHERE account_id=%s',(aid,));batch=str(cur.fetchone()[0])
+        self.assertEqual(200,self.client.post('/api/v1/finance/imports/'+batch+'/rollback',json={'confirm':True}).status_code)
+        self.assertEqual('0',self.client.get('/api/v1/finance/data',params={'account':aid}).json()['totals']['total'])
+        self.assertEqual(0,self.import_file(numbered(ref='ROLLBACK-001',n=5,description='ROLLBACK SYNTHETIC',message='another-source'))['unresolved'])
+        self.assertEqual('1',self.client.get('/api/v1/finance/data',params={'account':aid}).json()['totals']['total'])
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT count(*) FROM finance.finance_transactions WHERE account_id=%s',(aid,));self.assertEqual(1,cur.fetchone()[0])
 
 
 if __name__=='__main__': unittest.main()

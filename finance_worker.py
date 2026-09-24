@@ -9,6 +9,7 @@ from core.finance.privacy import source_root
 from core.finance.store import connection, read_source, import_bytes, ADMISSION_LOCK
 from core.finance.camt import ImportErrorCode
 from core.finance.balances import backfill_one
+from core.finance.bank_references import backfill_one as reference_backfill, reconcile_chunk
 from workset_ai_worker import host_resources, stream_lag
 
 STATUS = 'starting'
@@ -63,17 +64,33 @@ def scan(client):
                 STATUS=reason;set_job(jid,'pending',reason);return
             with connection(worker=True) as conn, conn.cursor() as cur:
                 cur.execute("UPDATE finance.finance_ingest_jobs SET status='running',waiting_reason=NULL,attempts=attempts+1 WHERE id=%s",(jid,))
-            # One stored source per commit, under the same resource/admission gate.
-            while True:
+            def admitted(step):
+                global STATUS
                 with connection(worker=True) as conn, conn.cursor() as cur:
                     cur.execute('SELECT pg_try_advisory_xact_lock(%s) AS acquired',(ADMISSION_LOCK,))
                     reason=None if cur.fetchone()['acquired'] else 'controlled_execution_priority'
                     reason=reason or gate(conn,client)
                     if reason:
-                        STATUS=reason;set_job(jid,'pending',reason);return
+                        STATUS=reason;set_job(jid,'pending',reason);return False,None
                     STATUS='processing'
-                    if not backfill_one(conn): break
-            if job['job_kind']=='balances':
+                    return True,step(conn)
+            # Every source/chunk commits separately and rechecks runtime pressure.
+            if job['job_kind'] in ('import','references'):
+                while True:
+                    allowed,more=admitted(reference_backfill)
+                    if not allowed:return
+                    if not more:break
+                after=None
+                while True:
+                    allowed,after=admitted(lambda conn:reconcile_chunk(conn,after))
+                    if not allowed:return
+                    if after is None:break
+            if job['job_kind']!='references':
+                while True:
+                    allowed,more=admitted(backfill_one)
+                    if not allowed:return
+                    if not more:break
+            if job['job_kind'] in ('balances','references'):
                 set_job(jid,'done');STATUS='idle';return
             root=source_root()
             if not root.is_dir() or root.is_symlink(): raise ImportErrorCode('source_root_unavailable')
