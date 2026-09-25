@@ -57,6 +57,18 @@ class LocalClassificationTests(unittest.TestCase):
         self.assertNotIn('@',result['description'])
         self.assertFalse(any(c.isdigit() for c in result['description']))
 
+    def test_ah_card_payment_reuses_manual_category_without_llm(self):
+        target = self.target('NLTEST000002>AH BOUWENS>TESTSTAD')
+        example = dict(identity=identity({'description':'NLTEST000001>ALBERT HEIJN BOUWENS>TESTSTAD'},-15,'EUR'),
+                       review_id='synthetic-owner-review',transaction_type='EXPENSE',category_code='boodschappen',
+                       subcategory_code='supermarkt',merchant_id=None)
+        categories=[dict(id='shop',code='boodschappen',parent_id=None,transaction_type='EXPENSE',name='Boodschappen'),
+                    dict(id='super',code='supermarkt',parent_id='shop',transaction_type='EXPENSE',name='Supermarkt')]
+        result,infer=self.call({},target=target,examples=[example],categories=categories)
+        infer.assert_not_called()
+        self.assertEqual(('MERCHANT','boodschappen','supermarkt'),
+                         (result['source'],result['category_code'],result['subcategory_code']))
+
     def test_only_literal_local_addresses_no_proxy_or_redirect(self):
         for endpoint in ('https://api.example.com/v1','http://8.8.8.8/v1','http://169.254.169.254',
                          'http://192.168.1.2@8.8.8.8','http://localhost/v1','http://192.168.1.2/v1?secret=x'):

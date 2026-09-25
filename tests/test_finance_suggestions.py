@@ -41,5 +41,26 @@ class SuggestionIdentityTests(unittest.TestCase):
         for name in ('Mollie','Adyen Payments','Onbekende tegenpartij','Apple Pay'):
             self.assertIsNone(identity({'counterparty':name,'counteraccount':'TEST123'},-1,'EUR'))
 
+    def test_asn_card_prefix_and_ah_bouwens_share_existing_merchant_identity(self):
+        samples = [
+            'NLTEST000001>ALBERT HEIJN BOUWENS>TESTSTAD 01.01.2020 MCC:5411 Apple Pay',
+            'NLTEST000999>AH BOUWENS>TESTSTAD 31.12.2022 MCC:5411 Betaalpas',
+            '  nltest000333 > Albert Heijn Bouwens > TESTSTAD',
+            'Albert Heijn Bouwens', 'AH Bouwens',
+        ]
+        expected = identity({'description':'Albert Heijn'},-1,'EUR')
+        for text in samples:
+            with self.subTest(text=text):
+                self.assertEqual('Albert Heijn',recognized_merchant({'description':text}))
+                self.assertEqual(expected,identity({'description':text},-49,'EUR'))
+                self.assertNotEqual(expected,identity({'description':text},49,'EUR'))
+
+    def test_card_prefix_does_not_enable_arbitrary_merchant_mentions(self):
+        for text in ('Invoice mentioning Albert Heijn Bouwens', 'Bouwens bouwbedrijf',
+                     'NLTEST000001>Invoice mentioning AH Bouwens', 'NLTEST000001>MCC:5411 Apple Pay',
+                     'NLTEST000001>AH Bouwensberg', 'Invoice>Albert Heijn Bouwens'):
+            self.assertIsNone(recognized_merchant({'description':text}))
+        self.assertIsNone(recognized_merchant({'description':'NLTEST000001>AH BOUWENS','details':[{},{}]}))
+
 
 if __name__=='__main__': unittest.main()
