@@ -43,7 +43,8 @@ def heartbeat(client):
 def set_job(job,status,reason=None,error=None):
     with connection(worker=True) as conn, conn.cursor() as cur:
         cur.execute('''UPDATE finance.finance_ingest_jobs SET status=%s,waiting_reason=%s,error_code=%s,
-            finished_at=CASE WHEN %s IN ('done','failed') THEN now() ELSE NULL END WHERE id=%s''',
+            finished_at=CASE WHEN %s IN ('done','failed') THEN now() ELSE NULL END WHERE id=%s
+            AND (job_kind<>'categorize' OR status IN ('pending','running'))''',
             (status,reason,error,status,job))
 
 
@@ -74,6 +75,18 @@ def scan(client):
                         STATUS=reason;set_job(jid,'pending',reason);return False,None
                     STATUS='processing'
                     return True,step(conn)
+            if job['job_kind']=='categorize':
+                from core.finance.local_classification import step
+                cache={}
+                def categorize_one(conn):
+                    global STATUS
+                    STATUS='categorizing'
+                    return step(conn,jid,cache)
+                while True:
+                    allowed,more=admitted(categorize_one)
+                    if not allowed:return
+                    if not more:break
+                set_job(jid,'done');STATUS='idle';return
             # Every source/chunk commits separately and rechecks runtime pressure.
             if job['job_kind'] in ('import','references'):
                 while True:

@@ -123,6 +123,9 @@ class IntegrationTests(unittest.TestCase):
             refs_up=Path('database/migrations/20260924_add_finance_bank_references.sql').read_text(encoding='utf-8')
             refs_down=Path('database/migrations/rollback/20260924_add_finance_bank_references.sql').read_text(encoding='utf-8')
             cur.execute(refs_up);cur.execute(refs_down);cur.execute(refs_up)
+            local_up=Path('database/migrations/20260925_add_finance_local_classification.sql').read_text()
+            local_down=Path('database/migrations/rollback/20260925_add_finance_local_classification.sql').read_text()
+            cur.execute(local_up);cur.execute(local_down);cur.execute(local_up)
         app=FastAPI();app.middleware('http')(finance_boundary);app.include_router(router)
         cls.client=TestClient(app);cls.client.headers['origin']='http://testserver'
         response=cls.client.post('/api/v1/finance/session',json={'code':'synthetic-access'})
@@ -137,6 +140,95 @@ class IntegrationTests(unittest.TestCase):
         path=self.root/(name or str(uuid.uuid4())+'.xml')
         with connection(worker=True) as conn:
             return import_bytes(conn,path,data)
+
+    def test_91_local_categorization_owner_priority_learning_and_stop(self):
+        from core.finance.store import connection,enqueue
+        from core.finance.local_classification import step,VERSION
+        from tests.test_finance_bank_references import numbered,account
+        from unittest.mock import Mock
+        import psycopg2
+        party='Synthetic local merchant '+uuid.uuid4().hex
+        def new_transaction():
+            data=numbered(ref=str(uuid.uuid4()),message=str(uuid.uuid4()),n=99111)
+            data=data.replace(b'Synthetische winkel',party.encode()).replace(b'</RltdPties>',
+                ('<CdtrAcct><Id><IBAN>'+account(99112)+'</IBAN></Id></CdtrAcct></RltdPties>').encode())
+            self.import_file(data)
+            with self.admin.cursor() as cur:
+                cur.execute('SELECT id FROM finance.finance_transactions ORDER BY created_at DESC,id LIMIT 1')
+                return str(cur.fetchone()[0])
+        def queue(tid):
+            with self.admin.cursor() as cur:
+                cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE status IN ('pending','running')")
+            with connection() as conn,conn.cursor() as cur:
+                jid=enqueue(cur,'categorize')
+                cur.execute('INSERT INTO finance.finance_categorization_targets(job_id,transaction_id) VALUES (%s,%s)',(jid,tid))
+                return jid
+        def visible(tid):
+            with connection() as conn,conn.cursor() as cur:
+                cur.execute('SELECT * FROM finance.v_transactions WHERE id=%s',(tid,));return cur.fetchone()
+        def manual(tid,category='boodschappen'):
+            before=visible(tid)
+            response=self.client.post('/api/v1/finance/transactions/'+tid+'/classification',json={
+                'key':str(uuid.uuid4()),'previous':str(before['review_id']) if before['review_id'] else None,
+                'category':category,'transaction_type':'EXPENSE'})
+            self.assertEqual(200,response.status_code,response.text)
+        tid=new_transaction();same_context=new_transaction();jid=queue(tid)
+        with connection() as conn,conn.cursor() as cur:cur.execute('INSERT INTO finance.finance_categorization_targets(job_id,transaction_id) VALUES (%s,%s)',(jid,same_context))
+        cache={}
+        infer=Mock(return_value={'category':'vervoer','subcategory':None,'confidence':.9})
+        with connection(worker=True) as conn:self.assertTrue(step(conn,jid,cache,infer))
+        with connection(worker=True) as conn:self.assertTrue(step(conn,jid,cache,infer))
+        with connection(worker=True) as conn:self.assertFalse(step(conn,jid,cache,infer))
+        self.assertEqual(1,infer.call_count)
+        row=visible(tid);self.assertEqual('AI',row['classification_source']);self.assertFalse(row['confirmed'])
+        manual(tid);jid=queue(tid);infer.reset_mock()
+        with connection(worker=True) as conn:step(conn,jid,{},infer)
+        infer.assert_not_called();self.assertEqual('boodschappen',visible(tid)['category_code'])
+        with self.assertRaises(psycopg2.Error):
+            with connection(worker=True) as conn,conn.cursor() as cur:
+                cur.execute("""INSERT INTO finance.finance_review_events(transaction_id,category_code,transaction_type,
+                    classification_source,confirmed,actor,idempotency_key,payload_digest,model_version,supersedes_event_id)
+                    VALUES (%s,'vervoer','EXPENSE','AI',false,'finance-local',%s,'synthetic',%s,%s)""",
+                    (tid,str(uuid.uuid4()),VERSION+':synthetic',visible(tid)['review_id']))
+        other=new_transaction();jid=queue(other)
+        with connection(worker=True) as conn:step(conn,jid,{},infer)
+        infer.assert_not_called();row=visible(other)
+        self.assertEqual('MERCHANT',row['classification_source']);self.assertEqual('boodschappen',row['category_code'])
+        self.assertEqual(visible(tid)['review_id'],row['rule_review_id'])
+        # Remove the matching signal so the LLM path exercises concurrent owner review.
+        target_data=numbered(ref=str(uuid.uuid4()),message=str(uuid.uuid4()),n=99114,description='Synthetic unmatched purchase')
+        self.import_file(target_data)
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT id FROM finance.finance_transactions ORDER BY created_at DESC,id LIMIT 1');racing=str(cur.fetchone()[0])
+        jid=queue(racing)
+        def owner_during_inference(request):
+            manual(racing)
+            return {'category':'vervoer','confidence':.9}
+        with connection(worker=True) as conn:step(conn,jid,{},owner_during_inference)
+        with connection(worker=True) as conn:step(conn,jid,{},infer)
+        self.assertEqual('MANUAL',visible(racing)['classification_source'])
+        self.import_file(numbered(ref=str(uuid.uuid4()),message=str(uuid.uuid4()),n=99115,description='Synthetic cancellation purchase'))
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT id FROM finance.finance_transactions ORDER BY created_at DESC,id LIMIT 1');cancelled=str(cur.fetchone()[0])
+        jid=queue(cancelled)
+        def stop_during_inference(request):
+            self.assertEqual(200,self.client.post('/api/v1/finance/categorization/'+jid+'/stop',json={}).status_code)
+            return {'category':'vervoer','confidence':.9}
+        with connection(worker=True) as conn:self.assertFalse(step(conn,jid,{},stop_during_inference))
+        self.assertIsNone(visible(cancelled)['review_id'])
+        # Queue endpoint is idempotent while open; stopping prevents any further publication.
+        with self.admin.cursor() as cur:cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE status IN ('pending','running')")
+        first=self.client.post('/api/v1/finance/categorization',json={})
+        self.assertEqual(200,first.status_code,first.text);jid=first.json()['job_id']
+        self.assertEqual(jid,self.client.post('/api/v1/finance/categorization',json={}).json()['job_id'])
+        self.assertEqual(200,self.client.post('/api/v1/finance/categorization/'+jid+'/stop',json={}).status_code)
+        with connection(worker=True) as conn:self.assertFalse(step(conn,jid,{},infer))
+        with self.assertRaises(psycopg2.Error):
+            with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20260925_add_finance_local_classification.sql').read_text())
+        with self.admin.cursor() as cur:cur.execute('ROLLBACK')
+        for table in ('finance_categorization_targets','finance_categorization_results'):
+            with self.assertRaises(psycopg2.Error):
+                with self.admin.cursor() as cur:cur.execute('DELETE FROM finance.'+table)
 
     def test_90_overview_import_dates_survive_rollback_and_duplicates(self):
         from tests.test_finance_bank_references import numbered
