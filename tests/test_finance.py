@@ -138,6 +138,26 @@ class IntegrationTests(unittest.TestCase):
         with connection(worker=True) as conn:
             return import_bytes(conn,path,data)
 
+    def test_90_overview_import_dates_survive_rollback_and_duplicates(self):
+        from tests.test_finance_bank_references import numbered
+        marker=str(uuid.uuid4())
+        self.import_file(numbered(ref=marker,message=marker,n=98765))
+        before=self.client.get('/api/v1/finance/data').json()
+        batch=before['imports'][0]
+        self.assertIsNotNone(batch['imported_at'])
+        self.assertIsNone(batch['rolled_back_at'])
+        self.assertEqual('2026-09-01',batch['last_transaction_date'])
+        account=before['accounts'][-1]
+        self.assertIn('2026-09',before['periods_by_account'][account['id']])
+        self.import_file(numbered(ref=marker,message=marker+'-copy',n=98765))
+        duplicate=self.client.get('/api/v1/finance/data').json()['imports'][0]
+        self.assertEqual('2026-09-01',duplicate['last_transaction_date'])
+        self.assertEqual(200,self.client.post('/api/v1/finance/imports/'+duplicate['id']+'/rollback',json={'confirm':True}).status_code)
+        after=next(b for b in self.client.get('/api/v1/finance/data').json()['imports'] if b['id']==duplicate['id'])
+        self.assertIsNotNone(after['rolled_back_at'])
+        self.assertEqual(duplicate['imported_at'],after['imported_at'])
+        self.assertEqual('2026-09-01',after['last_transaction_date'])
+
     def test_01_parallel_replay_and_duplicate_multiplicity(self):
         source=sample(count=2)
         with ThreadPoolExecutor(max_workers=2) as pool:

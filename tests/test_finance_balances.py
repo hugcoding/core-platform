@@ -45,5 +45,17 @@ class BalanceTests(unittest.TestCase):
         self.assertIsNone(summarize([],[])['total'])
         self.assertEqual('70.00',summarize(accounts,[snap,second,snap])['total']) # Repeated bank evidence.
 
+    def test_groups_have_independent_totals_and_keep_unassigned(self):
+        accounts=[{'id':'a','label':'A','group_id':'g'}, {'id':'b','label':'B','group_id':'h'},
+                  {'id':'c','label':'C','group_id':None}]
+        snap=dict(account_id='a',opening='100.00',closing='80.00',opening_date='2026-08-31',
+                  closing_date='2026-09-01',source_id='source',locator='stmt:1')
+        result=summarize(accounts,[snap,{**snap,'account_id':'b','closing_date':'2026-09-02'}],
+                         groups=[{'id':'g','name':'Example G'},{'id':'h','name':'Example H'}])
+        self.assertIsNone(result['total'])
+        self.assertEqual(['g','h',None],[g['id'] for g in result['groups']])
+        self.assertEqual(['80.00','80.00',None],[g['total'] for g in result['groups']])
+        self.assertEqual('g',result['groups'][0]['accounts'][0]['group_id'])
+
 
 if __name__=='__main__': unittest.main()

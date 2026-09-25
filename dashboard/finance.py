@@ -155,15 +155,20 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
         cur.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
         groups=wealth_groups(cur)
         if group and group!='unassigned' and not any(g['id']==group for g in groups):raise HTTPException(404,'group_not_found')
-        accounts=managed_accounts(cur)
+        # Complete, authenticated metadata lets dependent filters update without another request.
+        all_accounts=managed_accounts(cur)
+        accounts=all_accounts
         if group:
             accounts=[a for a in accounts if (a['group_id'] is None if group=='unassigned' else a['group_id']==group)]
         cur.execute('SELECT * FROM finance.finance_categories ORDER BY sort_order,name')
         categories=cur.fetchall()
         cur.execute('SELECT * FROM finance.finance_transaction_types ORDER BY code')
         transaction_types=cur.fetchall()
-        cur.execute("SELECT DISTINCT to_char(booking_date,'YYYY-MM') AS month FROM finance.v_transactions WHERE account_id=ANY(%s::uuid[]) ORDER BY month DESC",([a['id'] for a in accounts],))
-        months=[r['month'] for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT account_id,to_char(booking_date,'YYYY-MM') AS month FROM finance.v_transactions ORDER BY month DESC")
+        periods_by_account={a['id']:[] for a in all_accounts}
+        for r in cur.fetchall():periods_by_account[str(r['account_id'])].append(r['month'])
+        months=sorted({m for a in accounts if not account or a['id']==account
+                       for m in periods_by_account[a['id']]},reverse=True)
         cur.execute(f'''SELECT count(*) AS total,coalesce(sum(amount) FILTER(WHERE amount>0),0) AS credits,
             coalesce(sum(amount) FILTER(WHERE amount<0),0) AS debits,coalesce(sum(amount),0) AS net,
             count(*) FILTER(WHERE category_code IS NULL) AS uncategorized,
@@ -202,7 +207,17 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
                 LEFT JOIN finance.finance_categories c ON c.code=t.category_code WHERE {where}
                 ORDER BY {columns[sort]} {direction} NULLS LAST,{tie_break} LIMIT 100 OFFSET %s''',params+[page*100])
             rows=[transaction(r) for r in cur.fetchall()]
-        cur.execute('SELECT * FROM finance.v_import_status ORDER BY created_at DESC LIMIT 100')
+        # Use source links (including duplicates) and immutable transactions so rollback retains history.
+        cur.execute('''SELECT b.*,e.imported_at,e.rolled_back_at,t.last_transaction_date
+            FROM (SELECT * FROM finance.v_import_status ORDER BY created_at DESC,id LIMIT 100) b
+            LEFT JOIN LATERAL (SELECT min(created_at) FILTER(WHERE status IN ('imported','partial')) AS imported_at,
+                max(created_at) FILTER(WHERE status='rolled_back') AS rolled_back_at
+                FROM finance.finance_import_events WHERE batch_id=b.id) e ON true
+            LEFT JOIN LATERAL (SELECT max(t.booking_date) AS last_transaction_date
+                FROM finance.finance_import_records r
+                JOIN finance.finance_transaction_sources s ON s.record_id=r.id
+                JOIN finance.finance_transactions t ON t.id=s.transaction_id
+                WHERE r.batch_id=b.id) t ON true ORDER BY b.created_at DESC,b.id''')
         imports=[serial(r) for r in cur.fetchall()]
         cur.execute('SELECT * FROM finance.finance_ingest_jobs ORDER BY requested_at DESC LIMIT 5')
         jobs=[serial(r) for r in cur.fetchall()]
@@ -212,8 +227,8 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
         unresolved=cur.fetchone()['n']
         from core.finance.balances import overview as balance_overview
         bank_balances=balance_overview(cur,[a for a in accounts if not account or a['id']==account],
-                                       str(bounds[1]) if bounds else None)
-    return {'accounts':accounts,'groups':groups,'group':group,'categories':categories,'transaction_types':transaction_types,'months':months,'years':sorted({m[:4] for m in months},reverse=True),'totals':totals,'transactions':rows,
+                                       str(bounds[1]) if bounds else None,groups=groups)
+    return {'accounts':accounts,'all_accounts':all_accounts,'periods_by_account':periods_by_account,'groups':groups,'group':group,'categories':categories,'transaction_types':transaction_types,'months':months,'years':sorted({m[:4] for m in months},reverse=True),'totals':totals,'transactions':rows,
         'imports':imports,'jobs':jobs,'unresolved':unresolved,'page':page,'currency':'EUR','sort':sort,'direction':direction,'bank_balances':bank_balances}
 
 
