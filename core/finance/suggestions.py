@@ -17,10 +17,14 @@ def recognized_merchant(payload):
     if len(payload.get('details') or []) > 1:
         return None
     for value in (payload.get('counterparty'), payload.get('description')):
+        # ASN card descriptions can prefix the merchant with a terminal reference.
+        # Strip only that anchored, delimited field, never arbitrary invoice text.
+        value = unicodedata.normalize('NFKC', value or '').strip()
+        value = re.sub(r'^NL[A-Z0-9]{6,34}\s*>\s*', '', value, count=1, flags=re.I)
         text = normalize(value)
         if re.match(r'^shell (?:station\b|[0-9]{3,}\b)', text):
             return 'Shell'
-        if re.match(r'^(?:albert heijn\b|ah [0-9]{4}\b)', text):
+        if re.match(r'^(?:albert heijn\b|ah (?:[0-9]{4}\b|bouwens\b))', text):
             return 'Albert Heijn'
     return None
 
