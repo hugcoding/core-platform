@@ -219,7 +219,11 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
                 JOIN finance.finance_transactions t ON t.id=s.transaction_id
                 WHERE r.batch_id=b.id) t ON true ORDER BY b.created_at DESC,b.id''')
         imports=[serial(r) for r in cur.fetchall()]
-        cur.execute('SELECT * FROM finance.finance_ingest_jobs ORDER BY requested_at DESC LIMIT 5')
+        cur.execute('''SELECT j.*,
+            (SELECT count(*) FROM finance.finance_categorization_targets t WHERE t.job_id=j.id) AS target_count,
+            (SELECT count(*) FROM finance.finance_categorization_results r WHERE r.job_id=j.id) AS processed,
+            (SELECT count(*) FROM finance.finance_categorization_results r WHERE r.job_id=j.id AND r.status='classified') AS classified
+            FROM finance.finance_ingest_jobs j ORDER BY requested_at DESC LIMIT 5''')
         jobs=[serial(r) for r in cur.fetchall()]
         cur.execute('''SELECT count(*) AS n FROM finance.finance_import_records r JOIN finance.v_import_status b ON b.id=r.batch_id
             WHERE r.initial_outcome='unresolved' AND b.status IN ('partial','imported')
@@ -237,6 +241,31 @@ def request_import():
     with connection() as conn, conn.cursor() as cur:
         job=enqueue(cur)
     return {'job_id':job,'status':'pending'}
+
+
+@router.post('/api/v1/finance/categorization')
+def request_categorization():
+    from core.finance.local_classification import settings
+    try:settings()
+    except ValueError:raise HTTPException(422,'finance_local_endpoint_required') from None
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-job-enqueue'))")
+        cur.execute("SELECT id,job_kind FROM finance.finance_ingest_jobs WHERE status IN ('pending','running')")
+        active=cur.fetchone()
+        if active:
+            if active['job_kind']!='categorize':raise HTTPException(409,'finance_job_busy')
+            return {'job_id':str(active['id']),'status':'pending'}
+        job=enqueue(cur,'categorize')
+        cur.execute('''INSERT INTO finance.finance_categorization_targets(job_id,transaction_id)
+            SELECT %s,id FROM finance.v_transactions WHERE NOT confirmed''', (job,))
+    return {'job_id':job,'status':'pending'}
+
+
+@router.post('/api/v1/finance/categorization/{job_id}/stop')
+def stop_categorization(job_id:str):
+    with connection(worker=True) as conn,conn.cursor() as cur:
+        cur.execute("UPDATE finance.finance_ingest_jobs SET status='failed',error_code='cancelled',finished_at=now() WHERE id=%s AND job_kind='categorize' AND status IN ('pending','running')",(uid(job_id),))
+    return {'status':'stopped'}
 
 
 @router.post('/api/v1/finance/balances/refresh')
@@ -478,7 +507,7 @@ def category_suggestion_context(cur,seed_id):
     cur.execute("""SELECT t.*,r.source_review_id FROM finance.v_transactions t
         LEFT JOIN finance.finance_review_events r ON r.id=t.review_id WHERE t.id=%s""",(seed_id,))
     seed=cur.fetchone()
-    if not seed or not seed['category_code'] or seed['source_review_id']:
+    if not seed or not seed['confirmed'] or seed['classification_source']!='MANUAL' or not seed['category_code'] or seed['source_review_id']:
         raise HTTPException(409,'suggestion_needs_manual_example')
     seed_payload=decrypt(seed['private_data']);scope=None;seed_group=None
     if seed['transaction_type']=='TRANSFER':
@@ -498,7 +527,7 @@ def category_suggestion_context(cur,seed_id):
         payload=decrypt(row['private_data'])
         if scope is not None and internal_transfer_group(row['account_id'],payload,scope)!=seed_group:continue
         if merchant_identity(payload,row['amount'],row['currency'])!=identity: continue
-        if row['category_code'] and row['source_review_id'] is None and conflicts(row,seed):
+        if row['confirmed'] and row['classification_source']=='MANUAL' and row['category_code'] and row['source_review_id'] is None and conflicts(row,seed):
             return seed,[],'conflicting_examples'
         if row['review_id'] is None and row['id']!=seed['id']: candidates.append(row)
     return seed,candidates,identity[0]

@@ -47,6 +47,8 @@ services:
       - DB_PASS=${DB_PASS}
       - DB_NAME=${DB_NAME}
       - REDIS_HOST=redis
+      - CORE_LLM_ENDPOINT=${CORE_LLM_ENDPOINT:-http://192.168.68.107:11434/v1}
+      - CORE_LLM_MODEL=${CORE_LLM_MODEL:-qwen3.6:latest}
       - CORE_FINANCE_SECRET_FILE=/run/finance/secret.json
       - CORE_MAINTENANCE_MODE=${CORE_MAINTENANCE_MODE:-false}
     volumes:
