@@ -11,6 +11,7 @@ from typing import Any
 import psycopg2
 import psycopg2.extras
 import redis
+from core.runtime.capacity import worker_resources as host_resources
 
 from core.cleanup.duplicate_executor import move_verified as move_exact_duplicate
 from core.cleanup.duplicate_executor import resume_verified_move as resume_exact_duplicate
@@ -23,7 +24,7 @@ from core.execution.reinventory import enqueue_source_reinventory
 
 POLL_SECONDS = int(os.getenv("CORE_EXECUTION_POLL_SECONDS", "5"))
 MIN_AVAILABLE_MIB = int(os.getenv("CORE_EXECUTION_MIN_AVAILABLE_MIB", "1024"))
-MAX_LOAD_PER_CPU = float(os.getenv("CORE_EXECUTION_MAX_LOAD_PER_CPU", "1.5"))
+CPU_LIMIT_PERCENT = float(os.getenv("CORE_EXECUTION_MAX_CPU_PERCENT", "80"))
 MAX_STREAM_LAG = int(os.getenv("CORE_EXECUTION_MAX_STREAM_LAG", "1000"))
 ACTOR = os.getenv("CORE_EXECUTION_ACTOR", "controlled-execution-worker")
 
@@ -46,14 +47,6 @@ def redis_connect():
                        socket_connect_timeout=2, socket_timeout=2)
 
 
-def host_resources(proc_root: Path = Path("/host/proc")) -> dict[str, float]:
-    load = float((proc_root / "loadavg").read_text().split()[0])
-    cpus = max(1, sum(line.startswith("processor") for line in (proc_root / "cpuinfo").read_text().splitlines()))
-    memory = {}
-    for line in (proc_root / "meminfo").read_text().splitlines():
-        key, value = line.split(":", 1); memory[key] = int(value.strip().split()[0])
-    available = memory.get("MemAvailable", memory.get("MemFree", 0) + memory.get("Cached", 0))
-    return {"load_per_cpu": round(load / cpus, 3), "available_memory_mib": round(available / 1024, 1)}
 
 
 def stream_lag(client: redis.Redis) -> int:
@@ -65,8 +58,9 @@ def stream_lag(client: redis.Redis) -> int:
 
 
 def resource_block(resources: dict[str, float], lag: int) -> str | None:
+    if not resources.get("capacity_available",1): return "capacity_unavailable"
     if resources["available_memory_mib"] < MIN_AVAILABLE_MIB: return "waiting_for_memory"
-    if resources["load_per_cpu"] > MAX_LOAD_PER_CPU: return "waiting_for_cpu"
+    if resources["cpu_load_percent"] > CPU_LIMIT_PERCENT: return "waiting_for_cpu"
     if lag > MAX_STREAM_LAG: return "core_pipeline_priority"
     return None
 

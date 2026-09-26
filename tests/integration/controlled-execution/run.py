@@ -1,4 +1,6 @@
 """Real PostgreSQL + filesystem move/resume/rollback integration proof."""
+import json
+import time
 import hashlib
 import os
 import uuid
@@ -9,6 +11,13 @@ import psycopg2.extras
 import redis
 
 import controlled_execution_worker as worker
+
+
+def publish_test_capacity():
+    redis.Redis(host=os.environ["REDIS_HOST"]).set("core:capacity:v1", json.dumps({
+        "version": 1, "sampled_at": time.time(), "cpu_percent": 10,
+        "memory_total": 16*1024**3, "memory_available": 8*1024**3,
+        "memory_used": 8*1024**3, "memory_estimated": False, "load_1m": 0.1}), ex=20)
 
 
 def connect():
@@ -50,6 +59,7 @@ with conn, conn.cursor() as cur:
     cur.execute("SELECT current_status FROM public.v_controlled_execution_item_status WHERE id=%s",(item_id,))
     assert cur.fetchone()['current_status']=='queued', 'queued must win a timestamp tie'
 
+publish_test_capacity()
 assert worker.run_once() is True
 assert target.is_file() and not source.exists() and hashlib.sha256(target.read_bytes()).hexdigest() == digest
 with conn, conn.cursor() as cur:
@@ -58,6 +68,7 @@ with conn, conn.cursor() as cur:
     cur.execute("""INSERT INTO public.controlled_execution_events(batch_id,item_id,event_type,idempotency_key,actor)
       VALUES (%s,NULL,'rollback_pending',%s,'integration')""", (batch_id, batch_id + ":rollback"))
 
+publish_test_capacity()
 assert worker.run_once() is True
 assert source.is_file() and not target.exists() and hashlib.sha256(source.read_bytes()).hexdigest() == digest
 with conn, conn.cursor() as cur:
@@ -84,6 +95,7 @@ with conn, conn.cursor() as cur:
       (changed_batch, changed_item, changed_item + ":queued", changed_batch, changed_batch + ":approved"))
 
 redis_client = redis.Redis(host=os.environ["REDIS_HOST"], decode_responses=True)
+publish_test_capacity()
 assert worker.run_once(redis_client) is True
 assert changed_source.is_file() and not changed_target.exists()
 events = redis_client.xrange("scan_stream")

@@ -1,5 +1,20 @@
 name: nas
 services:
+  capacity_worker:
+    build: { context: ., dockerfile: Dockerfile.dashboard }
+    command: [python, -m, core.runtime.capacity]
+    restart: unless-stopped
+    depends_on: { redis: { condition: service_healthy } }
+    environment: [REDIS_HOST=redis, HOST_PROC=/host/proc]
+    volumes: ["/proc:/host/proc:ro"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "from core.runtime.capacity import read_snapshot; read_snapshot()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
   dashboard:
     build: { context: ., dockerfile: Dockerfile.dashboard }
     restart: unless-stopped
@@ -13,7 +28,6 @@ services:
       - DB_NAME=${DB_NAME}
       - REDIS_HOST=redis
       - EXPORT_DIR=/exports/migration-inventory
-      - HOST_PROC=/host/proc
       - STORAGE_PATH=/volume1
       - SCAN_ROOTS=${SCAN_ROOTS:-/volume1/backup/NITRO/D/data/hugo/Documents,/volume1/data}
       - WATCH_ROOTS=${WATCH_ROOTS:-/volume1/data}
@@ -28,7 +42,6 @@ services:
     volumes:
       - "./project/exports:/exports:ro"
       - "/volume1/docker/core-runtime/finance:/run/finance:ro"
-      - "/proc:/host/proc:ro"
       - "/volume1:/volume1:ro"
     read_only: true
     tmpfs: ["/tmp"]
@@ -54,7 +67,6 @@ services:
     volumes:
       - "/volume1/data/import/finance:/volume1/data/import/finance:ro"
       - "/volume1/docker/core-runtime/finance:/run/finance:ro"
-      - "/proc:/host/proc:ro"
     read_only: true
     tmpfs: ["/tmp"]
     security_opt: ["no-new-privileges:true"]
@@ -92,7 +104,6 @@ services:
       - CORE_AI_MAX_ACTIVE_DB_SESSIONS=${CORE_AI_MAX_ACTIVE_DB_SESSIONS:-4}
       - CORE_MAINTENANCE_MODE=${CORE_MAINTENANCE_MODE:-false}
     volumes:
-      - "/proc:/host/proc:ro"
       - "/volume1:/volume1:ro"
     read_only: true
     tmpfs: ["/tmp"]
@@ -110,13 +121,12 @@ services:
       - DB_NAME=${DB_NAME}
       - REDIS_HOST=redis
       - CORE_EXECUTION_MIN_AVAILABLE_MIB=${CORE_EXECUTION_MIN_AVAILABLE_MIB:-1024}
-      - CORE_EXECUTION_MAX_LOAD_PER_CPU=${CORE_EXECUTION_MAX_LOAD_PER_CPU:-1.5}
+      - CORE_EXECUTION_MAX_CPU_PERCENT=${CORE_EXECUTION_MAX_CPU_PERCENT:-80}
       - CORE_EXECUTION_MAX_STREAM_LAG=${CORE_EXECUTION_MAX_STREAM_LAG:-1000}
       - CORE_EXECUTION_POLL_SECONDS=${CORE_EXECUTION_POLL_SECONDS:-5}
       - CORE_REINVENTORY_STREAM=${CORE_REINVENTORY_STREAM:-scan_stream}
       - CORE_REINVENTORY_DEDUP_TTL=${CORE_REINVENTORY_DEDUP_TTL:-604800}
     volumes:
-      - "/proc:/host/proc:ro"
       - "/volume1/data:/volume1/data"
     read_only: true
     tmpfs: ["/tmp"]
@@ -142,7 +152,6 @@ services:
       - CORE_OCR_MAX_ACTIVE_DB_SESSIONS=${CORE_OCR_MAX_ACTIVE_DB_SESSIONS:-4}
       - CORE_MAINTENANCE_MODE=${CORE_MAINTENANCE_MODE:-false}
     volumes:
-      - "/proc:/host/proc:ro"
       - "/volume1:/volume1:ro"
       - "/volume1/docker/core-runtime/ocr:/volume1/docker/core-runtime/ocr"
     read_only: true

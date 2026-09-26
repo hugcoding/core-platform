@@ -1,5 +1,8 @@
 # Acceptance deployment from an isolated checkout; original NAS checkout stays intact.
 services:
+  capacity_worker:
+    image: core-finance-dashboard:mvp
+    build: {context: "${CORE_FINANCE_BUILD_CONTEXT:?set isolated build directory}", dockerfile: Dockerfile.dashboard}
   dashboard:
     image: core-finance-dashboard:mvp
     build: {context: "${CORE_FINANCE_BUILD_CONTEXT:?set isolated build directory}", dockerfile: Dockerfile.dashboard}

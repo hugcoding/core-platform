@@ -9,6 +9,6 @@ services:
   integration:
     build: { context: ../../.., dockerfile: tests/integration/controlled-execution/Dockerfile }
     depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_healthy } }
-    environment: { DB_HOST: postgres, DB_PORT: 5432, DB_USER: core, DB_PASS: core, DB_NAME: core_test, REDIS_HOST: redis, CORE_EXECUTION_MAX_LOAD_PER_CPU: 999 }
+    environment: { DB_HOST: postgres, DB_PORT: 5432, DB_USER: core, DB_PASS: core, DB_NAME: core_test, REDIS_HOST: redis, CORE_EXECUTION_MAX_CPU_PERCENT: 100 }
     volumes: ["execution_data:/volume1/data", "/proc:/host/proc:ro"]
 volumes: { execution_data: {} }

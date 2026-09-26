@@ -14,6 +14,7 @@ from uuid import NAMESPACE_URL, uuid5
 import psycopg2
 import psycopg2.extras
 import redis
+from core.runtime.capacity import worker_resources as host_resources
 
 from core.semantic.rag import GenerationRequest, OpenAICompatibleLocalProvider
 from core.semantic.automatic_workset_ai import REQUESTED_BY, PAGE_SQL, eligible, enqueue_page
@@ -48,38 +49,6 @@ def db_connect():
     )
 
 
-def host_resources(proc_root: Path = Path("/host/proc")) -> dict[str, float]:
-    load_1m = float((proc_root / "loadavg").read_text().split()[0])
-    cpu_count = max(1, sum(
-        line.startswith("processor")
-        for line in (proc_root / "cpuinfo").read_text().splitlines()
-    ))
-
-    memory = {}
-    for line in (proc_root / "meminfo").read_text().splitlines():
-        key, value = line.split(":", 1)
-        memory[key] = int(value.strip().split()[0])
-
-    # Some Synology kernels do not expose MemAvailable.
-    # Fall back to memory that can reasonably be reclaimed.
-    if "MemAvailable" in memory:
-        available_memory_kib = memory["MemAvailable"]
-    else:
-        available_memory_kib = (
-            memory.get("MemFree", 0)
-            + memory.get("Buffers", 0)
-            + memory.get("Cached", 0)
-            + memory.get("SReclaimable", 0)
-        )
-        available_memory_kib = min(
-            available_memory_kib,
-            memory.get("MemTotal", available_memory_kib),
-        )
-
-    return {
-        "cpu_load_percent": round(load_1m / cpu_count * 100, 2),
-        "available_memory_mib": round(available_memory_kib / 1024, 1),
-    }
 
 
 def stream_lag(client: redis.Redis) -> int:
@@ -97,6 +66,7 @@ def resource_gate(
     lag: int,
     job: dict[str, Any] | None = None,
 ) -> str | None:
+    if not resources.get("capacity_available",1): return "capacity_unavailable"
     # Een expliciet aangevraagde AI-job mag gewone CPU-druk passeren.
     # Zonder pending job blijft de normale CPU-beveiliging actief.
     if (job is None or job.get("requested_by") == REQUESTED_BY) and resources["cpu_load_percent"] > CPU_LIMIT_PERCENT:

@@ -10,7 +10,8 @@ from core.finance.store import connection, read_source, import_bytes, ADMISSION_
 from core.finance.camt import ImportErrorCode
 from core.finance.balances import backfill_one
 from core.finance.bank_references import backfill_one as reference_backfill, reconcile_chunk
-from workset_ai_worker import host_resources, stream_lag
+from workset_ai_worker import stream_lag
+from core.runtime.capacity import worker_resources as host_resources
 
 STATUS = 'starting'
 SINGLE_WORKER_LOCK = 118202611
@@ -20,6 +21,7 @@ def gate(conn, client):
     if os.getenv('CORE_MAINTENANCE_MODE','false').lower()=='true': return 'maintenance_mode'
     if not client.ping(): return 'redis_unavailable'
     resources=host_resources()
+    if not resources.get("capacity_available",1): return "capacity_unavailable"
     if resources['cpu_load_percent']>float(os.getenv('CORE_FINANCE_MAX_CPU_PERCENT','60')): return 'waiting_for_cpu'
     if resources['available_memory_mib']<int(os.getenv('CORE_FINANCE_MIN_AVAILABLE_MIB','2048')): return 'waiting_for_memory'
     if stream_lag(client)>1000: return 'core_pipeline_priority'

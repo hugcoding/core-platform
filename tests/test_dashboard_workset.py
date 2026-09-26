@@ -19,10 +19,19 @@ class DashboardWorksetTests(unittest.TestCase):
             def __init__(self, *args, **kwargs):
                 pass
 
+            def include_router(self, *args, **kwargs):
+                pass
+
+            def middleware(self, *args, **kwargs):
+                return lambda function: function
+
             def mount(self, *args, **kwargs):
                 pass
 
             def get(self, *args, **kwargs):
+                return lambda function: function
+
+            def put(self, *args, **kwargs):
                 return lambda function: function
 
             def post(self, *args, **kwargs):
@@ -47,6 +56,7 @@ class DashboardWorksetTests(unittest.TestCase):
         staticfiles.StaticFiles = lambda **kwargs: kwargs
         modules = {
             "psycopg2": mock.MagicMock(), "redis": mock.MagicMock(),
+            "dashboard.finance": types.SimpleNamespace(router=object(), finance_boundary=mock.Mock()),
             "fastapi": fastapi, "fastapi.responses": responses,
             "fastapi.staticfiles": staticfiles,
         }
@@ -115,26 +125,22 @@ class DashboardWorksetTests(unittest.TestCase):
         self.assertIn("queue_rank <= 500 OR file_id = ANY(%s)", query.call_args_list[1].args[1])
         self.assertEqual(([900],), query.call_args_list[1].args[2])
 
-    def test_host_memory_accounts_for_cache_on_older_kernels(self):
-        cases = [
-            ("MemTotal: 1000 kB\nMemAvailable: 600 kB\nMemFree: 10 kB", 400, False),
-            ("MemTotal: 1000 kB\nMemAvailable: 0 kB\nMemFree: 100 kB", 1000, False),
-            ("MemTotal: 1000 kB\nMemFree: 100 kB\nBuffers: 50 kB\nCached: 400 kB\nSReclaimable: 100 kB\nShmem: 50 kB", 400, True),
-            ("MemTotal: 1000 kB\nMemFree: 100 kB", 900, True),
-            ("MemTotal: 1000 kB\nMemFree: 100 kB\nCached: 2000 kB", 0, True),
-            ("MemTotal: 1000 kB\nMemFree: 100 kB\nShmem: 200 kB", 900, True),
-        ]
-        for data, used, estimated in cases:
-            with self.subTest(data=data), mock.patch.object(Path, "read_text", side_effect=[data, "0.5 0.2 0.1"]):
-                result = self.dashboard.host_metrics()
-                self.assertEqual(used * 1024, result["memory_used"])
-                self.assertEqual(estimated, result["memory_estimated"])
-                self.assertEqual(1000 * 1024, result["memory_available"] + result["memory_used"])
+    def test_host_uses_central_snapshot(self):
+        from core.runtime import capacity
+        snapshot = {"cpu_percent": 27, "memory_used": 400, "memory_available": 600}
+        with mock.patch.object(capacity, "read_snapshot", return_value=snapshot):
+            result = self.dashboard.host_metrics()
+        self.assertEqual(27, result["cpu_percent"])
+        self.assertEqual(400, result["memory_used"])
+        self.assertEqual("ready", result["capacity_status"])
 
-    def test_host_memory_missing_or_invalid_is_not_reported_as_zero(self):
-        for data in ("", "MemTotal: 0 kB", "MemTotal: bad kB", "MemTotal: 1000 kB", "MemTotal:"):
-            with self.subTest(data=data), mock.patch.object(Path, "read_text", side_effect=[data, "0.5 0.2 0.1"]):
-                self.assertNotIn("memory_used", self.dashboard.host_metrics())
+    def test_missing_capacity_is_not_reported_as_zero(self):
+        from core.runtime import capacity
+        with mock.patch.object(capacity, "read_snapshot", side_effect=capacity.CapacityUnavailable):
+            result = self.dashboard.host_metrics()
+        self.assertNotIn("cpu_percent", result)
+        self.assertNotIn("memory_used", result)
+        self.assertEqual("capacity_unavailable", result["capacity_status"])
 
     def test_ai_status_uses_narrow_query_and_preserves_relocated_job(self):
         jobs = [{"file_id": 1, "content_sha256": "abc", "status": "ready",
