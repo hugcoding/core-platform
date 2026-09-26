@@ -61,6 +61,70 @@ class SuggestionIdentityTests(unittest.TestCase):
                      'NLTEST000001>AH Bouwensberg', 'Invoice>Albert Heijn Bouwens'):
             self.assertIsNone(recognized_merchant({'description':text}))
         self.assertIsNone(recognized_merchant({'description':'NLTEST000001>AH BOUWENS','details':[{},{}]}))
+     
+     
+    def test_dekamarkt_locations_share_identity(self):
+        a = {
+            'counterparty': 'Onbekende tegenpartij',
+            'description':
+                'DEKAMARKT LOC 726 >HAARLEM 21.09.2026 18U24 '
+                'KV006 WG2301 MCC:5411 Apple Pay betaling NLNEDERLAND',
+        }
 
+        b = {
+            'counterparty': 'Onbekende tegenpartij',
+            'description':
+                'DEKAMARKT LOC 422 >HAARLEM 20.09.2026 12U02 '
+                'KV006 AD9708 MCC:5399 Apple Pay betaling NLNEDERLAND',
+        }
+
+        self.assertEqual(
+            identity(a, -10, 'EUR'),
+            identity(b, -20, 'EUR'),
+        )
+
+        self.assertEqual(
+            identity(a, -10, 'EUR'),
+            ('merchant_marker', 'dekamarkt', 'debit', 'EUR'),
+        )
+
+    def test_bruna_card_description(self):
+        payload = {
+            'counterparty': 'Onbekende tegenpartij',
+            'description':
+                'BCK*Bruna marsmanplein >HAARLEM 18.09.2026 '
+                '13U58 KV006 BS165298 MCC:5192 Apple Pay betaling NLNEDERLAND',
+        }
+
+        self.assertEqual(
+            identity(payload, -12.50, 'EUR'),
+            ('merchant_marker', 'bruna marsmanplein', 'debit', 'EUR'),
+        )
+
+    def test_plus_card_description(self):
+        payload = {
+            'counterparty': 'Onbekende tegenpartij',
+            'description':
+                'Plus Haarlem >HAARLEM 18.09.2026 11U36 '
+                'KV006 634R11 MCC:5411 Apple Pay betaling NLNEDERLAND',
+        }
+
+        self.assertEqual(
+            identity(payload, -25, 'EUR'),
+            ('merchant_marker', 'plus haarlem', 'debit', 'EUR'),
+        )
+
+    def test_wibra_card_description(self):
+        payload = {
+            'counterparty': 'Onbekende tegenpartij',
+            'description':
+                'Wibra Marsmanplein >HAARLEM 18.09.2026 14U00 '
+                'KV006 NVB543 MCC:5949 Apple Pay betaling NLNEDERLAND',
+        }
+
+        self.assertEqual(
+            identity(payload, -15, 'EUR'),
+            ('merchant_marker', 'wibra marsmanplein', 'debit', 'EUR'),
+        )
 
 if __name__=='__main__': unittest.main()
