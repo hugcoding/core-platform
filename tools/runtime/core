@@ -438,10 +438,24 @@ case "$command_domain" in
                 shift 2
                 sh ./tools/runtime/git-pull "$@"
                 ;;
-            *)
-                echo "Unknown git command."
-                echo "Use: core git pull [--rebuild-docs|--skip-docs]"
+            "")
+                echo "Use: core git status | diff | add | commit | branch | push | pull | ..."
                 exit 1
+                ;;
+            *)
+                shift
+                "$DOCKER_BIN" run --rm \
+                    --user "$(id -u):$(id -g)" \
+                    -e HOME=/tmp/corehome \
+                    -e GIT_SSH_COMMAND="ssh -F /dev/null -i /tmp/corehome/.ssh/github_ed25519 -o UserKnownHostsFile=/tmp/corehome/.ssh/known_hosts -o IdentitiesOnly=yes" \
+                    -v "$PROJECT_ROOT:/repo" \
+                    -v "$HOME/.ssh:/tmp/corehome/.ssh:ro" \
+                    -v /etc/passwd:/etc/passwd:ro \
+                    -v /etc/group:/etc/group:ro \
+                    -w /repo \
+                    alpine/git:2.49.1 \
+                    -c safe.directory=/repo \
+                    "$@"
                 ;;
         esac
         ;;
