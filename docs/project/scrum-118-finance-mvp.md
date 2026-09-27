@@ -81,3 +81,8 @@ aanvulling en de NAS-uitrolstappen (dashboard en Finance-worker).
 
 Zie [ASN-transactienummers](finance-asn-entry-reference.md) voor automatische
 duplicaatkoppeling, herstel vanuit bestaande bronnen en de NAS-uitrolstappen.
+
+## Runtime-activatie en diagnose
+
+Zie [Finance runtime-activatie](finance-runtime-activation.md) voor de expliciete lokale
+instelling, `core doctor --finance` en de NAS-uitrolstappen.

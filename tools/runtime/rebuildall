@@ -7,6 +7,7 @@ echo "========== BUILD ALL =========="
 docker compose build --no-cache
 echo "========== RESTART ALL =========="
 docker compose up -d --force-recreate --remove-orphans
+python3 -m core.finance.doctor --wait 20
 echo "========== HEALTH =========="
 ./health || true
 echo "========== LOGS =========="

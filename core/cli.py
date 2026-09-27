@@ -212,7 +212,10 @@ def main(
 ) -> int:
     parser = argparse.ArgumentParser(prog="core")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("doctor")
+    doctor_parser = subparsers.add_parser("doctor")
+    doctor_parser.add_argument("--finance", action="store_true", help="Read-only Finance runtime checks")
+    from core.finance.doctor import add_arguments, diagnose
+    add_arguments(doctor_parser)
     subparsers.add_parser("config-json")
 
     docs_parser = subparsers.add_parser("docs")
@@ -230,6 +233,9 @@ def main(
     integrity_parser.add_argument("--path")
 
     args = parser.parse_args(argv)
+
+    if args.command == "doctor" and args.finance:
+        return diagnose(args, base_path or _default_base_path(), stdout=stdout, runner=runner)
 
     loader = ConfigLoader(base_path or _default_base_path())
 

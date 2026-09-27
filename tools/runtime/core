@@ -14,7 +14,7 @@ show_help() {
     printf '%s\n' "CORE CLI"
     printf '%s\n' ""
     printf '%s\n' "Usage:"
-    printf '%s\n' "  core doctor"
+    printf '%s\n' "  core doctor [--finance [--worker] [--wait 20]]"
     printf '%s\n' "  core docs generate"
     printf '%s\n' "  core docs dev"
     printf '%s\n' "  core docs serve"
@@ -103,7 +103,13 @@ command_action="${2:-}"
 
 case "$command_domain" in
     doctor)
-        python3 -m core.cli doctor
+        shift
+        if [ "${1:-}" = --finance ]; then
+            shift
+            python3 -m core.finance.doctor "$@"
+        else
+            python3 -m core.cli doctor "$@"
+        fi
         ;;
     docs)
         case "$command_action" in
@@ -141,6 +147,7 @@ case "$command_domain" in
             deploy)
                 "$DOCKER_BIN" compose build dashboard
                 "$DOCKER_BIN" compose up -d --force-recreate dashboard
+                DOCKER_BIN="$DOCKER_BIN" python3 -m core.finance.doctor --wait 20
                 "$DOCKER_BIN" compose ps dashboard
                 echo "CORE Pulse: http://192.168.68.105:8080/coredashboard"
                 ;;
@@ -402,12 +409,15 @@ case "$command_domain" in
                 ;;
             start)
                 "$DOCKER_BIN" compose up -d
+                DOCKER_BIN="$DOCKER_BIN" python3 -m core.finance.doctor --wait 20
                 ;;
             stop)
                 "$DOCKER_BIN" compose down
                 ;;
             restart)
-                "$DOCKER_BIN" compose down && "$DOCKER_BIN" compose up -d
+                "$DOCKER_BIN" compose down
+                "$DOCKER_BIN" compose up -d
+                DOCKER_BIN="$DOCKER_BIN" python3 -m core.finance.doctor --wait 20
                 ;;
             *)
                 echo "Unknown runtime command."
