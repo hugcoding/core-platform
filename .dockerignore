@@ -7,3 +7,12 @@ project/models/
 project/exports/
 logs/
 postgres-data/
+
+# Never send local runtime configuration or credentials to the builder
+.env
+.env.*
+**/.env
+**/.env.*
+core/secrets/credentials.yaml
+**/secret.json
+**/access-code.txt

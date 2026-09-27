@@ -6,8 +6,6 @@ services:
   dashboard:
     image: core-finance-dashboard:mvp
     build: {context: "${CORE_FINANCE_BUILD_CONTEXT:?set isolated build directory}", dockerfile: Dockerfile.dashboard}
-    environment:
-      CORE_FINANCE_ENABLED: "true"
   finance_worker:
     image: core-finance-dashboard:mvp
     build: {context: "${CORE_FINANCE_BUILD_CONTEXT:?set isolated build directory}", dockerfile: Dockerfile.dashboard}

@@ -95,7 +95,8 @@ logs/
 # ----------------------------------------------------------
 
 .env
-.env.local
+.env.*
+!.env.example
 
 # ----------------------------------------------------------
 # Docker overrides
@@ -160,3 +161,7 @@ project/exports/database-backups/
 project/exports/migration-inventory/
 project/exports/semantic-pilot/
 project/models/
+
+# Finance runtime credentials must stay outside the checkout
+secret.json
+access-code.txt
