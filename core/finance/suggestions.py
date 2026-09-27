@@ -69,6 +69,24 @@ def card_description_merchant(value):
         flags=re.I,
     )
 
+    # Some card merchants append a changing transaction/reference token
+    # to the merchant name, e.g.:
+    #   PLAYTOMIC.IO 86914BAD
+    #   PLAYTOMIC.IO E33A5F4B
+    #
+    # Only remove a trailing alphanumeric token when it:
+    # - is at least 8 characters long
+    # - contains at least one digit
+    # - contains at least one letter
+    #
+    # This avoids stripping ordinary words or numeric store numbers.
+    merchant_part = re.sub(
+        r'\s+(?=[A-Z0-9]{8,}\s*$)(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]+\s*$',
+        '',
+        merchant_part,
+        flags=re.I,
+    )
+
     candidate = normalize(merchant_part)
 
     if len(candidate) < 3:

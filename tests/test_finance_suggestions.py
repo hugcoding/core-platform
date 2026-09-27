@@ -126,5 +126,30 @@ class SuggestionIdentityTests(unittest.TestCase):
             identity(payload, -15, 'EUR'),
             ('merchant_marker', 'wibra marsmanplein', 'debit', 'EUR'),
         )
+    
+    def test_merchant_trailing_reference_does_not_change_identity(self):
+        first = {
+            'counterparty': 'Onbekende tegenpartij',
+            'description':
+                'PLAYTOMIC.IO 86914BAD >+3491651923.09.2026 20U46 '
+                'KV006 99W8G8SE MCC:7997 Apple Pay betaling ESSPANJE',
+        }
+
+        second = {
+            'counterparty': 'Onbekende tegenpartij',
+            'description':
+                'PLAYTOMIC.IO E33A5F4B >+3491651919.09.2026 10U21 '
+                'KV006 99W8G8SE MCC:7997 Apple Pay betaling ESSPANJE',
+        }
+
+        self.assertEqual(
+            identity(first, -10, 'EUR'),
+            identity(second, -20, 'EUR'),
+        )
+
+        self.assertEqual(
+            identity(first, -10, 'EUR'),
+            ('merchant_marker', 'playtomic io', 'debit', 'EUR'),
+        )
 
 if __name__=='__main__': unittest.main()
