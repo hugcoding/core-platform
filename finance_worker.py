@@ -77,6 +77,13 @@ def scan(client):
                         STATUS=reason;set_job(jid,'pending',reason);return False,None
                     STATUS='processing'
                     return True,step(conn)
+            if job['job_kind']=='recurring':
+                from core.finance.recurring import step
+                while True:
+                    allowed,more=admitted(lambda conn:step(conn,jid))
+                    if not allowed:return
+                    if not more:break
+                set_job(jid,'done');STATUS='idle';return
             if job['job_kind']=='categorize':
                 from core.finance.local_classification import step
                 cache={}

@@ -126,6 +126,12 @@ class IntegrationTests(unittest.TestCase):
             local_up=Path('database/migrations/20260925_add_finance_local_classification.sql').read_text()
             local_down=Path('database/migrations/rollback/20260925_add_finance_local_classification.sql').read_text()
             cur.execute(local_up);cur.execute(local_down);cur.execute(local_up)
+            recurring_up=Path('database/migrations/20260930_add_finance_recurring.sql').read_text()
+            recurring_down=Path('database/migrations/rollback/20260930_add_finance_recurring.sql').read_text()
+            cur.execute(recurring_up);cur.execute(recurring_down);cur.execute(recurring_up)
+            reviews_up=Path('database/migrations/20260930_add_finance_recurring_reviews.sql').read_text()
+            reviews_down=Path('database/migrations/rollback/20260930_add_finance_recurring_reviews.sql').read_text()
+            cur.execute(reviews_up);cur.execute(reviews_down);cur.execute(reviews_up)
         app=FastAPI();app.middleware('http')(finance_boundary);app.include_router(router)
         cls.client=TestClient(app);cls.client.headers['origin']='http://testserver'
         response=cls.client.post('/api/v1/finance/session',json={'code':'synthetic-access'})
@@ -1061,6 +1067,166 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual('1',self.client.get('/api/v1/finance/data',params={'account':aid}).json()['totals']['total'])
         with self.admin.cursor() as cur:
             cur.execute('SELECT count(*) FROM finance.finance_transactions WHERE account_id=%s',(aid,));self.assertEqual(1,cur.fetchone()[0])
+
+
+    def test_92_recurring_detection_persistence_worker_and_provenance(self):
+        from core.finance.crypto import fingerprint
+        from core.finance.store import connection
+        from core.finance.recurring import step
+        from tests.test_finance_bank_references import numbered,account
+        from unittest.mock import Mock
+        import finance_worker
+        import psycopg2
+        originals=[]
+        for n in (88701,88702):
+            for stamp,amount in [('2026-06-18','117'),('2026-07-18','124'),('2026-08-19','119'),('2026-09-18','131')]:
+                source=numbered(ref=str(uuid.uuid4()),message=str(uuid.uuid4()),n=n,amount=amount)
+                source=source.replace(b'2026-09-01',stamp.encode()).replace(b'Synthetische winkel',b'Synthetic recurring merchant')
+                source=source.replace(b'</RltdPties>',('<CdtrAcct><Id><IBAN>'+account(88702)+'</IBAN></Id></CdtrAcct></RltdPties>').encode())
+                self.import_file(source)
+                if n==88701:originals.append(source)
+        with self.admin.cursor() as cur:
+            cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE status IN ('pending','running')")
+            cur.execute('SELECT id FROM finance.finance_accounts WHERE identity_key=%s',(fingerprint('account-v1',account(88701)),))
+            aid=str(cur.fetchone()[0])
+            cur.execute('SELECT id FROM finance.finance_accounts WHERE identity_key=%s',(fingerprint('account-v1',account(88702)),))
+            other=str(cur.fetchone()[0])
+            cur.execute('SELECT count(*) FROM finance.finance_transactions');transaction_count=cur.fetchone()[0]
+            cur.execute('SELECT count(*) FROM finance.finance_review_events');review_count=cur.fetchone()[0]
+        group=self.client.post('/api/v1/finance/wealth-groups',json={'name':'Synthetic recurring scope','key':str(uuid.uuid4())}).json()['group_id']
+        for account_id in (aid,other):
+            response=self.client.post('/api/v1/finance/accounts/'+account_id+'/management',json={
+                'group_id':group,'relationship':'OWN','name':'Synthetic account','key':str(uuid.uuid4())})
+            self.assertEqual(200,response.status_code,response.text)
+        self.assertEqual(422,self.client.get('/api/v1/finance/recurring?account=invalid').status_code)
+        self.assertEqual(422,self.client.get('/api/v1/finance/recurring?page=-1').status_code)
+        with patch.dict(os.environ,{'CORE_FINANCE_ENABLED':'false'}):
+            self.assertEqual(503,self.client.post('/api/v1/finance/recurring/detect',json={}).status_code)
+        from fastapi.testclient import TestClient
+        locked=TestClient(self.client.app)
+        self.assertEqual(401,locked.get('/api/v1/finance/recurring').status_code)
+        job=self.client.post('/api/v1/finance/recurring/detect',json={}).json()['job_id']
+        self.assertEqual(job,self.client.post('/api/v1/finance/recurring/detect',json={}).json()['job_id'])
+        with patch('finance_worker.gate',return_value='waiting_for_cpu'),patch('core.finance.recurring.step') as detect_step:
+            finance_worker.scan(Mock())
+            detect_step.assert_not_called()
+        with patch('finance_worker.gate',return_value=None),patch('core.finance.local_classification.generate',side_effect=AssertionError('LLM forbidden')):
+            finance_worker.scan(Mock())
+        def listing(account_id=aid):
+            response=self.client.get('/api/v1/finance/recurring',params={'account':account_id})
+            self.assertEqual(200,response.status_code,response.text)
+            return response.json()['patterns']
+        result=listing()
+        self.assertEqual(1,len(result));pattern=result[0]
+        self.assertEqual('monthly',pattern['cadence'])
+        self.assertEqual('periodic_transfer',pattern['recurring_type'])
+        self.assertEqual('other_recurring',listing(other)[0]['recurring_type'])
+        self.assertEqual('proposed',pattern['status']);self.assertFalse(pattern['stale'])
+        self.assertEqual('-121.50',pattern['typical_amount']);self.assertEqual('2026-10-18',pattern['next_expected'])
+        members=self.client.get('/api/v1/finance/recurring/'+pattern['id']+'/transactions').json()
+        self.assertEqual(4,len(members['transactions']))
+        self.assertTrue(all(t['category_code'] is None for t in members['transactions']))
+        self.assertEqual(404,self.client.get('/api/v1/finance/recurring/'+str(uuid.uuid4())+'/transactions').status_code)
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT status FROM finance.finance_ingest_jobs WHERE id=%s',(job,));self.assertEqual('done',cur.fetchone()[0])
+            cur.execute('SELECT count(*) FROM finance.finance_transactions');self.assertEqual(transaction_count,cur.fetchone()[0])
+            cur.execute('SELECT count(*) FROM finance.finance_review_events');self.assertEqual(review_count,cur.fetchone()[0])
+            cur.execute('SELECT count(*) FROM finance.finance_recurring_detections');count=cur.fetchone()[0]
+            cur.execute('SELECT private_data FROM finance.finance_recurring_detections');self.assertTrue(all('Synthetic' not in r[0] for r in cur.fetchall()))
+        # Replay completed job and a new job on unchanged input do not duplicate evidence.
+        with connection(worker=True) as conn:self.assertFalse(step(conn,job))
+        self.client.post('/api/v1/finance/recurring/detect',json={})
+        with patch('finance_worker.gate',return_value=None):finance_worker.scan(Mock())
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT count(*) FROM finance.finance_recurring_detections');self.assertEqual(count,cur.fetchone()[0])
+        for table in ('finance_recurring_patterns','finance_recurring_detections','finance_recurring_members','finance_recurring_scans'):
+            for verb in ('DELETE FROM','TRUNCATE'):
+                with self.assertRaises(psycopg2.Error):
+                    with self.admin.cursor() as cur:cur.execute(verb+' finance.'+table)
+        # A committed snapshot cannot acquire new members afterwards.
+        with self.assertRaises(psycopg2.Error):
+            with connection(worker=True) as conn,conn.cursor() as cur:
+                cur.execute('INSERT INTO finance.finance_recurring_members VALUES (%s,%s)',(pattern['detection_id'],self.client.get('/api/v1/finance/recurring/'+listing(other)[0]['id']+'/transactions').json()['transactions'][0]['id']))
+        # Rollback hides stale evidence immediately, then a refresh appends inactive evidence.
+        for member in members['transactions'][:3]:
+            with self.admin.cursor() as cur:
+                cur.execute('SELECT r.batch_id FROM finance.finance_transactions t JOIN finance.finance_import_records r ON r.id=t.record_id WHERE t.id=%s',(member['id'],))
+                bid=str(cur.fetchone()[0])
+            self.assertEqual(200,self.client.post('/api/v1/finance/imports/'+bid+'/rollback',json={'confirm':True}).status_code)
+        self.assertEqual([],listing())
+        self.client.post('/api/v1/finance/recurring/detect',json={})
+        with patch('finance_worker.gate',return_value=None):finance_worker.scan(Mock())
+        self.assertEqual('inactive',listing()[0]['status'])
+        # Restored source links may reintroduce identical older evidence: append a
+        # fresh active snapshot rather than remaining stuck on the inactive one.
+        for source in originals:self.import_file(source.replace(b'</MsgId>',b'-restored</MsgId>'))
+        self.client.post('/api/v1/finance/recurring/detect',json={})
+        with patch('finance_worker.gate',return_value=None):finance_worker.scan(Mock())
+        restored=listing()[0]
+        self.assertEqual('proposed',restored['status'])
+        self.assertEqual(pattern['id'],restored['id'])
+        self.assertNotEqual(pattern['detection_id'],restored['detection_id'])
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT count(*) FROM finance.finance_transactions');self.assertEqual(transaction_count,cur.fetchone()[0])
+        self.client.post('/api/v1/finance/import',json={})
+        self.assertEqual(409,self.client.post('/api/v1/finance/recurring/detect',json={}).status_code)
+
+        with self.assertRaises(psycopg2.Error):
+            with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20260930_add_finance_recurring.sql').read_text())
+        with self.admin.cursor() as cur:cur.execute('ROLLBACK')
+        self.assertEqual(200,self.client.get('/api/v1/finance/recurring').status_code)
+
+    def test_93_recurring_owner_review_replay_conflict_and_audit(self):
+        import psycopg2
+        from core.finance.store import connection
+        listing=lambda:self.client.get('/api/v1/finance/recurring').json()['patterns']
+        pattern=next(p for p in listing() if p['active'])
+        url='/api/v1/finance/recurring/'+pattern['id']+'/review'
+        payload=dict(key=str(uuid.uuid4()),previous=None,detection_id=pattern['detection_id'],status='confirmed',recurring_type='subscription')
+        self.assertEqual(422,self.client.post(url,json={**payload,'status':'nonsense'}).status_code)
+        self.assertEqual(200,self.client.post(url,json=payload).status_code)
+        self.assertEqual(200,self.client.post(url,json=payload).status_code)
+        self.assertEqual(409,self.client.post(url,json={**payload,'status':'rejected'}).status_code)
+        self.assertEqual(409,self.client.post(url,json={**payload,'key':str(uuid.uuid4())}).status_code)
+        current=next(p for p in listing() if p['id']==pattern['id'])
+        self.assertEqual('confirmed',current['status']);self.assertEqual('subscription',current['reviewed_type'])
+        self.assertEqual(current['observation_count'],sum(c['count'] for c in current['classifications']))
+        payload.update(previous=current['review_id'],key=str(uuid.uuid4()),status='rejected')
+        self.assertEqual(200,self.client.post(url,json=payload).status_code)
+        self.assertEqual('rejected',next(p for p in listing() if p['id']==pattern['id'])['status'])
+        self.assertEqual(409,self.client.post(url,json={**payload,'key':str(uuid.uuid4()),'detection_id':str(uuid.uuid4())}).status_code)
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT count(*) FROM finance.finance_recurring_reviews WHERE pattern_id=%s',(pattern['id'],))
+            self.assertEqual(2,cur.fetchone()[0])
+        for sql in ('UPDATE finance.finance_recurring_reviews SET status=\'proposed\'', 'DELETE FROM finance.finance_recurring_reviews', 'TRUNCATE finance.finance_recurring_reviews'):
+            with self.assertRaises(psycopg2.Error):
+                with self.admin.cursor() as cur:cur.execute(sql)
+            with self.admin.cursor() as cur:cur.execute('ROLLBACK')
+        with self.assertRaises(psycopg2.Error):
+            with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20260930_add_finance_recurring_reviews.sql').read_text())
+        with self.admin.cursor() as cur:cur.execute('ROLLBACK')
+        with connection() as conn,conn.cursor() as cur:
+            cur.execute('SELECT count(*) AS n FROM finance.finance_recurring_reviews')
+            self.assertGreaterEqual(cur.fetchone()['n'],2)
+        # New evidence must not reset the owner's rejection.
+        with connection(worker=True) as conn,conn.cursor() as cur:
+            cur.execute("INSERT INTO finance.finance_ingest_jobs(job_kind,status) VALUES ('recurring','done') RETURNING id")
+            job=cur.fetchone()['id']
+            cur.execute("""INSERT INTO finance.finance_recurring_detections
+                (pattern_id,job_id,evidence_key,active,cadence,confidence,observation_count,private_data,detection_version)
+                SELECT pattern_id,%s,evidence_key,active,cadence,confidence,observation_count,private_data,detection_version
+                FROM finance.finance_recurring_detections WHERE id=%s RETURNING id""",(job,pattern['detection_id']))
+            new_detection=cur.fetchone()['id']
+            cur.execute("INSERT INTO finance.finance_recurring_members SELECT %s,transaction_id FROM finance.finance_recurring_members WHERE detection_id=%s",(new_detection,pattern['detection_id']))
+        updated=next(p for p in listing() if p['id']==pattern['id'])
+        self.assertEqual('rejected',updated['status']);self.assertTrue(updated['new_evidence'])
+        reopened={**payload,'key':str(uuid.uuid4()),'previous':updated['review_id'],'detection_id':updated['detection_id'],'status':'proposed'}
+        self.assertEqual(200,self.client.post(url,json=reopened).status_code)
+        self.assertEqual('proposed',next(p for p in listing() if p['id']==pattern['id'])['status'])
+        # Owner-only middleware also covers review writes.
+        from fastapi.testclient import TestClient
+        with TestClient(self.client.app) as anonymous:
+            self.assertEqual(401,anonymous.post(url,json=payload,headers={'origin':'http://testserver'}).status_code)
 
 
 if __name__=='__main__': unittest.main()
