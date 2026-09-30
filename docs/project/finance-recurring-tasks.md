@@ -1,16 +1,16 @@
 # Taken voor Hugo — vervolg op SCRUM-160
 
-Slice 1 levert de foundation in [finance-recurring.md](finance-recurring.md).
-Voer onderstaande opdrachten **na merge van slice 1**, opeenvolgend en per PR uit.
-Begin iedere opdracht op actuele main en een nieuwe `codex/*`-branch. Geen autonome
-productiedeployment. De dagelijkse Codex-limiet was niet beschikbaar; hiervoor is geen
-week-/vijfuurspercentage gebruikt. Dit vervolg is bewust niet half geimplementeerd.
+Slices 1 en 2 staan samen in PR #221; nog niet gedeployed. Merge/pull/deployment
+blijven bij Hugo. Voor vervolgslices begin je na merge op actuele main met een
+nieuwe codex-branch. Maximaal 50% totaal verbruik van het vijfuurvenster.
+Wekelijkse betalingen vallen buiten de huidige UI-scope.
 
 ## Taak 1 — Slice 2: Terugkerend-overzicht met auditeerbare patroonreview
 
 **Doel/waarom:** eigenaar kan persisted patronen begrijpen, bevestigen, afwijzen en
 inactief zetten; maandelijkse recurrence is niet automatisch een abonnement.
-**Status:** niet gestart. **Afhankelijkheid:** slice 1 migratie/API/worker.
+**Status:** afgerond in PR #221. Onderstaande lijst beschrijft de implementatie;
+niet opnieuw uitvoeren. **Afhankelijkheid:** beide migraties in de PR.
 
 **Componenten:** `dashboard/static/finance.html`, `finance.js`, `finance.css`,
 `dashboard/finance.py`, `core/finance/recurring.py`, `tests/test_finance.py`, bestaande
@@ -40,8 +40,8 @@ request, stale predecessor, rejected blijft rejected bij onveranderde/herhaalde 
 nieuwe source-evidence blijft zichtbaar zonder owner-review te wissen, source rollback,
 lege/populated rollback en immutable triggers.
 
-**Verificatie:** `python -m unittest discover -s tests -p 'test_finance*.py' -q`; voeg een
-gerichte CJS-test toe en draai `node --test tests/test_finance_recurring.cjs`. Bestaande
+**Verificatie:** `python -m unittest discover -s tests -p 'test_finance*.py' -q`; draai
+`node tests/test_finance_recurring_ui.cjs`. Bestaande
 frontendregressies: `node --test tests/test_finance_selection.cjs tests/test_finance_management.cjs`.
 Gebruik de geisoleerde Finance PostgreSQL-teststack uit het foundationdocument.
 

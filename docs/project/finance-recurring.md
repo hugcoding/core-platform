@@ -2,10 +2,11 @@
 
 ## Oplevergrens
 
-Vertical slice 1: deterministische detectie, persistente evidence, bestaande worker,
-owner-only API en tests. Geen nieuwe UI, classificatieacties, forecast-occurrences of
-maandlastentotalen. Vervolgwerk staat uitvoerbaar in [Taken voor Hugo](finance-recurring-tasks.md).
-Dagelijkse Codex-usage was niet beschikbaar; vijf uur en week zijn geen daglimiet.
+Slices 1 en 2: deterministische detectie, persistente evidence, bestaande worker,
+owner-only API en het Terugkerend-overzicht met append-only patroonbeoordelingen.
+Geen bulkclassificatie, forecast-occurrences of maandlastentotalen.
+Vervolgwerk: [Taken voor Hugo](finance-recurring-tasks.md).
+Gebruikersgrens: maximaal 50% totaal verbruik van het vijfuurvenster.
 
 ## Reuse-map
 
@@ -17,7 +18,7 @@ Dagelijkse Codex-usage was niet beschikbaar; vijf uur en week zijn geen daglimie
 | Transfers/groepen | `account_groups.transfer_scope`, `internal_transfer_group` | Bestaande groepsgrens bepaalt `periodic_transfer` |
 | Taken/capaciteit/Pulse | `store.enqueue`, `finance_ingest_jobs`, `finance_worker.admitted/gate`, Pulse heartbeat/queue | Nieuwe `job_kind=recurring`, per-account checkpoint; geen tweede queue/worker/notificatiesysteem |
 | Confidence/provenance | Numerieke confidence en append-only conventie, encrypt/HMAC | Recurrence-specifieke score/evidence; geen gedeeld nieuw confidence-framework |
-| API/privacy | `dashboard/finance.py`, `finance_boundary`, `transaction()` | Drie endpoints achter bestaande owner/same-origin/no-store grens |
+| API/privacy | `dashboard/finance.py`, `finance_boundary`, `transaction()` | Endpoints achter bestaande owner/same-origin/no-store grens |
 | Review/bulk/selectie | `replay`, `approve_category_selection`, bestaande suggestions-dialog en checkboxhandlers | Nog niet gewijzigd: hergebruiken in slices 2–3 |
 | Tests/migraties | `tests/test_finance.py`, bestaande fictieve CAMT-helpers en isolated Compose | Pure detectietests, integratietest, up/down/up en beschermde rollback |
 
@@ -86,32 +87,35 @@ core git pull --skip-docs
 /usr/local/bin/docker exec -i postgres sh -c \
   'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d nasdb_test' \
   < database/migrations/20260930_add_finance_recurring.sql
+/usr/local/bin/docker exec -i postgres sh -c \
+  'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d nasdb_test' \
+  < database/migrations/20260930_add_finance_recurring_reviews.sql
 /usr/local/bin/docker compose --profile finance up -d --no-deps --force-recreate dashboard finance_worker
 core doctor --finance --worker
 ```
 
-Er is nog geen knop. Open de bestaande Finance-pagina en ontgrendel daar. Via de
-browserconsole op dezelfde oorsprong (geen toegangscode in code plakken):
+Open Finance en kies **Terugkerend**. Kies **Opnieuw herkennen** (alle rekeningen),
+wacht op de bestaande jobstatus/CORE Pulse en kies **Vernieuwen**. Filter vervolgens
+op rekening. Wekelijkse patronen vallen buiten deze UI; de reeds bestaande detector
+uit slice 1 blijft backwards compatible.
 
-```js
-await fetch('/api/v1/finance/recurring/detect', {
-  method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'
-}).then(r => ({status: r.status, ok: r.ok}));
-```
+Het overzicht toont identiteit, rekening, type, ritme, bedrag/bereik, observaties,
+laatste/verwachte datum, heuristische confidence, huidige categorie/subcategorie,
+aantallen handmatig bevestigde classificaties en patroonstatus. Betalingen openen
+het bestaande detailvenster, met classificatiehistorie en bronlinks.
 
-Een lopende recurring job wordt hergebruikt; een ander actief jobtype geeft 409
-`finance_job_busy`. Volg de bestaande Finance-jobstatus/CORE Pulse tot `done`.
-Controleer daarna lokaal (deel resultaten met bankgegevens niet):
+**Bevestigen**, **Afwijzen**, **Inactief maken** en **Heropenen** voegen een
+`finance_recurring_reviews`-event toe. Een herhaald verzoek met dezelfde key is
+idempotent; een verouderde detection/review-ID geeft 409. Nieuwe detecties wijzigen
+het eigenaarsbesluit niet en krijgen een melding nieuwe evidence. Bij inactieve
+detectie toont het overzicht inactive; het laatste eigenaarsoordeel blijft bewaard.
+Een categorie wijzigen in het bestaande transactievenster verandert geen patroonreview.
+De volgende refresh leest de actuele classificaties uit `v_transactions`.
 
-```js
-await fetch('/api/v1/finance/recurring').then(r => r.json());
-// Optioneel: ?account=<account UUID>&page=0
-// GET /api/v1/finance/recurring/<pattern UUID>/transactions?page=0
-```
-
-GETs zijn gepagineerd (50 items) en starten geen job. Resultaten bevatten detection-ID,
-confidence, evidence, status proposed/inactive en stale. Transacties houden hun bestaande
-source-links. `next_expected` is geen ACTUAL en wijzigt nooit banksaldo of historie.
+Geen herimport, nieuwe secrets of handmatige codeaanpassing nodig. Rollback alleen
+bij lege featurehistorie: eerst reviews-rollback, dan detectie-rollback. Na gebruik
+weigeren de rollbackbestanden auditgeschiedenis te verwijderen; behoud het schema
+voor een forward-fix.
 
 ## Tests
 

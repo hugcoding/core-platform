@@ -278,6 +278,30 @@ def recurring_transactions(pattern_id:str,page:int=0):
     return {'detection_id':str(detection['id']),'transactions':[transaction(r) for r in rows[:50]],'has_more':len(rows)>50,'page':page}
 
 
+@router.post('/api/v1/finance/recurring/{pattern_id}/review')
+def review_recurring(pattern_id:str,payload:dict=Body(...)):
+    pid=uid(pattern_id);key=uid(payload.get('key'));did=uid(payload.get('detection_id'))
+    previous=uid(payload['previous']) if payload.get('previous') else None
+    status=payload.get('status');kind=payload.get('recurring_type')
+    if status not in ('confirmed','rejected','inactive','proposed') or kind not in ('subscription','fixed_cost','periodic_transfer','other_recurring'):
+        raise HTTPException(422,'invalid_recurring_review')
+    digest=fingerprint('recurring-review-v1',[pid,did,previous,status,kind])
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-recurring-review'))")
+        if replay(cur,'finance_recurring_reviews',key,digest):return {'status':'saved'}
+        cur.execute('SELECT id FROM finance.finance_recurring_detections WHERE pattern_id=%s ORDER BY sequence_no DESC LIMIT 1',(pid,))
+        row=cur.fetchone()
+        if not row:raise HTTPException(404,'pattern_not_found')
+        if str(row['id'])!=did:raise HTTPException(409,'review_changed')
+        cur.execute('SELECT id FROM finance.finance_recurring_reviews WHERE pattern_id=%s ORDER BY sequence_no DESC LIMIT 1',(pid,))
+        row=cur.fetchone()
+        if (str(row['id']) if row else None)!=previous:raise HTTPException(409,'review_changed')
+        cur.execute("""INSERT INTO finance.finance_recurring_reviews
+            (pattern_id,detection_id,status,recurring_type,previous,idempotency_key,payload_digest)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)""",(pid,did,status,kind,previous,key,digest))
+    return {'status':'saved'}
+
+
 @router.post('/api/v1/finance/categorization')
 def request_categorization():
     from core.finance.local_classification import settings

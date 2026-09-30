@@ -161,21 +161,41 @@ def step(conn, job):
 def patterns(cur, account=None, page=0):
     """Persisted evidence only, no detection on page load. Retired sources hidden."""
     cur.execute('''SELECT p.*,d.id AS detection_id,d.active,d.private_data,d.created_at,
-        s.revision_key FROM finance.finance_recurring_patterns p
+        s.revision_key,r.id AS review_id,r.status AS review_status,r.recurring_type AS reviewed_type,
+        r.detection_id AS reviewed_detection FROM finance.finance_recurring_patterns p
         JOIN LATERAL (SELECT * FROM finance.finance_recurring_detections
             WHERE pattern_id=p.id ORDER BY sequence_no DESC LIMIT 1) d ON true
         JOIN LATERAL (SELECT revision_key FROM finance.finance_recurring_scans
             WHERE account_id=p.account_id ORDER BY created_at DESC,job_id DESC LIMIT 1) s ON true
-        WHERE (%s::uuid IS NULL OR p.account_id=%s::uuid)
+        LEFT JOIN LATERAL (SELECT * FROM finance.finance_recurring_reviews
+            WHERE pattern_id=p.id ORDER BY sequence_no DESC LIMIT 1) r ON true
+        WHERE (%s::uuid IS NULL OR p.account_id=%s::uuid) AND d.cadence IS DISTINCT FROM 'weekly'
         AND (NOT d.active OR NOT EXISTS (SELECT 1 FROM finance.finance_recurring_members m
             WHERE m.detection_id=d.id AND NOT EXISTS(SELECT 1 FROM finance.v_transactions t WHERE t.id=m.transaction_id)))
         ORDER BY p.account_id,p.id LIMIT 51 OFFSET %s''', (account, account, page*50))
     rows = cur.fetchall()
+    # Current effective classifications, not copied into detection evidence.
+    summaries = defaultdict(list)
+    if rows:
+        cur.execute("""SELECT m.detection_id,t.category_code,t.subcategory_code,t.transaction_type,
+            count(*) AS count,count(*) FILTER(WHERE t.confirmed) AS confirmed_count
+            FROM finance.finance_recurring_members m JOIN finance.v_transactions t ON t.id=m.transaction_id
+            WHERE m.detection_id=ANY(%s::uuid[])
+            GROUP BY m.detection_id,t.category_code,t.subcategory_code,t.transaction_type""",
+            ([str(r['detection_id']) for r in rows[:50]],))
+        for summary in cur.fetchall():
+            did = summary.pop('detection_id')
+            summaries[did].append(dict(summary))
     stamp = current_revision(cur)
     items = []
     for row in rows[:50]:
         items.append({**decrypt(row['private_data']), 'id': str(row['id']),
             'account_id': str(row['account_id']), 'direction': row['direction'], 'currency': row['currency'],
             'detection_id': str(row['detection_id']), 'detected_at': row['created_at'].isoformat(),
-            'status': 'proposed' if row['active'] else 'inactive', 'stale': row['revision_key'] != stamp})
+            'status': (row['review_status'] or 'proposed') if row['active'] else 'inactive',
+            'classifications': summaries[row['detection_id']],
+            'review_status': row['review_status'], 'review_id': str(row['review_id']) if row['review_id'] else None,
+            'reviewed_type': row['reviewed_type'],
+            'new_evidence': bool(row['reviewed_detection'] and row['reviewed_detection'] != row['detection_id']),
+            'stale': row['revision_key'] != stamp})
     return {'patterns': items, 'page': page, 'has_more': len(rows) > 50, 'detection_version': VERSION}
