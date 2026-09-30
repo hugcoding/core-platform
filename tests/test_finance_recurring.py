@@ -1,0 +1,81 @@
+"""Recurrence tests use fabricated observations only."""
+from datetime import date, timedelta
+from decimal import Decimal
+import unittest
+
+from core.finance.recurring import detect
+
+
+def series(dates, amounts=None):
+    return [{'id': str(i), 'booking_date': date.fromisoformat(d),
+             'amount': Decimal(str((amounts or [-12]*len(dates))[i]))} for i, d in enumerate(dates)]
+
+
+class DetectionTests(unittest.TestCase):
+    def test_monthly_without_any_classification(self):
+        result = detect(series(['2026-06-18','2026-07-18','2026-08-18','2026-09-18']))
+        self.assertEqual('monthly', result['cadence'])
+        self.assertEqual('2026-10-18', result['next_expected'])
+        self.assertEqual(4, result['observation_count'])
+        self.assertEqual('-12.00', result['typical_amount'])
+        self.assertGreaterEqual(result['confidence'], .8)
+
+    def test_date_drift_and_variable_amounts(self):
+        result = detect(series(['2026-06-18','2026-07-18','2026-08-19','2026-09-18'], [-117,-124,-119,-131]))
+        self.assertEqual('monthly', result['cadence'])
+        self.assertEqual('-121.50', result['typical_amount'])
+        self.assertEqual('2026-10-18', result['next_expected'])
+        self.assertGreater(Decimal(result['amount_variation']), 0)
+
+    def test_all_cadences(self):
+        for cadence, dates, expected in [
+            ('weekly', ['2026-09-01','2026-09-08','2026-09-15'], '2026-09-22'),
+            ('quarterly', ['2026-01-18','2026-04-18','2026-07-19'], '2026-10-18'),
+            ('yearly', ['2024-09-18','2025-09-19','2026-09-18'], '2027-09-18'),
+        ]:
+            with self.subTest(cadence=cadence):
+                result = detect(series(dates))
+                self.assertEqual(cadence, result['cadence'])
+                self.assertEqual(expected, result['next_expected'])
+
+    def test_missed_period_and_amount_outlier_survive(self):
+        result = detect(series(['2026-05-18','2026-06-18','2026-08-18','2026-09-18'], [-12,-12,-120,-12]))
+        self.assertEqual('monthly', result['cadence'])
+        self.assertEqual(1, result['missed_periods'])
+        self.assertEqual('-12.00', result['typical_amount'])
+        self.assertEqual('-120', result['amount_min'])
+
+    def test_one_timing_outlier_in_long_series(self):
+        result = detect(series(['2026-04-18','2026-05-18','2026-06-26','2026-07-18','2026-08-18']))
+        self.assertEqual('monthly', result['cadence'])
+        self.assertEqual(1, result['timing_outliers'])
+
+    def test_month_end_and_leap_year(self):
+        result = detect(series(['2026-01-31','2026-02-28','2026-03-31']))
+        self.assertEqual('2026-04-30', result['next_expected'])
+        self.assertTrue(result['month_end'])
+        result = detect(series(['2024-02-29','2025-02-28','2026-02-28']))
+        self.assertEqual('yearly', result['cadence'])
+        self.assertEqual('2027-02-28', result['next_expected'])
+
+    def test_insufficient_incidental_and_irregular_abstain(self):
+        for dates in [[], ['2026-01-18'], ['2026-01-18','2026-02-18'],
+                      ['2026-01-02','2026-01-11','2026-04-27','2026-07-04'],
+                      ['2026-01-01','2026-02-15','2026-03-28','2026-04-06'],
+                      ['2026-01-18','2026-02-18','2026-02-18','2026-03-18']]:
+            self.assertIsNone(detect(series(dates)))
+
+    def test_order_independent_and_mixed_direction_abstains(self):
+        rows = series(['2026-01-18','2026-02-18','2026-03-18'])
+        self.assertEqual(detect(rows), detect(list(reversed(rows))))
+        rows[-1]['amount'] = Decimal(12)
+        self.assertIsNone(detect(rows))
+
+    def test_large_weekly_series_no_pairwise_comparison(self):
+        rows = [{'id': str(i), 'booking_date': date(2000,1,3)+timedelta(days=i*7),
+                 'amount': Decimal(-12)} for i in range(10000)]
+        self.assertEqual('weekly', detect(rows)['cadence'])
+
+
+if __name__ == '__main__':
+    unittest.main()

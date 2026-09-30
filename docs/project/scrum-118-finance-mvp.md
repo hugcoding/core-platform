@@ -86,3 +86,8 @@ duplicaatkoppeling, herstel vanuit bestaande bronnen en de NAS-uitrolstappen.
 
 Zie [Finance runtime-activatie](finance-runtime-activation.md) voor de expliciete lokale
 instelling, `core doctor --finance` en de NAS-uitrolstappen.
+
+## Terugkerende betalingen
+
+Zie [Recurring detection](finance-recurring.md) voor slice 1, migratie, API en uitrol.
+De vervolgopdrachten staan in [Taken voor Hugo](finance-recurring-tasks.md).

@@ -243,6 +243,41 @@ def request_import():
     return {'job_id':job,'status':'pending'}
 
 
+@router.post('/api/v1/finance/recurring/detect')
+def request_recurring_detection():
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-job-enqueue'))")
+        cur.execute("SELECT id,job_kind FROM finance.finance_ingest_jobs WHERE status IN ('pending','running')")
+        active=cur.fetchone()
+        if active and active['job_kind']!='recurring':raise HTTPException(409,'finance_job_busy')
+        job=enqueue(cur,'recurring')
+    return {'job_id':job,'status':'pending'}
+
+
+@router.get('/api/v1/finance/recurring')
+def recurring_patterns(account:str='',page:int=0):
+    from core.finance.recurring import patterns
+    if not 0<=page<=10000:raise HTTPException(422,'invalid_page')
+    account=uid(account) if account else None
+    with connection() as conn,conn.cursor() as cur:
+        return patterns(cur,account,page)
+
+
+@router.get('/api/v1/finance/recurring/{pattern_id}/transactions')
+def recurring_transactions(pattern_id:str,page:int=0):
+    pid=uid(pattern_id)
+    if not 0<=page<=10000:raise HTTPException(422,'invalid_page')
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute('SELECT id FROM finance.finance_recurring_detections WHERE pattern_id=%s ORDER BY sequence_no DESC LIMIT 1',(pid,))
+        detection=cur.fetchone()
+        if not detection:raise HTTPException(404,'pattern_not_found')
+        cur.execute('''SELECT t.* FROM finance.finance_recurring_members m
+            JOIN finance.v_transactions t ON t.id=m.transaction_id
+            WHERE m.detection_id=%s ORDER BY t.booking_date DESC,t.id LIMIT 51 OFFSET %s''',(detection['id'],page*50))
+        rows=cur.fetchall()
+    return {'detection_id':str(detection['id']),'transactions':[transaction(r) for r in rows[:50]],'has_more':len(rows)>50,'page':page}
+
+
 @router.post('/api/v1/finance/categorization')
 def request_categorization():
     from core.finance.local_classification import settings
