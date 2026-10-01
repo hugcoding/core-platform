@@ -4,7 +4,7 @@ const $=id=>document.getElementById(id), money=v=>new Intl.NumberFormat('nl-NL',
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const key=()=>crypto.randomUUID?crypto.randomUUID():'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=crypto.getRandomValues(new Uint8Array(1))[0]&15;return(c==='x'?r:(r&3|8)).toString(16)});
 const labels={received:'Ontvangen',validated:'Gevalideerd',imported:'Geïmporteerd',partial:'Te beoordelen',rejected:'Afgewezen',rolled_back:'Teruggedraaid',pending:'Wachtend',running:'Bezig',done:'Gereed',failed:'Mislukt'};
-const reasons={capacity_unavailable:'Wacht op een actuele centrale capaciteitsmeting',waiting_for_stable_capacity:'Wacht op stabiele NAS-capaciteit',finance_job_busy:'Er loopt al een andere verwerking. Wacht tot deze gereed is en probeer opnieuw.',bank_reference_differs:'De ASN-nummers verschillen; deze betalingen kunnen niet als dezelfde worden gekoppeld.',bank_reference_reconciled:'ASN-transactienummers gecontroleerd',waiting_for_cpu:'Wacht op CPU-capaciteit',waiting_for_memory:'Wacht op geheugen',postgres_busy:'Database heeft voorrang',controlled_execution_priority:'Gecontroleerde uitvoering heeft voorrang',core_pipeline_priority:'CORE-verwerking heeft voorrang',retry_wait:'Tijdelijke storing; nieuwe poging volgt',no_xml_files:'Geen XML-bestanden gevonden',unsupported_namespace:'XML-versie wordt nog niet ondersteund',balance_mismatch:'Saldo-controle wijkt af',service_unavailable:'Dienst tijdelijk niet beschikbaar'};
+const reasons={invalid_recurring_link:'Kies een los patroon en een ander hoofdpatroon op dezelfde rekening. Een bestaande groep kan niet onder een ander patroon worden gehangen.',manual_review_protected:'Een geselecteerde betaling is handmatig beoordeeld. Geef expliciet toestemming om deze te wijzigen.',capacity_unavailable:'Wacht op een actuele centrale capaciteitsmeting',waiting_for_stable_capacity:'Wacht op stabiele NAS-capaciteit',finance_job_busy:'Er loopt al een andere verwerking. Wacht tot deze gereed is en probeer opnieuw.',bank_reference_differs:'De ASN-nummers verschillen; deze betalingen kunnen niet als dezelfde worden gekoppeld.',bank_reference_reconciled:'ASN-transactienummers gecontroleerd',waiting_for_cpu:'Wacht op CPU-capaciteit',waiting_for_memory:'Wacht op geheugen',postgres_busy:'Database heeft voorrang',controlled_execution_priority:'Gecontroleerde uitvoering heeft voorrang',core_pipeline_priority:'CORE-verwerking heeft voorrang',retry_wait:'Tijdelijke storing; nieuwe poging volgt',no_xml_files:'Geen XML-bestanden gevonden',unsupported_namespace:'XML-versie wordt nog niet ondersteund',balance_mismatch:'Saldo-controle wijkt af',service_unavailable:'Dienst tijdelijk niet beschikbaar'};
 let activePeriod={},detailEpoch=0,duplicateEpoch=0;
 let managementState=null,managementEpoch=0,managementBusy=false,managementAttempt=null,managementHistoryEpoch=0;
 let suggestionsState=null,suggestionsEpoch=0,suggestionSeed=null;
@@ -114,11 +114,13 @@ async function showSuggestions(seed){
  }catch(e){if(epoch===sessionEpoch&&request===suggestionsEpoch)$('suggestionsStatus').textContent=e.name==='AbortError'?'Het zoeken duurt te lang. Probeer Voorstellen vernieuwen. Er is niets gewijzigd.':e.message}
  finally{clearTimeout(timeout);if(epoch===sessionEpoch&&request===suggestionsEpoch){$('suggestionsProgress').hidden=true;$('refreshSuggestions').disabled=false}}
 }
+function updateSelectionControls(boxes,all,approve,busy=false){
+ const eligible=boxes.filter(b=>!b.disabled),count=eligible.filter(b=>b.checked).length;
+ all.checked=eligible.length>0&&count===eligible.length;all.indeterminate=count>0&&count<eligible.length;
+ all.disabled=!eligible.length||busy;approve.disabled=!count||busy;approve.textContent=`Selectie accorderen (${count})`;
+}
 function updateSuggestionSelection(){
- const boxes=[...document.querySelectorAll('[data-select-suggestion]')],count=boxes.filter(b=>b.checked).length;
- $('selectVisibleSuggestions').checked=boxes.length>0&&count===boxes.length;$('selectVisibleSuggestions').indeterminate=count>0&&count<boxes.length;
- $('selectVisibleSuggestions').disabled=!boxes.length||!!suggestionsState?.busy;
- $('approveSelection').disabled=!count||!!suggestionsState?.busy;$('approveSelection').textContent=`Selectie accorderen (${count})`;
+ updateSelectionControls([...document.querySelectorAll('[data-select-suggestion]')],$('selectVisibleSuggestions'),$('approveSelection'),!!suggestionsState?.busy);
 }
 $('selectVisibleSuggestions').onchange=()=>{document.querySelectorAll('[data-select-suggestion]').forEach(b=>b.checked=$('selectVisibleSuggestions').checked);updateSuggestionSelection()};
 $('approveSelection').onclick=async()=>{
@@ -217,13 +219,18 @@ async function loadRecurring(){
    return `<section class="panel"><h3>${esc(p.merchant||'Onbekende tegenpartij')}</h3><p>${esc(account?.label||'Rekening')} &middot; ${esc(recurringLabels[p.cadence]||'Niet meer herkend')} &middot; ${esc(recurringLabels[p.status])}</p>
     <p>${esc(p.typical_amount??'?')} ${esc(p.currency)} per betaling (bereik ${esc(p.amount_min??'?')} &middot; ${esc(p.amount_max??'?')}). ${esc(p.observation_count)} betalingen; herkenningsscore ${Math.round((p.confidence||0)*100)}%.</p>
     <p>Laatste betaling: ${esc(p.last_observed||'onbekend')}. Verwachte datum: ${esc(p.next_expected||'onbekend')} (schatting).</p>
+    <p>Laatste waargenomen bedragwijziging: ${esc(p.price_change_percent??'onbekend')}% (${esc(p.previous_amount??'?')} naar ${esc(p.latest_amount??'?')} ${esc(p.currency)}). Dit is geen bevestigde contractwijziging.</p>
+    ${(p.components||[]).length>1?'<p>Handmatig samengevoegd. Perioden kunnen overlappen of gaten bevatten; er wordt geen doorlopend ritme of forecast afgeleid.</p>':''}
+    ${(p.components||[]).map(c=>`<p>${esc(c.merchant)}: ${esc(c.first_observed||'start niet bekend')} t/m ${esc(c.last_observed||'onbekend')} (${esc(c.observation_count)} betalingen) ${c.id!==p.id?`<button data-recurring-unlink="${i}" data-component="${esc(c.id)}">Losmaken</button>`:''}</p>`).join('')}
     ${p.stale?'<p>Bronnen of indelingen zijn gewijzigd. Kies Opnieuw herkennen voor actuele patronen.</p>':''}${p.new_evidence?'<p>Nieuwe detectie sinds je laatste beoordeling; je oordeel is behouden.</p>':''}
     <p>Classificatie: ${(p.classifications||[]).map(c=>`${esc(classificationLabel(c))}: ${c.count} betalingen, ${c.confirmed_count} handmatig bevestigd`).join('; ')||'Geen actieve classificaties'}</p>
     <label>Soort <select data-recurring-kind="${i}">${['subscription','fixed_cost','periodic_transfer','other_recurring'].map(k=>`<option value="${k}" ${k===kind?'selected':''}>${recurringLabels[k]}</option>`).join('')}</select></label>
     ${['confirmed','rejected','inactive','proposed'].map(k=>`<button data-recurring-review="${i}" data-status="${k}">${k==='confirmed'?'Bevestigen':k==='rejected'?'Afwijzen':k==='inactive'?'Inactief maken':'Heropenen'}</button>`).join('')}
-    <button data-recurring-members="${i}">Betalingen en categorie&euml;n bekijken</button><div data-recurring-details="${i}"></div></section>`;
+    <button data-recurring-merge="${i}" ${(p.components||[]).length>1?'disabled':''}>Samenvoegen onder andere naam</button><button data-recurring-members="${i}">Betalingen en categorie&euml;n bekijken</button><div data-recurring-details="${i}"></div></section>`;
   }).join('');
   document.querySelectorAll('[data-recurring-review]').forEach(b=>b.onclick=()=>saveRecurring(data.patterns[Number(b.dataset.recurringReview)],b.dataset.status,document.querySelector(`[data-recurring-kind="${b.dataset.recurringReview}"]`).value));
+  document.querySelectorAll('[data-recurring-merge]').forEach(b=>b.onclick=()=>loadRecurringCandidates(data.patterns[Number(b.dataset.recurringMerge)],b.dataset.recurringMerge,0,request));
+  document.querySelectorAll('[data-recurring-unlink]').forEach(b=>b.onclick=()=>{const p=data.patterns[Number(b.dataset.recurringUnlink)].components.find(c=>c.id===b.dataset.component);saveRecurringLink(p,null,request)});
   document.querySelectorAll('[data-recurring-members]').forEach(b=>b.onclick=()=>loadRecurringMembers(data.patterns[Number(b.dataset.recurringMembers)],b.dataset.recurringMembers,0,request));
   recurringControls(false);$('recurringPrevious').disabled=recurringPage===0;$('recurringNext').disabled=!data.has_more;
  }catch(e){if(epoch===sessionEpoch&&request===recurringEpoch){recurringControls(false);$('recurringPrevious').disabled=true;$('recurringNext').disabled=true;$('recurringStatus').textContent=e.message}}
@@ -239,9 +246,48 @@ async function loadRecurringMembers(pattern,index,memberPage,request){
  const epoch=sessionEpoch,target=document.querySelector(`[data-recurring-details="${index}"]`);if(!target)return;const memberRequest=key();target.dataset.request=memberRequest;target.textContent='Betalingen laden...';
  try{const data=await api('/recurring/'+pattern.id+'/transactions?page='+memberPage);if(epoch!==sessionEpoch||request!==recurringEpoch||target.dataset.request!==memberRequest)return;
   if(data.detection_id!==pattern.detection_id){target.textContent='Het patroon is bijgewerkt. Vernieuw het overzicht.';return}
-  target.innerHTML=data.transactions.map((t,i)=>`<p><button data-member="${i}">${esc(t.booking_date)} &middot; ${esc(t.amount)} ${esc(t.currency)} &middot; ${esc(classificationLabel(t))}</button> ${t.confirmed?'Handmatig bevestigd':'Niet handmatig bevestigd'}</p>`).join('')||'<p>Geen actieve bronbetalingen.</p>';
+  target.innerHTML=`<div class="classification-fields"><label>Categorie<select data-category><option value="">Kies categorie</option>${state.categories.filter(c=>!c.parent_id&&c.active).map(c=>`<option value="${esc(c.code)}">${esc(c.name||c.label)}</option>`).join('')}</select></label><label>Subcategorie<select data-subcategory><option value="">Geen subcategorie</option></select></label><label>Transactietype<select data-type>${state.transaction_types.map(t=>`<option value="${esc(t.code)}">${esc(t.name)}</option>`).join('')}</select></label></div>
+   <p><label><input type="checkbox" data-overwrite> Ik wil ook geselecteerde handmatig beoordeelde betalingen wijzigen</label></p>
+   <label><input type="checkbox" data-all> Alle zichtbare toegestane betalingen</label><button data-apply disabled>Selectie accorderen (0)</button><p data-feedback role="status"></p>`+
+   (data.transactions.map((t,i)=>`<p><input type="checkbox" data-pick="${i}" aria-label="Betaling ${esc(t.booking_date)} selecteren" ${t.confirmed?'disabled':''}> <button data-member="${i}">${esc(t.booking_date)} &middot; ${esc(t.amount)} ${esc(t.currency)} &middot; ${esc(classificationLabel(t))}</button> ${t.confirmed?'Handmatig bevestigd':'Niet handmatig bevestigd'}</p>`).join('')||'<p>Geen actieve bronbetalingen.</p>');
   target.querySelectorAll('[data-member]').forEach(b=>b.onclick=()=>detail(data.transactions[Number(b.dataset.member)]));
+  bindRecurringClassification(target,pattern,data.transactions,()=>epoch===sessionEpoch&&request===recurringEpoch&&target.dataset.request===memberRequest,()=>loadRecurring());
   for(const [label,destination] of [['Vorige betalingen',memberPage-1],['Volgende betalingen',data.has_more?memberPage+1:-1]])if(destination>=0){const b=document.createElement('button');b.textContent=label;b.onclick=()=>loadRecurringMembers(pattern,index,destination,request);target.append(b)}
+ }catch(e){if(epoch===sessionEpoch&&request===recurringEpoch&&target.dataset.request===memberRequest)target.textContent=e.message}
+}
+function bindRecurringClassification(target,pattern,transactions,current,reload){
+ const q=s=>target.querySelector(s),boxes=[...target.querySelectorAll('[data-pick]')];let busy=false,attempt=null;
+ const update=()=>{updateSelectionControls(boxes,q('[data-all]'),q('[data-apply]'),busy);if(!q('[data-category]').value)q('[data-apply]').disabled=true};
+ q('[data-category]').onchange=()=>{const parent=state.categories.find(c=>c.code===q('[data-category]').value);q('[data-subcategory]').innerHTML='<option value="">Geen subcategorie</option>'+state.categories.filter(c=>parent&&c.active&&c.parent_id===parent.id).map(c=>`<option value="${esc(c.code)}">${esc(c.name||c.label)}</option>`).join('');if(parent)q('[data-type]').value=parent.transaction_type;update()};
+ q('[data-subcategory]').onchange=()=>{const child=state.categories.find(c=>c.code===q('[data-subcategory]').value);if(child)q('[data-type]').value=child.transaction_type};
+ q('[data-overwrite]').onchange=()=>{boxes.forEach(b=>{b.disabled=transactions[Number(b.dataset.pick)].confirmed&&!q('[data-overwrite]').checked;if(b.disabled)b.checked=false});update()};
+ boxes.forEach(b=>b.onchange=update);q('[data-all]').onchange=()=>{boxes.filter(b=>!b.disabled).forEach(b=>b.checked=q('[data-all]').checked);update()};
+ q('[data-apply]').onclick=async()=>{
+  if(busy)return;const items=boxes.filter(b=>b.checked&&!b.disabled).map(b=>{const t=transactions[Number(b.dataset.pick)];return {id:t.id,previous:t.review_id}});
+  if(!items.length||!q('[data-category]').value)return;
+  const body={items,category:q('[data-category]').value,subcategory:q('[data-subcategory]').value,transaction_type:q('[data-type]').value,overwrite:q('[data-overwrite]').checked},signature=JSON.stringify(body);
+  if(attempt?.signature!==signature)attempt={signature,key:key()};busy=true;
+  const controls=[...target.querySelectorAll('input,select,button')],disabled=controls.map(c=>c.disabled);controls.forEach(c=>c.disabled=true);q('[data-feedback]').textContent='Selectie opslaan...';
+  try{await api('/recurring/'+pattern.id+'/classify',{...body,key:attempt.key});if(!current())return;attempt=null;await reload();if(current())await refresh()}
+  catch(e){if(current())q('[data-feedback]').textContent=e.message}
+  finally{busy=false;if(current()){controls.forEach((c,i)=>c.disabled=disabled[i]);update()}}
+ };
+ update();
+}
+async function saveRecurringLink(pattern,parent,request){
+ const epoch=sessionEpoch,body={parent_id:parent,previous:pattern.link_id},signature=JSON.stringify([pattern.id,body]);
+ if(recurringAttempt?.signature!==signature)recurringAttempt={signature,key:key()};recurringControls(true);$('recurringStatus').textContent='Koppeling opslaan...';
+ try{await api('/recurring/'+pattern.id+'/link',{...body,key:recurringAttempt.key});if(epoch!==sessionEpoch||request!==recurringEpoch)return;recurringAttempt=null;await loadRecurring()}
+ catch(e){if(epoch===sessionEpoch&&request===recurringEpoch){recurringControls(false);$('recurringStatus').textContent=e.message}}
+}
+async function loadRecurringCandidates(pattern,index,candidatePage,request){
+ const epoch=sessionEpoch,target=document.querySelector(`[data-recurring-details="${index}"]`);if(!target)return;
+ const memberRequest=key();target.dataset.request=memberRequest;target.textContent='Patronen op deze rekening laden...';
+ try{const data=await api('/recurring?account='+pattern.account_id+'&page='+candidatePage);if(epoch!==sessionEpoch||request!==recurringEpoch||target.dataset.request!==memberRequest)return;
+  const candidates=data.patterns.filter(p=>p.id!==pattern.id&&p.direction===pattern.direction&&p.currency===pattern.currency);
+  target.innerHTML='<p>Kies onder welke naam je deze betalingen wilt groeperen. Controleer omschrijving, ritme en perioden. Dit wijzigt geen bronbetalingen of categorieen.</p>'+candidates.map((p,i)=>`<p><button data-join="${i}">Samenvoegen onder ${esc(p.merchant)}</button> ${esc(recurringLabels[p.cadence]||'Meerdere ritmes')} &middot; laatste betaling ${esc(p.last_observed||'?')} &middot; ${esc(p.typical_amount)} ${esc(p.currency)}</p>`).join('');
+  target.querySelectorAll('[data-join]').forEach(b=>b.onclick=()=>saveRecurringLink(pattern,candidates[Number(b.dataset.join)].id,request));
+  for(const [label,destination] of [['Vorige patronen',candidatePage-1],['Volgende patronen',data.has_more?candidatePage+1:-1]])if(destination>=0){const b=document.createElement('button');b.textContent=label;b.onclick=()=>loadRecurringCandidates(pattern,index,destination,request);target.append(b)}
  }catch(e){if(epoch===sessionEpoch&&request===recurringEpoch&&target.dataset.request===memberRequest)target.textContent=e.message}
 }
 $('showRecurring').onclick=()=>{clearRecurring();recurringPage=0;$('recurringAccount').innerHTML='<option value="">Alle rekeningen</option>'+state.accounts.map(a=>`<option value="${esc(a.id)}">${esc(a.label)}</option>`).join('');$('recurringAccount').value=$('account').value;$('recurringDialog').showModal();loadRecurring()};

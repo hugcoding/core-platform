@@ -5,7 +5,7 @@ async function testFinanceSelection(source) {
   let boxes=[],round=0,fail=false,submitted=[];
   const $=id=>elements[id];
   const document={querySelectorAll:q=>q==='[data-select-suggestion]'?boxes:q==='[data-select-suggestion]:checked'?boxes.filter(b=>b.checked):[elements.selectVisibleSuggestions,elements.approveSelection,...boxes]};
-  const fragment=source.slice(source.indexOf('function updateSuggestionSelection()'),source.indexOf("$('refreshSuggestions').onclick"));
+  const fragment=source.slice(source.indexOf('function updateSelectionControls('),source.indexOf("$('refreshSuggestions').onclick"));
   const run=new Function('$','document','load','submit',`
     let suggestionsState=null,sessionEpoch=0,suggestionsEpoch=0;
     const key=()=>String(Math.random()),message=()=>{},refresh=async()=>{};

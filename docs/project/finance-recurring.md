@@ -4,7 +4,8 @@
 
 Slices 1 en 2: deterministische detectie, persistente evidence, bestaande worker,
 owner-only API en het Terugkerend-overzicht met append-only patroonbeoordelingen.
-Geen bulkclassificatie, forecast-occurrences of maandlastentotalen.
+Handmatig samenvoegen/losmaken en expliciet geselecteerde betalingen categoriseren zijn toegevoegd.
+Geen automatische recurring-classificatie, forecast-occurrences of maandlastentotalen.
 Vervolgwerk: [Taken voor Hugo](finance-recurring-tasks.md).
 Gebruikersgrens: maximaal 50% totaal verbruik van het vijfuurvenster.
 
@@ -96,8 +97,8 @@ core doctor --finance --worker
 
 Open Finance en kies **Terugkerend**. Kies **Opnieuw herkennen** (alle rekeningen),
 wacht op de bestaande jobstatus/CORE Pulse en kies **Vernieuwen**. Filter vervolgens
-op rekening. Wekelijkse patronen vallen buiten deze UI; de reeds bestaande detector
-uit slice 1 blijft backwards compatible.
+op rekening. Dagelijkse en wekelijkse patronen vallen buiten detector v2, overzicht en toekomstige
+forecast. De bestaande algemene betalingsherkenning/classifier blijft ongewijzigd.
 
 Het overzicht toont identiteit, rekening, type, ritme, bedrag/bereik, observaties,
 laatste/verwachte datum, heuristische confidence, huidige categorie/subcategorie,
@@ -137,3 +138,67 @@ docker compose -p core-recurring-test -f tests/integration/finance/compose.yml d
 Deze bestaande teststack gebruikt `core_finance_test` in tmpfs, fictieve bankbestanden
 en het bestaande `nas-dashboard:latest` image als testbasis. De tests wijzigen geen
 productiedatabase of productiecontainers.
+
+## Samenvoegen, prijzen en geselecteerde categorieen (2026-10-01)
+
+Een andere betaalnaam of bedrag mag hetzelfde abonnement vertegenwoordigen. Via
+**Samenvoegen onder andere naam** kies je een hoofdpatroon op dezelfde rekening,
+met dezelfde richting en valuta. Kandidaten zijn gepagineerd. Omschrijving en perioden
+blijven zichtbaar; er is geen automatische fuzzy samenvoeging. Het hoofdpatroon bepaalt
+naam, soort en eigenaarstatus. Alle afzonderlijke detecties en reviews blijven intact.
+Bestaande groepen kunnen niet onder een andere groep hangen: voeg losse patronen toe
+of maak eerst componenten los. **Losmaken** schrijft een nieuw event; niets wordt gewist.
+
+`finance_recurring_links` bewaart owner, predecessor, idempotency-key en FK-relaties.
+De membership-view leidt alleen de actuele koppeling af. Triggers/constraints blokkeren
+zelfkoppelingen, cycli, kruisrekening/richting/valuta en auditmutaties. Link- en bulk-API
+gebruiken bestaande sessie-, same-origin- en idempotencybeveiliging.
+
+Detector v2 houdt maand/kwartaal/jaar en kalenderdatum primair. Bedragvariatie is een
+secundaire confidencefactor, geen eis van gelijke bedragen. De laatste waargenomen
+bedragstap is `(abs(nieuw)-abs(vorig))/abs(vorig)*100`; dit bewijst geen contractwijziging.
+Bij handmatige groepen vergelijkt de indicator de typische bedragen van de componenten
+op volgorde van hun laatste betaling. Gaten/overlap blijven per component zichtbaar.
+Een gekoppelde groep krijgt bewust geen gecombineerde verwachte datum: de koppeling
+bewijst geen doorlopend ritme. Er worden nooit ontbrekende transacties aangemaakt.
+
+**Betalingen en categorieen bekijken** toont max. 50 actieve betalingen per pagina.
+Kies categorie/subcategorie en transactietype uit de bestaande taxonomie, vink gewenste
+betalingen aan en accordeer. Niets is vooraf aangevinkt. Paginawisseling wist de selectie.
+Handmatige beoordelingen zijn standaard uitgesloten; overschrijven vereist expliciete
+opt-in plus selectie. Alleen aangeleverde IDs worden in een atomaire transactie verwerkt.
+Vreemde/stale/duplicate IDs weigeren de hele batch. Retry hergebruikt de key. Dezelfde
+`insert_manual` helper wordt gebruikt door individuele en bulkclassificatie; bestaande
+owner-prioriteit en leervoorbeelden blijven leidend. Geen nieuwe classifier of queue.
+
+### Uitrol na menselijke merge
+
+De twee migraties van 20260930 moeten al zijn toegepast. Alleen deze nieuwe migratie
+is nodig; stop bij een fout en herhaal geen reeds toegepaste migratie:
+
+```sh
+cd /volume1/docker/nas-stack
+core git status --short
+core git branch --show-current
+# Indien nodig eerst: core git switch main
+core git pull --skip-docs
+docker compose -p nas --env-file .env -f docker-compose.yml --profile finance build dashboard finance_worker
+docker exec -i postgres sh -c \
+  'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d nasdb_test' \
+  < database/migrations/20261001_add_finance_recurring_links.sql
+docker compose -p nas --env-file .env -f docker-compose.yml --profile finance up -d --no-deps --force-recreate dashboard finance_worker
+core doctor --finance --worker
+```
+
+Als `core git pull` nog de bekende SSH/UID-fout heeft, gebruik op main
+`core git fetch origin main` gevolgd door `core git merge --ff-only origin/main`.
+Geen reset/clean, geen .env/secrets aanpassen, geen herimport.
+Ctrl+F5, ontgrendel, **Terugkerend > Opnieuw herkennen** om v2-evidence te maken;
+volg bestaande jobstatus/Pulse en vernieuw daarna. Controleer samenvoegen/losmaken,
+prijspercentage, categorisatie van een beperkte selectie en behoud van niet-geselecteerde
+betalingen. De rollback van deze migratie weigert zodra koppelingen zijn vastgelegd.
+Bevestigde classificaties blijven gewone bestaande reviewevents en worden nooit verwijderd.
+
+Tests: `python -m unittest tests.test_finance tests.test_finance_recurring -q` in de
+geisoleerde teststack; `node tests/test_finance_selection.cjs`,
+`node tests/test_finance_recurring_ui.cjs`, `node tests/test_finance_recurring_bulk.cjs`.

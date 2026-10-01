@@ -16,7 +16,7 @@ from core.finance.crypto import canonical, decrypt, encrypt, fingerprint, secret
 from core.finance.account_names import account_view, normalize_name
 from core.finance.periods import period_bounds
 from core.finance.suggestions import identity as merchant_identity, METHOD as SUGGESTION_METHOD, MAX_SCAN, recognized_merchant
-from core.finance.classification import merchant_name, merchant_id, validate_category, conflicts, insert_suggestion, predecessor
+from core.finance.classification import merchant_name, merchant_id, validate_category, conflicts, insert_suggestion, predecessor, insert_manual
 from core.finance.account_groups import groups as wealth_groups, accounts as managed_accounts, group_name, RELATIONSHIPS, transfer_scope, internal_transfer_group
 from core.finance.store import connection, enqueue, event, publish_record, IMPORT_LOCK
 
@@ -271,11 +271,71 @@ def recurring_transactions(pattern_id:str,page:int=0):
         cur.execute('SELECT id FROM finance.finance_recurring_detections WHERE pattern_id=%s ORDER BY sequence_no DESC LIMIT 1',(pid,))
         detection=cur.fetchone()
         if not detection:raise HTTPException(404,'pattern_not_found')
-        cur.execute('''SELECT t.* FROM finance.finance_recurring_members m
-            JOIN finance.v_transactions t ON t.id=m.transaction_id
-            WHERE m.detection_id=%s ORDER BY t.booking_date DESC,t.id LIMIT 51 OFFSET %s''',(detection['id'],page*50))
+        from core.finance.recurring import member_ids_sql
+        cur.execute('SELECT t.* FROM finance.v_transactions t WHERE t.id IN ('+member_ids_sql()+') ORDER BY t.booking_date DESC,t.id LIMIT 51 OFFSET %s',(pid,page*50))
         rows=cur.fetchall()
     return {'detection_id':str(detection['id']),'transactions':[transaction(r) for r in rows[:50]],'has_more':len(rows)>50,'page':page}
+
+
+@router.post('/api/v1/finance/recurring/{pattern_id}/link')
+def link_recurring(pattern_id:str,payload:dict=Body(...)):
+    pid=uid(pattern_id);key=uid(payload.get('key'))
+    parent=uid(payload['parent_id']) if payload.get('parent_id') else None
+    previous=uid(payload['previous']) if payload.get('previous') else None
+    digest=fingerprint('recurring-link-v1',[pid,parent,previous])
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-recurring-link'))")
+        if replay(cur,'finance_recurring_links',key,digest):return {'status':'saved'}
+        cur.execute('SELECT p.*,g.root_id,g.link_id FROM finance.finance_recurring_patterns p JOIN finance.v_recurring_membership g ON g.pattern_id=p.id WHERE p.id=%s',(pid,))
+        source=cur.fetchone()
+        if not source:raise HTTPException(404,'pattern_not_found')
+        if (str(source['link_id']) if source['link_id'] else None)!=previous:raise HTTPException(409,'review_changed')
+        if parent:
+            cur.execute('SELECT p.*,g.root_id FROM finance.finance_recurring_patterns p JOIN finance.v_recurring_membership g ON g.pattern_id=p.id WHERE p.id=%s',(parent,))
+            target=cur.fetchone()
+            cur.execute('SELECT 1 FROM finance.v_recurring_membership WHERE root_id=%s AND pattern_id<>%s LIMIT 1',(pid,pid))
+            children=cur.fetchone()
+            if not target or parent==pid or str(target['root_id'])!=parent or children or any(source[k]!=target[k] for k in ('account_id','direction','currency')):
+                raise HTTPException(422,'invalid_recurring_link')
+            cur.execute("SELECT pattern_id,cadence FROM finance.finance_recurring_detections WHERE id IN (SELECT DISTINCT ON(pattern_id) id FROM finance.finance_recurring_detections WHERE pattern_id IN (%s,%s) ORDER BY pattern_id,sequence_no DESC)",(pid,parent))
+            cadence=cur.fetchall()
+            if len(cadence)!=2 or any(r['cadence'] not in ('monthly','quarterly','yearly') for r in cadence):raise HTTPException(422,'invalid_recurring_link')
+        cur.execute('INSERT INTO finance.finance_recurring_links(pattern_id,parent_id,previous,idempotency_key,payload_digest) VALUES (%s,%s,%s,%s,%s)',(pid,parent,previous,key,digest))
+    return {'status':'saved'}
+
+
+@router.post('/api/v1/finance/recurring/{pattern_id}/classify')
+def classify_recurring_selection(pattern_id:str,payload:dict=Body(...)):
+    from core.finance.recurring import member_ids_sql
+    pid=uid(pattern_id);batch_key=uuid.UUID(uid(payload.get('key')))
+    items=payload.get('items')
+    if not isinstance(items,list) or not 1<=len(items)<=50 or any(not isinstance(i,dict) for i in items):raise HTTPException(422,'invalid_selection')
+    selected=sorted([(uid(i.get('id')),uid(i['previous']) if i.get('previous') else None) for i in items])
+    if len({tid for tid,_ in selected})!=len(selected):raise HTTPException(422,'invalid_selection')
+    category=payload.get('category');subcategory=payload.get('subcategory') or None;kind=payload.get('transaction_type')
+    overwrite=payload.get('overwrite') is True
+    if not isinstance(category,str) or not category or (subcategory is not None and not isinstance(subcategory,str)) or not isinstance(kind,str):raise HTTPException(422,'invalid_classification')
+    digest=fingerprint('recurring-classification-v1',[pid,selected,category,subcategory,kind,overwrite])
+    keys=[str(uuid.uuid5(batch_key,str(i))) for i in range(len(selected))]
+    with connection() as conn,conn.cursor() as cur:
+        # Same lock order for every writer: membership, then existing classifier lock.
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-recurring-link'))")
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-category-learning'))")
+        done=[replay(cur,'finance_review_events',key,digest) for key in keys]
+        if all(done):return {'status':'saved','count':len(selected)}
+        if any(done):raise HTTPException(409,'idempotency_conflict')
+        validate_category(cur,category,subcategory)
+        cur.execute('SELECT 1 FROM finance.finance_transaction_types WHERE code=%s',(kind,))
+        if not cur.fetchone():raise HTTPException(422,'invalid_classification')
+        cur.execute('SELECT t.id,t.review_id,t.confirmed,t.merchant_id FROM finance.v_transactions t WHERE t.id=ANY(%s::uuid[]) AND t.id IN ('+member_ids_sql()+')',([tid for tid,_ in selected],pid))
+        rows={str(r['id']):r for r in cur.fetchall()}
+        for tid,expected in selected:
+            row=rows.get(tid)
+            if row is None or (str(row['review_id']) if row['review_id'] else None)!=expected:raise HTTPException(409,'review_changed')
+            if row['confirmed'] and not overwrite:raise HTTPException(409,'manual_review_protected')
+        for (tid,_),key in zip(selected,keys):
+            insert_manual(cur,tid,category,subcategory,kind,rows[tid]['merchant_id'],key,digest)
+    return {'status':'saved','count':len(selected)}
 
 
 @router.post('/api/v1/finance/recurring/{pattern_id}/review')
@@ -536,11 +596,7 @@ def classify(transaction_id:str,payload:dict=Body(...)):
         if not cur.fetchone(): raise HTTPException(422,'invalid_classification')
         validate_category(cur,category,subcategory)
         merchant=merchant_id(cur,name)
-        cur.execute("""INSERT INTO finance.finance_review_events
-            (transaction_id,category_code,subcategory_code,transaction_type,merchant_id,
-             classification_source,confidence,confirmed,supersedes_event_id,actor,idempotency_key,payload_digest)
-            VALUES (%s,%s,%s,%s,%s,'MANUAL',NULL,true,%s,'owner',%s,%s)""",
-            (tid,category,subcategory,kind,merchant,predecessor(cur,tid),key,digest))
+        insert_manual(cur,tid,category,subcategory,kind,merchant,key,digest)
     return {'status':'saved'}
 
 
