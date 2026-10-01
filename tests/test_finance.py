@@ -1264,9 +1264,9 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(422,self.client.post('/api/v1/finance/recurring/'+target['id']+'/link',json={**body,'key':str(uuid.uuid4()),'parent_id':source['id']}).status_code)
         transactions=self.client.get('/api/v1/finance/recurring/'+target['id']+'/transactions').json()['transactions'];self.assertEqual(6,len(transactions))
         with self.admin.cursor() as cur:
-            cur.execute('SELECT code,transaction_type FROM finance.finance_categories WHERE parent_id IS NULL AND active ORDER BY code LIMIT 1');category,kind=cur.fetchone()
+            cur.execute("SELECT code,transaction_type FROM finance.finance_categories WHERE code='abonnementen'");category,kind=cur.fetchone()
         classify_url='/api/v1/finance/recurring/'+target['id']+'/classify'
-        payload={'key':str(uuid.uuid4()),'items':[{'id':t['id'],'previous':t['review_id']} for t in transactions[:2]],'category':category,'transaction_type':kind}
+        payload={'key':str(uuid.uuid4()),'items':[{'id':t['id'],'previous':t['review_id']} for t in transactions[:2]],'category':category,'subcategory':'abonnementen_telefoon','transaction_type':kind}
         response=self.client.post(classify_url,json=payload);self.assertEqual(200,response.status_code,response.text)
         self.assertEqual(200,self.client.post(classify_url,json=payload).status_code)
         self.assertEqual(409,self.client.post(classify_url,json={**payload,'category':'changed'}).status_code)
@@ -1283,6 +1283,15 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(409,self.client.post(link_url,json={**body,'key':str(uuid.uuid4()),'parent_id':None}).status_code)
         self.assertEqual(200,self.client.post(link_url,json={'key':str(uuid.uuid4()),'parent_id':None,'previous':component['link_id']}).status_code)
         self.assertEqual(2,len(listing()))
+        advice=next(p for p in listing() if p['id']==target['id'])
+        self.assertEqual('subscription',advice['proposed_type']);self.assertEqual('proposed',advice['status'])
+        untouched=next(p for p in listing() if p['id']==source['id'])
+        review={'key':str(uuid.uuid4()),'previous':untouched['review_id'],'detection_id':untouched['detection_id'],'status':'confirmed','recurring_type':'fixed_cost'}
+        self.assertEqual(200,self.client.post('/api/v1/finance/recurring/'+source['id']+'/review',json=review).status_code)
+        after=self.client.get('/api/v1/finance/recurring/'+source['id']+'/transactions').json()['transactions']
+        self.assertTrue(all(not t['confirmed'] for t in after))
+        self.assertEqual('fixed_cost',next(p for p in listing() if p['id']==source['id'])['reviewed_type'])
+
         with self.admin.cursor() as cur:
             cur.execute('SELECT count(*) FROM finance.finance_transactions');self.assertEqual(before,cur.fetchone()[0])
         for sql in ('DELETE FROM finance.finance_recurring_links','TRUNCATE finance.finance_recurring_links',Path('database/migrations/rollback/20261001_add_finance_recurring_links.sql').read_text()):
