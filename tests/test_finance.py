@@ -132,6 +132,9 @@ class IntegrationTests(unittest.TestCase):
             reviews_up=Path('database/migrations/20260930_add_finance_recurring_reviews.sql').read_text()
             reviews_down=Path('database/migrations/rollback/20260930_add_finance_recurring_reviews.sql').read_text()
             cur.execute(reviews_up);cur.execute(reviews_down);cur.execute(reviews_up)
+            links_up=Path('database/migrations/20261001_add_finance_recurring_links.sql').read_text()
+            links_down=Path('database/migrations/rollback/20261001_add_finance_recurring_links.sql').read_text()
+            cur.execute(links_up);cur.execute(links_down);cur.execute(links_up)
         app=FastAPI();app.middleware('http')(finance_boundary);app.include_router(router)
         cls.client=TestClient(app);cls.client.headers['origin']='http://testserver'
         response=cls.client.post('/api/v1/finance/session',json={'code':'synthetic-access'})
@@ -1227,6 +1230,65 @@ class IntegrationTests(unittest.TestCase):
         from fastapi.testclient import TestClient
         with TestClient(self.client.app) as anonymous:
             self.assertEqual(401,anonymous.post(url,json=payload,headers={'origin':'http://testserver'}).status_code)
+
+    def test_94_recurring_merge_selected_classification_and_unlink(self):
+        from core.finance.store import connection,enqueue
+        from core.finance.recurring import step
+        from core.finance.crypto import fingerprint
+        from tests.test_finance_bank_references import numbered,account
+        import psycopg2
+        for merchant,year,amount in [('Synthetic subscription original',2023,'17.99'),('Synthetic subscription renamed',2026,'21.99')]:
+            for month in (7,8,9):
+                source=numbered(ref=str(uuid.uuid4()),message=str(uuid.uuid4()),n=88123,amount=amount)
+                source=source.replace(b'2026-09-01',f'{year}-{month:02d}-28'.encode()).replace(b'Synthetische winkel',merchant.encode())
+                source=source.replace(b'</RltdPties>',('<CdtrAcct><Id><IBAN>'+account(88124)+'</IBAN></Id></CdtrAcct></RltdPties>').encode())
+                self.import_file(source)
+        with self.admin.cursor() as cur:
+            cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE status IN ('pending','running')")
+            cur.execute('SELECT id FROM finance.finance_accounts WHERE identity_key=%s',(fingerprint('account-v1',account(88123)),));aid=str(cur.fetchone()[0])
+            cur.execute('SELECT count(*) FROM finance.finance_transactions');before=cur.fetchone()[0]
+        with connection(worker=True) as conn,conn.cursor() as cur:job=enqueue(cur,'recurring')
+        while True:
+            with connection(worker=True) as conn:
+                if not step(conn,job):break
+        listing=lambda:self.client.get('/api/v1/finance/recurring',params={'account':aid}).json()['patterns']
+        parts=sorted(listing(),key=lambda p:p['last_observed'])
+        self.assertEqual(2,len(parts));source,target=parts
+        link_url='/api/v1/finance/recurring/'+source['id']+'/link'
+        body={'key':str(uuid.uuid4()),'parent_id':target['id'],'previous':None}
+        other=next(p for p in self.client.get('/api/v1/finance/recurring').json()['patterns'] if p['account_id']!=aid)
+        self.assertEqual(422,self.client.post(link_url,json={**body,'parent_id':other['id']}).status_code)
+        for _ in range(2):self.assertEqual(200,self.client.post(link_url,json=body).status_code)
+        merged=listing();self.assertEqual(1,len(merged));self.assertEqual(2,len(merged[0]['components']))
+        self.assertEqual(6,merged[0]['observation_count']);self.assertEqual('22.23',merged[0]['price_change_percent']);self.assertIsNone(merged[0]['next_expected'])
+        self.assertEqual(422,self.client.post('/api/v1/finance/recurring/'+target['id']+'/link',json={**body,'key':str(uuid.uuid4()),'parent_id':source['id']}).status_code)
+        transactions=self.client.get('/api/v1/finance/recurring/'+target['id']+'/transactions').json()['transactions'];self.assertEqual(6,len(transactions))
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT code,transaction_type FROM finance.finance_categories WHERE parent_id IS NULL AND active ORDER BY code LIMIT 1');category,kind=cur.fetchone()
+        classify_url='/api/v1/finance/recurring/'+target['id']+'/classify'
+        payload={'key':str(uuid.uuid4()),'items':[{'id':t['id'],'previous':t['review_id']} for t in transactions[:2]],'category':category,'transaction_type':kind}
+        response=self.client.post(classify_url,json=payload);self.assertEqual(200,response.status_code,response.text)
+        self.assertEqual(200,self.client.post(classify_url,json=payload).status_code)
+        self.assertEqual(409,self.client.post(classify_url,json={**payload,'category':'changed'}).status_code)
+        updated=self.client.get('/api/v1/finance/recurring/'+target['id']+'/transactions').json()['transactions']
+        self.assertEqual(2,sum(t['confirmed'] for t in updated))
+        self.assertTrue(all(t['category_code'] is None for t in updated[2:]))
+        current=updated[0];overwrite={**payload,'key':str(uuid.uuid4()),'items':[{'id':current['id'],'previous':current['review_id']}]}
+        self.assertEqual(409,self.client.post(classify_url,json=overwrite).status_code)
+        self.assertEqual(200,self.client.post(classify_url,json={**overwrite,'overwrite':True}).status_code)
+        # An unrelated ID atomically rejects the whole request.
+        invalid={**payload,'key':str(uuid.uuid4()),'items':[{'id':updated[2]['id'],'previous':None},{'id':str(uuid.uuid4()),'previous':None}]}
+        self.assertEqual(409,self.client.post(classify_url,json=invalid).status_code)
+        component=next(c for c in merged[0]['components'] if c['id']==source['id'])
+        self.assertEqual(409,self.client.post(link_url,json={**body,'key':str(uuid.uuid4()),'parent_id':None}).status_code)
+        self.assertEqual(200,self.client.post(link_url,json={'key':str(uuid.uuid4()),'parent_id':None,'previous':component['link_id']}).status_code)
+        self.assertEqual(2,len(listing()))
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT count(*) FROM finance.finance_transactions');self.assertEqual(before,cur.fetchone()[0])
+        for sql in ('DELETE FROM finance.finance_recurring_links','TRUNCATE finance.finance_recurring_links',Path('database/migrations/rollback/20261001_add_finance_recurring_links.sql').read_text()):
+            with self.assertRaises(psycopg2.Error):
+                with self.admin.cursor() as cur:cur.execute(sql)
+            with self.admin.cursor() as cur:cur.execute('ROLLBACK')
 
 
 if __name__=='__main__': unittest.main()

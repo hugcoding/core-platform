@@ -3,7 +3,8 @@
 Slices 1 en 2 staan samen in PR #221; nog niet gedeployed. Merge/pull/deployment
 blijven bij Hugo. Voor vervolgslices begin je na merge op actuele main met een
 nieuwe codex-branch. Maximaal 50% totaal verbruik van het vijfuurvenster.
-Wekelijkse betalingen vallen buiten de huidige UI-scope.
+Dagelijkse/wekelijkse betalingen vallen buiten recurrence en forecast; algemene
+betalingsherkenning/categorisatie mag ze wel blijven gebruiken.
 
 ## Taak 1 — Slice 2: Terugkerend-overzicht met auditeerbare patroonreview
 
@@ -53,7 +54,9 @@ in test; eigenaar valideert productie lokaal zonder bankgegevens te delen.
 ## Taak 2 — Slice 3: uitsluitend geselecteerde peers via bestaande classificatie
 
 **Doel/waarom:** een terugkerend patroon helpt bij indeling zonder tweede engine en
-zonder gedeselecteerde transacties mee te nemen. **Status:** niet gestart.
+zonder gedeselecteerde transacties mee te nemen. **Status:** handmatige bulkkeuze met
+expliciete IDs is geimplementeerd; automatische classifier/proposal-triggers hieronder
+blijven vervolgwerk. Zie finance-recurring.md voor samenvoegen/losmaken en uitrol.
 **Afhankelijkheid:** slice 2 stabiel; pattern membership/detection-ID beschikbaar.
 
 **Componenten:** `classification.py` (`conflicts`, `predecessor`, `insert_suggestion`),

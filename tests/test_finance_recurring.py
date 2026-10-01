@@ -29,7 +29,6 @@ class DetectionTests(unittest.TestCase):
 
     def test_all_cadences(self):
         for cadence, dates, expected in [
-            ('weekly', ['2026-09-01','2026-09-08','2026-09-15'], '2026-09-22'),
             ('quarterly', ['2026-01-18','2026-04-18','2026-07-19'], '2026-10-18'),
             ('yearly', ['2024-09-18','2025-09-19','2026-09-18'], '2027-09-18'),
         ]:
@@ -71,10 +70,19 @@ class DetectionTests(unittest.TestCase):
         rows[-1]['amount'] = Decimal(12)
         self.assertIsNone(detect(rows))
 
-    def test_large_weekly_series_no_pairwise_comparison(self):
+    def test_large_weekly_series_not_recurring(self):
         rows = [{'id': str(i), 'booking_date': date(2000,1,3)+timedelta(days=i*7),
                  'amount': Decimal(-12)} for i in range(10000)]
-        self.assertEqual('weekly', detect(rows)['cadence'])
+        self.assertIsNone(detect(rows))
+
+    def test_price_increase_does_not_break_calendar_pattern(self):
+        result=detect(series(['2026-01-28','2026-02-28','2026-03-28','2026-04-28'],[-17.99,-17.99,-21.99,-21.99]))
+        self.assertEqual('monthly',result['cadence'])
+        self.assertEqual('22.23',result['price_change_percent'])
+        self.assertEqual('17.99',result['previous_amount'])
+        self.assertEqual('2026-01-28',result['first_observed'])
+        self.assertIsNone(detect(series(['2026-01-01','2026-01-02','2026-01-03'])))
+        self.assertIsNone(detect(series(['2026-01-01','2026-01-08','2026-01-15'])))
 
 
 if __name__ == '__main__':

@@ -73,3 +73,12 @@ def insert_suggestion(cur, target, seed, expected, key, digest, method):
         VALUES (%s,%s,%s,%s,%s,'MERCHANT',NULL,true,%s,'owner',%s,%s,%s,%s)''',
         (target, seed['category_code'], seed.get('subcategory_code'), seed['transaction_type'],
          seed.get('merchant_id'), predecessor(cur, target), key, digest, seed['review_id'], method))
+
+
+def insert_manual(cur, tid, category, subcategory, kind, merchant, key, digest):
+    """Shared append-only owner classification, also used for explicit bulk choices."""
+    cur.execute("""INSERT INTO finance.finance_review_events
+        (transaction_id,category_code,subcategory_code,transaction_type,merchant_id,
+         classification_source,confidence,confirmed,supersedes_event_id,actor,idempotency_key,payload_digest)
+        VALUES (%s,%s,%s,%s,%s,'MANUAL',NULL,true,%s,'owner',%s,%s)""",
+        (tid,category,subcategory,kind,merchant,predecessor(cur,tid),key,digest))
