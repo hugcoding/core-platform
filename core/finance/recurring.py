@@ -163,6 +163,28 @@ def step(conn, job):
         return True
 
 
+def type_proposal(item):
+    """Read-time advice from existing evidence; never writes a review or confidence."""
+    original = item.get('recurring_type', 'other_recurring')
+    confirmed = [c for c in item.get('classifications', []) if c.get('confirmed_count', 0)]
+    if not confirmed or item.get('reviewed_type'):
+        return original
+    if any(c.get('category_code') != 'abonnementen' or c.get('transaction_type') != 'EXPENSE' for c in confirmed):
+        return original
+    if original == 'periodic_transfer' or item.get('direction') != 'debit':
+        return original
+    parts = item.get('components') or [item]
+    # Linking histories alone does not establish cycle coverage across their gap.
+    if len(parts) != 1:
+        return original
+    if (item.get('active') and item.get('cadence') == 'monthly'
+        and item.get('observation_count', 0) >= 3 and item.get('confidence', 0) >= .75
+        and item.get('missed_periods', 99) <= 1 and item.get('timing_outliers', 99) <= 1
+        and Decimal(str(item.get('amount_variation', 99))) <= Decimal('.35')):
+        return 'subscription'
+    return original
+
+
 def patterns(cur, account=None, page=0):
     """Persisted evidence only, no detection on page load. Retired sources hidden."""
     cur.execute('''WITH roots AS (
@@ -238,6 +260,8 @@ def patterns(cur, account=None, page=0):
             item['typical_amount'] = ordered[-1].get('typical_amount')
             item['amount_min'] = str(min(Decimal(p['amount_min']) for p in parts if p.get('amount_min') is not None)) if amounts else None
             item['amount_max'] = str(max(Decimal(p['amount_max']) for p in parts if p.get('amount_max') is not None)) if amounts else None
+        item['proposed_type'] = type_proposal(item)
+        item['type_evidence'] = 'confirmed_subscription_category_and_monthly_pattern' if item['proposed_type'] == 'subscription' and not item.get('reviewed_type') else 'existing_recurrence'
         merged.append(item)
     return {'patterns': merged[:50], 'page': page, 'has_more': len(merged) > 50, 'detection_version': VERSION}
 

@@ -84,6 +84,21 @@ class DetectionTests(unittest.TestCase):
         self.assertIsNone(detect(series(['2026-01-01','2026-01-02','2026-01-03'])))
         self.assertIsNone(detect(series(['2026-01-01','2026-01-08','2026-01-15'])))
 
+    def test_classification_evidence_advises_without_confirming(self):
+        from core.finance.recurring import type_proposal
+        item={**detect(series(['2026-01-28','2026-02-28','2026-03-28'])),
+              'active':True,'direction':'debit','status':'proposed','recurring_type':'other_recurring',
+              'classifications':[{'category_code':'abonnementen','subcategory_code':'abonnementen_telefoon','transaction_type':'EXPENSE','confirmed_count':2}]}
+        self.assertEqual('subscription',type_proposal(item));self.assertEqual('proposed',item['status'])
+        for changes in ({'cadence':'weekly'},{'observation_count':2},{'missed_periods':4},{'amount_variation':'2'},
+                        {'reviewed_type':'fixed_cost'},{'direction':'credit'},{'components':[{},{}]},
+                        {'classifications':[{'category_code':'boodschappen','transaction_type':'EXPENSE','confirmed_count':3}]},
+                        {'classifications':[{'category_code':'abonnementen','transaction_type':'TRANSFER','confirmed_count':3}]},
+                        {'classifications':[{'category_code':'abonnementen','transaction_type':'EXPENSE','confirmed_count':0}]}):
+            self.assertEqual('other_recurring',type_proposal({**item,**changes}))
+        item['classifications'][0]['subcategory_code']='abonnementen_streaming'
+        self.assertEqual('subscription',type_proposal(item))
+
 
 if __name__ == '__main__':
     unittest.main()

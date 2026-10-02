@@ -69,7 +69,7 @@ function classificationLabel(t){const main=state?.categories.find(c=>c.code===t.
 function filterSubcategories(){const parent=state?.categories.find(c=>c.code===$('category').value);select('subcategory',(state?.categories||[]).filter(c=>parent&&c.parent_id===parent.id).map(c=>[c.code,c.name||c.label]),'<option value="">Alle subcategorieen</option>');$('subcategory').disabled=!parent}
 $('category').onchange=()=>{filterSubcategories();page=0;refresh()};
 $('detail').addEventListener('close',()=>{detailEpoch++});
-async function detail(t){
+async function detail(t,onSaved=null){
  const epoch=sessionEpoch,request=++detailEpoch;
  $('detailBody').innerHTML=`<p class="eyebrow">TRANSACTIEDETAIL</p><h2>${esc(t.merchant||t.counterparty||'Boeking')}</h2><h2 class="${Number(t.amount)>=0?'positive':'negative'}">${money(t.amount)}</h2>
  <dl><dt>Boekdatum / valutadatum</dt><dd>${esc(t.booking_date)} / ${esc(t.value_date||'')}</dd><dt>Banktegenpartij</dt><dd>${esc(t.counterparty)}</dd><dt>Tegenrekening</dt><dd>${esc(t.counteraccount||'Niet aangeleverd')}</dd><dt>Originele bankomschrijving</dt><dd><p>${esc(t.description)}</p></dd></dl>
@@ -93,7 +93,7 @@ async function detail(t){
   const body={transaction_type:$('detailType').value,category:$('detailCategory').value,subcategory:$('detailSubcategory').value,merchant:$('detailMerchant').value,previous:t.review_id};
   const signature=JSON.stringify(body);if(!attempt||attempt.signature!==signature)attempt={signature,key:key()};
   $('saveCategory').disabled=true;$('classificationError').textContent='';
-  try{await api('/transactions/'+t.id+'/classification',{...body,key:attempt.key});if(epoch!==sessionEpoch||request!==detailEpoch)return;$('detail').close();message('Classificatie opgeslagen');await refresh()}
+  try{await api('/transactions/'+t.id+'/classification',{...body,key:attempt.key});if(epoch!==sessionEpoch||request!==detailEpoch)return;$('detail').close();message('Classificatie opgeslagen');if(onSaved)await onSaved();else await refresh()}
   catch(e){if(epoch===sessionEpoch&&request===detailEpoch)$('classificationError').textContent=e.message}
   finally{if(epoch===sessionEpoch&&request===detailEpoch)$('saveCategory').disabled=false}
  };
@@ -204,19 +204,20 @@ $('accountNameDialog').addEventListener('close',clearAccountName);
 $('accountNameForm').onsubmit=e=>{e.preventDefault();saveAccountName()};
 $('resetAccountName').onclick=()=>saveAccountName(true);
 // Recurring view reuses the owner session, API errors and transaction detail editor.
+const recurringKindEdits=new Map();
 let recurringEpoch=0,recurringPage=0,recurringTimer=null,recurringAttempt=null;
 const recurringLabels={monthly:'Maandelijks',quarterly:'Per kwartaal',yearly:'Jaarlijks',proposed:'Voorgesteld',confirmed:'Bevestigd',rejected:'Afgewezen',inactive:'Inactief',subscription:'Abonnement',fixed_cost:'Vaste last',periodic_transfer:'Periodieke overboeking',other_recurring:'Overig terugkerend'};
-function clearRecurring(){recurringEpoch++;clearTimeout(recurringTimer);recurringAttempt=null;$('recurringBody').replaceChildren();$('recurringStatus').textContent='';$('recurringAccount').replaceChildren();$('recurringProgress').hidden=true}
+function clearRecurring(){recurringKindEdits.clear();recurringEpoch++;clearTimeout(recurringTimer);recurringAttempt=null;$('recurringBody').replaceChildren();$('recurringStatus').textContent='';$('recurringAccount').replaceChildren();$('recurringProgress').hidden=true}
 function recurringControls(busy){for(const id of ['recurringRefresh','recurringDetect','recurringAccount','recurringPrevious','recurringNext'])$(id).disabled=busy;$('recurringProgress').hidden=!busy}
-async function loadRecurring(){
+async function loadRecurring(context=null){
  const epoch=sessionEpoch,request=++recurringEpoch;clearTimeout(recurringTimer);recurringControls(true);$('recurringBody').replaceChildren();$('recurringStatus').textContent='Patronen laden...';
  try{
   const data=await api('/recurring?account='+encodeURIComponent($('recurringAccount').value)+'&page='+recurringPage);
   if(epoch!==sessionEpoch||request!==recurringEpoch)return;
   $('recurringStatus').textContent=data.patterns.length?'Bekijk de onderliggende betalingen voordat je een patroon beoordeelt.':'Geen patronen gevonden. Kies Opnieuw herkennen om historische betalingen te analyseren.';
   $('recurringBody').innerHTML=data.patterns.map((p,i)=>{
-   const account=state?.accounts.find(a=>a.id===p.account_id),kind=p.reviewed_type||p.recurring_type;
-   return `<section class="panel"><h3>${esc(p.merchant||'Onbekende tegenpartij')}</h3><p>${esc(account?.label||'Rekening')} &middot; ${esc(recurringLabels[p.cadence]||'Niet meer herkend')} &middot; ${esc(recurringLabels[p.status])}</p>
+   const account=state?.accounts.find(a=>a.id===p.account_id),kind=recurringKindEdits.get(p.id)||p.reviewed_type||p.proposed_type||p.recurring_type;
+   return `<section class="panel" data-recurring-card="${esc(p.id)}"><h3>${esc(p.merchant||'Onbekende tegenpartij')}</h3><p>${esc(account?.label||'Rekening')} &middot; ${esc(recurringLabels[p.cadence]||'Niet meer herkend')} &middot; ${esc(recurringLabels[p.status])}</p>
     <p>${esc(p.typical_amount??'?')} ${esc(p.currency)} per betaling (bereik ${esc(p.amount_min??'?')} &middot; ${esc(p.amount_max??'?')}). ${esc(p.observation_count)} betalingen; herkenningsscore ${Math.round((p.confidence||0)*100)}%.</p>
     <p>Laatste betaling: ${esc(p.last_observed||'onbekend')}. Verwachte datum: ${esc(p.next_expected||'onbekend')} (schatting).</p>
     <p>Laatste waargenomen bedragwijziging: ${esc(p.price_change_percent??'onbekend')}% (${esc(p.previous_amount??'?')} naar ${esc(p.latest_amount??'?')} ${esc(p.currency)}). Dit is geen bevestigde contractwijziging.</p>
@@ -224,22 +225,26 @@ async function loadRecurring(){
     ${(p.components||[]).map(c=>`<p>${esc(c.merchant)}: ${esc(c.first_observed||'start niet bekend')} t/m ${esc(c.last_observed||'onbekend')} (${esc(c.observation_count)} betalingen) ${c.id!==p.id?`<button data-recurring-unlink="${i}" data-component="${esc(c.id)}">Losmaken</button>`:''}</p>`).join('')}
     ${p.stale?'<p>Bronnen of indelingen zijn gewijzigd. Kies Opnieuw herkennen voor actuele patronen.</p>':''}${p.new_evidence?'<p>Nieuwe detectie sinds je laatste beoordeling; je oordeel is behouden.</p>':''}
     <p>Classificatie: ${(p.classifications||[]).map(c=>`${esc(classificationLabel(c))}: ${c.count} betalingen, ${c.confirmed_count} handmatig bevestigd`).join('; ')||'Geen actieve classificaties'}</p>
+    ${p.type_evidence==='confirmed_subscription_category_and_monthly_pattern'?'<p>Soortvoorstel: bevestigd als abonnement gecategoriseerde uitgaven ondersteunen het maandelijkse patroon. Bevestig het patroon afzonderlijk.</p>':''}
     <label>Soort <select data-recurring-kind="${i}">${['subscription','fixed_cost','periodic_transfer','other_recurring'].map(k=>`<option value="${k}" ${k===kind?'selected':''}>${recurringLabels[k]}</option>`).join('')}</select></label>
     ${['confirmed','rejected','inactive','proposed'].map(k=>`<button data-recurring-review="${i}" data-status="${k}">${k==='confirmed'?'Bevestigen':k==='rejected'?'Afwijzen':k==='inactive'?'Inactief maken':'Heropenen'}</button>`).join('')}
     <button data-recurring-merge="${i}" ${(p.components||[]).length>1?'disabled':''}>Samenvoegen onder andere naam</button><button data-recurring-members="${i}">Betalingen en categorie&euml;n bekijken</button><div data-recurring-details="${i}"></div></section>`;
   }).join('');
+  document.querySelectorAll('[data-recurring-kind]').forEach(select=>select.onchange=()=>recurringKindEdits.set(data.patterns[Number(select.dataset.recurringKind)].id,select.value));
   document.querySelectorAll('[data-recurring-review]').forEach(b=>b.onclick=()=>saveRecurring(data.patterns[Number(b.dataset.recurringReview)],b.dataset.status,document.querySelector(`[data-recurring-kind="${b.dataset.recurringReview}"]`).value));
   document.querySelectorAll('[data-recurring-merge]').forEach(b=>b.onclick=()=>loadRecurringCandidates(data.patterns[Number(b.dataset.recurringMerge)],b.dataset.recurringMerge,0,request));
   document.querySelectorAll('[data-recurring-unlink]').forEach(b=>b.onclick=()=>{const p=data.patterns[Number(b.dataset.recurringUnlink)].components.find(c=>c.id===b.dataset.component);saveRecurringLink(p,null,request)});
   document.querySelectorAll('[data-recurring-members]').forEach(b=>b.onclick=()=>loadRecurringMembers(data.patterns[Number(b.dataset.recurringMembers)],b.dataset.recurringMembers,0,request));
   recurringControls(false);$('recurringPrevious').disabled=recurringPage===0;$('recurringNext').disabled=!data.has_more;
+  if(context?.id){const index=data.patterns.findIndex(p=>p.id===context.id);if(index>=0){await loadRecurringMembers(data.patterns[index],String(index),context.memberPage||0,request);if(epoch===sessionEpoch&&request===recurringEpoch){const card=document.querySelector(`[data-recurring-card="${context.id}"]`);card?.scrollIntoView({block:'nearest'});card?.querySelector('[data-recurring-review]')?.focus({preventScroll:true})}}else $('recurringStatus').textContent='Dit patroon is niet meer beschikbaar in dit overzicht. Vernieuw de detectie.'}
+
  }catch(e){if(epoch===sessionEpoch&&request===recurringEpoch){recurringControls(false);$('recurringPrevious').disabled=true;$('recurringNext').disabled=true;$('recurringStatus').textContent=e.message}}
 }
 async function saveRecurring(pattern,status,kind){
  const epoch=sessionEpoch,request=recurringEpoch,body={detection_id:pattern.detection_id,previous:pattern.review_id,status,recurring_type:kind},signature=JSON.stringify([pattern.id,body]);
  if(recurringAttempt?.signature!==signature)recurringAttempt={signature,key:key()};
  recurringControls(true);document.querySelectorAll('[data-recurring-review]').forEach(b=>b.disabled=true);$('recurringStatus').textContent='Beoordeling opslaan...';
- try{await api('/recurring/'+pattern.id+'/review',{...body,key:recurringAttempt.key});if(epoch!==sessionEpoch||request!==recurringEpoch)return;recurringAttempt=null;await loadRecurring()}
+ try{await api('/recurring/'+pattern.id+'/review',{...body,key:recurringAttempt.key});recurringKindEdits.delete(pattern.id);if(epoch!==sessionEpoch||request!==recurringEpoch)return;recurringAttempt=null;await loadRecurring()}
  catch(e){if(epoch===sessionEpoch&&request===recurringEpoch){recurringControls(false);document.querySelectorAll('[data-recurring-review]').forEach(b=>b.disabled=false);$('recurringStatus').textContent=e.message}}
 }
 async function loadRecurringMembers(pattern,index,memberPage,request){
@@ -250,8 +255,8 @@ async function loadRecurringMembers(pattern,index,memberPage,request){
    <p><label><input type="checkbox" data-overwrite> Ik wil ook geselecteerde handmatig beoordeelde betalingen wijzigen</label></p>
    <label><input type="checkbox" data-all> Alle zichtbare toegestane betalingen</label><button data-apply disabled>Selectie accorderen (0)</button><p data-feedback role="status"></p>`+
    (data.transactions.map((t,i)=>`<p><input type="checkbox" data-pick="${i}" aria-label="Betaling ${esc(t.booking_date)} selecteren" ${t.confirmed?'disabled':''}> <button data-member="${i}">${esc(t.booking_date)} &middot; ${esc(t.amount)} ${esc(t.currency)} &middot; ${esc(classificationLabel(t))}</button> ${t.confirmed?'Handmatig bevestigd':'Niet handmatig bevestigd'}</p>`).join('')||'<p>Geen actieve bronbetalingen.</p>');
-  target.querySelectorAll('[data-member]').forEach(b=>b.onclick=()=>detail(data.transactions[Number(b.dataset.member)]));
-  bindRecurringClassification(target,pattern,data.transactions,()=>epoch===sessionEpoch&&request===recurringEpoch&&target.dataset.request===memberRequest,()=>loadRecurring());
+  target.querySelectorAll('[data-member]').forEach(b=>b.onclick=()=>detail(data.transactions[Number(b.dataset.member)],()=>epoch===sessionEpoch&&request===recurringEpoch?loadRecurring({id:pattern.id,memberPage}):undefined));
+  bindRecurringClassification(target,pattern,data.transactions,()=>epoch===sessionEpoch&&request===recurringEpoch&&target.dataset.request===memberRequest,()=>loadRecurring({id:pattern.id,memberPage}));
   for(const [label,destination] of [['Vorige betalingen',memberPage-1],['Volgende betalingen',data.has_more?memberPage+1:-1]])if(destination>=0){const b=document.createElement('button');b.textContent=label;b.onclick=()=>loadRecurringMembers(pattern,index,destination,request);target.append(b)}
  }catch(e){if(epoch===sessionEpoch&&request===recurringEpoch&&target.dataset.request===memberRequest)target.textContent=e.message}
 }
