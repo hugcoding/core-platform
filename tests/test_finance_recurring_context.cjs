@@ -5,7 +5,7 @@ async function testRecurringContext(source){
  const pattern={id:'same',account_id:'a',merchant:'Synthetic',cadence:'monthly',status:'proposed',proposed_type:'subscription',classifications:[{category_code:'abonnementen',count:3,confirmed_count:3}]};
  const edits=new Map();
  const run=new Function('$','document','api','opened','edits',`
- let sessionEpoch=0,recurringEpoch=0,recurringPage=2,recurringTimer=null,state={accounts:[]};const recurringKindEdits=edits,recurringLabels={subscription:'Abonnement',fixed_cost:'Vaste last'},esc=x=>String(x??''),classificationLabel=c=>c.category_code,recurringControls=()=>{};
+ let sessionEpoch=0,recurringEpoch=0,recurringPage=2,recurringFocus=null,recurringTimer=null,state={accounts:[]};const recurringKindEdits=edits,recurringLabels={subscription:'Abonnement',fixed_cost:'Vaste last'},esc=x=>String(x??''),classificationLabel=c=>c.category_code,recurringControls=()=>{};
  async function loadRecurringMembers(p,i,page){opened.push({id:p.id,page})}
  ${fragment};return loadRecurring;`);
  const load=run($,{querySelectorAll:()=>[],querySelector:()=>({scrollIntoView(){scrolled++},querySelector:()=>({focus(){}})})},async()=>({patterns:[pattern],has_more:false}),opened,edits);

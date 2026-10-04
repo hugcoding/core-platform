@@ -185,11 +185,17 @@ class IntegrationTests(unittest.TestCase):
         with connection() as conn,conn.cursor() as cur:cur.execute('INSERT INTO finance.finance_categorization_targets(job_id,transaction_id) VALUES (%s,%s)',(jid,same_context))
         cache={}
         infer=Mock(return_value={'category':'vervoer','subcategory':None,'confidence':.9})
-        with connection(worker=True) as conn:self.assertTrue(step(conn,jid,cache,infer))
-        with connection(worker=True) as conn:self.assertTrue(step(conn,jid,cache,infer))
+        from core.finance import local_classification as local
+        with patch.object(local,'decide',wraps=local.decide) as grouped:
+            with connection(worker=True) as conn:self.assertTrue(step(conn,jid,cache,infer))
+        self.assertEqual(1,grouped.call_count)
+        self.assertIsNotNone(visible(same_context)["category_code"])
         with connection(worker=True) as conn:self.assertFalse(step(conn,jid,cache,infer))
         self.assertEqual(1,infer.call_count)
         row=visible(tid);self.assertEqual('AI',row['classification_source']);self.assertFalse(row['confirmed'])
+        jid=queue(tid);infer.reset_mock()
+        with connection(worker=True) as conn:step(conn,jid,{},infer)
+        infer.assert_not_called();self.assertEqual('vervoer',visible(tid)['category_code'])
         manual(tid);jid=queue(tid);infer.reset_mock()
         with connection(worker=True) as conn:step(conn,jid,{},infer)
         infer.assert_not_called();self.assertEqual('boodschappen',visible(tid)['category_code'])
@@ -1298,6 +1304,88 @@ class IntegrationTests(unittest.TestCase):
             with self.assertRaises(psycopg2.Error):
                 with self.admin.cursor() as cur:cur.execute(sql)
             with self.admin.cursor() as cur:cur.execute('ROLLBACK')
+
+    def test_95_joint_approval_preview_all_scope_snapshot_and_rollback(self):
+        from core.finance.store import connection,enqueue
+        from core.finance.recurring import step,month_date
+        from core.finance.crypto import fingerprint
+        from tests.test_finance_bank_references import numbered,account
+        from dashboard.finance import insert_manual_batch
+        data=numbered(n=88234,ref='JOINT-BASE',message=str(uuid.uuid4()),amount='17.99')
+        data=data.replace(b'Synthetische winkel',b'Synthetic subscription joint').replace(b'</RltdPties>',('<CdtrAcct><Id><IBAN>'+account(88235)+'</IBAN></Id></CdtrAcct></RltdPties>').encode())
+        start=data.index(b'<Ntry>');end=data.index(b'</Ntry>')+len(b'</Ntry>');entry=data[start:end]
+        entries=[entry.replace(b'JOINT-BASE',('JOINT-'+str(i)).encode()).replace(b'2026-09-01',month_date(2020*12+i,18).isoformat().encode()) for i in range(65)]
+        self.import_file(data[:start]+b''.join(entries)+data[end:])
+        with self.admin.cursor() as cur:
+            cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE status IN ('pending','running')")
+            cur.execute('SELECT id FROM finance.finance_accounts WHERE identity_key=%s',(fingerprint('account-v1',account(88234)),));aid=str(cur.fetchone()[0])
+        with connection(worker=True) as conn,conn.cursor() as cur:job=enqueue(cur,'recurring')
+        while True:
+            with connection(worker=True) as conn:
+                if not step(conn,job):break
+        listing=lambda status:self.client.get('/api/v1/finance/recurring',params={'account':aid,'status':status}).json()['patterns']
+        pattern=listing('proposed')[0];pid=pattern['id'];url='/api/v1/finance/recurring/'+pid+'/approve'
+        get_preview=lambda:self.client.get('/api/v1/finance/recurring/'+pid+'/transactions?preview=true').json()
+        preview=get_preview();self.assertEqual(65,preview['total']);self.assertEqual(50,len(preview['transactions']));self.assertFalse(preview['has_more'])
+        self.assertEqual('2020-01-18',preview['date_from']);self.assertEqual('2025-05-18',preview['date_to'])
+        self.assertEqual(preview['date_from'],preview['transactions'][0]['booking_date']);self.assertEqual(preview['date_to'],preview['transactions'][-1]['booking_date'])
+        pages=[self.client.get('/api/v1/finance/recurring/'+pid+'/transactions?page='+str(i)).json()['transactions'] for i in (0,1)]
+        outside=next(t for t in pages[0]+pages[1] if t['id'] not in {r['id'] for r in preview['transactions']})
+        self.client.post('/api/v1/finance/transactions/'+outside['id']+'/classification',json={'key':str(uuid.uuid4()),'previous':outside['review_id'],'category':'boodschappen','subcategory':'boodschappen_supermarkt','transaction_type':'EXPENSE'})
+        body={'key':str(uuid.uuid4()),'detection_id':pattern['detection_id'],'previous':pattern['review_id'],'recurring_type':'subscription','snapshot':preview['snapshot'],
+            'classification':{'scope':'selected','items':[{'id':t['id'],'previous':t['review_id']} for t in preview['transactions'][:2]],'category':'abonnementen','subcategory':'abonnementen_streaming','transaction_type':'EXPENSE'}}
+        self.assertEqual(409,self.client.post(url,json=body).status_code)
+        body['snapshot']=get_preview()['snapshot']
+        self.assertEqual(422,self.client.post(url,json={**body,'classification':{**body['classification'],'items':[]}}).status_code)
+        selected=self.client.post(url,json=body);self.assertEqual(200,selected.status_code,selected.text);self.assertEqual(2,selected.json()['count'])
+        self.assertEqual([],listing('proposed'));self.assertEqual(1,len(listing('confirmed')))
+        fresh=get_preview();self.assertEqual(3,fresh['protected_count'])
+        next_pattern=listing('all')[0]
+        all_body={**body,'key':str(uuid.uuid4()),'snapshot':fresh['snapshot'],'previous':next_pattern['review_id'],
+                  'classification':{k:v for k,v in body['classification'].items() if k!='items'}}
+        all_body['classification']['scope']='all'
+        def fail_after_classifications(cur,items):
+            insert_manual_batch(cur,items)
+            raise RuntimeError('synthetic failure')
+        with patch('dashboard.finance.insert_manual_batch',side_effect=fail_after_classifications):
+            self.assertEqual(503,self.client.post(url,json=all_body).status_code)
+        self.assertEqual(fresh['snapshot'],get_preview()['snapshot'])
+        result=self.client.post(url,json=all_body);self.assertEqual(200,result.status_code,result.text);self.assertEqual(62,result.json()['count'])
+        self.assertEqual(200,self.client.post(url,json=all_body).status_code)
+        self.assertEqual(409,self.client.post(url,json={**all_body,'recurring_type':'fixed_cost'}).status_code)
+        current=get_preview();self.assertEqual(65,current['protected_count']);self.assertEqual(65,current['total'])
+        outside_after=self.client.get('/api/v1/finance/recurring/'+pid+'/transactions?page=1').json()['transactions']
+        all_after=self.client.get('/api/v1/finance/recurring/'+pid+'/transactions').json()['transactions']+outside_after
+        self.assertEqual('boodschappen',next(t for t in all_after if t['id']==outside['id'])['category_code'])
+        self.assertEqual(64,sum(t['category_code']=='abonnementen' for t in all_after))
+        self.assertEqual(pid,self.client.get('/api/v1/finance/recurring',params={'status':'all','focus':pid}).json()['patterns'][0]['id'])
+        # Keeping categories confirms only the pattern; no transaction review is added.
+        latest=listing('all')[0];snap=get_preview()['snapshot']
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT count(*) FROM finance.finance_review_events');review_count=cur.fetchone()[0]
+        keep={**body,'key':str(uuid.uuid4()),'snapshot':snap,'previous':latest['review_id'],'recurring_type':'fixed_cost','classification':None}
+        self.assertEqual(200,self.client.post(url,json=keep).status_code)
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT count(*) FROM finance.finance_review_events');self.assertEqual(review_count,cur.fetchone()[0])
+        # Explicit overwrite also covers previously protected rows, outside the preview.
+        latest=listing('all')[0]
+        overwrite={**all_body,'key':str(uuid.uuid4()),'snapshot':get_preview()['snapshot'],'previous':latest['review_id'],
+                   'classification':{**all_body['classification'],'overwrite':True}}
+        result=self.client.post(url,json=overwrite);self.assertEqual(200,result.status_code,result.text);self.assertEqual(65,result.json()['count'])
+        self.assertEqual('abonnementen',get_preview()['classification']['category_code'])
+        from fastapi.testclient import TestClient
+        with TestClient(self.client.app) as anonymous:
+            self.assertEqual(401,anonymous.post(url,json=overwrite,headers={'origin':'http://testserver'}).status_code)
+        self.assertEqual(403,self.client.post(url,json=overwrite,headers={'origin':'http://other.example'}).status_code)
+
+        # A fresh detection preserves the confirmed owner decision and filter state.
+        with self.admin.cursor() as cur:cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE status IN ('pending','running')")
+        with connection(worker=True) as conn,conn.cursor() as cur:job=enqueue(cur,'recurring')
+        while True:
+            with connection(worker=True) as conn:
+                if not step(conn,job):break
+        self.assertEqual([],listing('proposed'));self.assertEqual('confirmed',listing('confirmed')[0]['status'])
+        self.assertEqual(422,self.client.get('/api/v1/finance/recurring?status=invalid').status_code)
 
 
 if __name__=='__main__': unittest.main()

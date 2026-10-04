@@ -202,3 +202,7 @@ Bevestigde classificaties blijven gewone bestaande reviewevents en worden nooit 
 Tests: `python -m unittest tests.test_finance tests.test_finance_recurring -q` in de
 geisoleerde teststack; `node tests/test_finance_selection.cjs`,
 `node tests/test_finance_recurring_ui.cjs`, `node tests/test_finance_recurring_bulk.cjs`.
+
+## Gezamenlijk akkoord
+
+Zie [gezamenlijk akkoord en volledige aantallen](finance-recurring-approval.md) voor de actuele reviewactie, statusfilters en de preview verspreid over de volledige periode.
