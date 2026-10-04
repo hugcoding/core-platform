@@ -99,6 +99,18 @@ class DetectionTests(unittest.TestCase):
         item['classifications'][0]['subcategory_code']='abonnementen_streaming'
         self.assertEqual('subscription',type_proposal(item))
 
+    def test_preview_spreads_over_time_and_includes_extremes(self):
+        from core.finance.recurring import preview_ids
+        rows=[{'id':str(i),'booking_date':date(2020,1,1)+timedelta(days=i)} for i in range(80)]
+        rows += [{'id':str(80+i),'booking_date':date(2026,1,1)+timedelta(days=i*10)} for i in range(40)]
+        ids=preview_ids(rows)
+        self.assertEqual(50,len(ids));self.assertEqual(50,len(set(ids)))
+        self.assertEqual('0',ids[0]);self.assertEqual('119',ids[-1])
+        self.assertGreater(sum(int(i)>=80 for i in ids),5)
+        self.assertEqual(ids,preview_ids(rows))
+        self.assertEqual(['0','1'],preview_ids(rows[:2]))
+        self.assertEqual([],preview_ids([]))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -76,9 +76,19 @@ def insert_suggestion(cur, target, seed, expected, key, digest, method):
 
 
 def insert_manual(cur, tid, category, subcategory, kind, merchant, key, digest):
-    """Shared append-only owner classification, also used for explicit bulk choices."""
-    cur.execute("""INSERT INTO finance.finance_review_events
+    """Shared append-only owner classification for individual and bulk choices."""
+    insert_manual_batch(cur, [(tid,category,subcategory,kind,merchant,key,digest)])
+
+
+def insert_manual_batch(cur, items):
+    """Same review chain, bounded SQL batches; never one new classifier per flow."""
+    from psycopg2.extras import execute_values
+    if not items:return
+    cur.execute('SELECT DISTINCT ON(transaction_id) transaction_id,id FROM finance.finance_review_events WHERE transaction_id=ANY(%s::uuid[]) ORDER BY transaction_id,sequence_no DESC',([str(item[0]) for item in items],))
+    previous={str(r['transaction_id']):r['id'] for r in cur.fetchall()}
+    values=[(tid,category,sub,kind,merchant,'MANUAL',None,True,previous.get(str(tid)),'owner',key,digest)
+            for tid,category,sub,kind,merchant,key,digest in items]
+    execute_values(cur,"""INSERT INTO finance.finance_review_events
         (transaction_id,category_code,subcategory_code,transaction_type,merchant_id,
          classification_source,confidence,confirmed,supersedes_event_id,actor,idempotency_key,payload_digest)
-        VALUES (%s,%s,%s,%s,%s,'MANUAL',NULL,true,%s,'owner',%s,%s)""",
-        (tid,category,subcategory,kind,merchant,predecessor(cur,tid),key,digest))
+        VALUES %s""",values,page_size=500)

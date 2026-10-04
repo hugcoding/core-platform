@@ -57,8 +57,9 @@
 <h2 id="suggestionsTitle">Soortgelijke betalingen</h2><p>Alle rekeningen en perioden. Alleen betalingen zonder categorie. Er verandert niets zonder jouw bevestiging.</p>
 <progress id="suggestionsProgress" aria-label="Soortgelijke betalingen zoeken" hidden></progress><p id="suggestionsStatus" role="status" aria-live="polite"></p><button id="refreshSuggestions" type="button">Voorstellen vernieuwen</button><div id="selectionActions" hidden><label><input type="checkbox" id="selectVisibleSuggestions"> Alle zichtbare voorstellen</label> <button id="approveSelection" type="button" disabled>Selectie accorderen (0)</button></div><div id="suggestionsBody"></div></dialog>
 <dialog id="recurringDialog" aria-labelledby="recurringTitle"><form method="dialog"><button class="close" aria-label="Sluiten">&#10005;</button></form>
-<h2 id="recurringTitle">Terugkerend</h2><p>Maandelijks, per kwartaal en jaarlijks. Dit zijn herkenningspatronen, geen toekomstige boekingen. Een beoordeling verandert geen transactiecategorie of saldo.</p>
+<h2 id="recurringTitle">Terugkerend</h2><p>Maandelijks, per kwartaal en jaarlijks. Dit zijn herkenningspatronen, geen toekomstige boekingen. Met Alles opslaan en akkoord bevestig je de soort en de gekozen categorie-instellingen. Het banksaldo blijft gelijk.</p>
 <label>Rekening <select id="recurringAccount"></select></label>
+<label>Weergave <select id="recurringReviewStatus"><option value="proposed">Te beoordelen</option><option value="confirmed">Bevestigd</option><option value="all">Alles</option><option value="rejected">Afgewezen</option><option value="inactive">Inactief</option></select></label>
 <button id="recurringRefresh">Vernieuwen</button><button id="recurringDetect">Opnieuw herkennen</button>
 <progress id="recurringProgress" aria-label="Terugkerende betalingen laden" hidden></progress><p id="recurringStatus" role="status" aria-live="polite"></p>
 <div id="recurringBody"></div><div class="pagination"><button id="recurringPrevious">Vorige</button><button id="recurringNext">Volgende</button></div>

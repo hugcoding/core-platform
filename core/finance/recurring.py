@@ -185,16 +185,18 @@ def type_proposal(item):
     return original
 
 
-def patterns(cur, account=None, page=0):
+def patterns(cur, account=None, page=0, status='all', focus=None):
     """Persisted evidence only, no detection on page load. Retired sources hidden."""
     cur.execute('''WITH roots AS (
         SELECT p.id FROM finance.finance_recurring_patterns p
         JOIN finance.v_recurring_membership g ON g.pattern_id=p.id AND g.root_id=p.id
+        LEFT JOIN LATERAL (SELECT status FROM finance.finance_recurring_reviews WHERE pattern_id=p.id ORDER BY sequence_no DESC LIMIT 1) rr ON true
         JOIN LATERAL (SELECT id,cadence,active FROM finance.finance_recurring_detections WHERE pattern_id=p.id ORDER BY sequence_no DESC LIMIT 1) d ON true
         WHERE (%s::uuid IS NULL OR p.account_id=%s::uuid) AND d.cadence IS DISTINCT FROM 'weekly'
+        AND (%s='all' OR CASE WHEN d.active THEN coalesce(rr.status,'proposed') ELSE 'inactive' END=%s)
         AND EXISTS(SELECT 1 FROM finance.finance_recurring_detections old WHERE old.pattern_id=p.id AND old.cadence IN ('monthly','quarterly','yearly'))
         AND (NOT d.active OR NOT EXISTS (SELECT 1 FROM finance.finance_recurring_members m WHERE m.detection_id=d.id AND NOT EXISTS(SELECT 1 FROM finance.v_transactions t WHERE t.id=m.transaction_id)))
-        ORDER BY p.account_id,p.id LIMIT 51 OFFSET %s)
+        ORDER BY (p.id=%s::uuid) DESC NULLS LAST,p.account_id,p.id LIMIT 51 OFFSET %s)
         SELECT p.*,g.root_id,g.link_id,d.id AS detection_id,d.active,d.private_data,d.created_at,
         s.revision_key,r.id AS review_id,r.status AS review_status,r.recurring_type AS reviewed_type,
         r.detection_id AS reviewed_detection FROM finance.finance_recurring_patterns p
@@ -208,7 +210,7 @@ def patterns(cur, account=None, page=0):
         WHERE d.cadence IS DISTINCT FROM 'weekly'
         AND (NOT d.active OR NOT EXISTS (SELECT 1 FROM finance.finance_recurring_members m
             WHERE m.detection_id=d.id AND NOT EXISTS(SELECT 1 FROM finance.v_transactions t WHERE t.id=m.transaction_id)))
-        ORDER BY p.account_id,g.root_id,p.id''', (account, account, page*50))
+        ORDER BY (g.root_id=%s::uuid) DESC NULLS LAST,p.account_id,g.root_id,p.id''', (account, account, status, status, focus, page*50, focus))
     rows = cur.fetchall()
     # Current effective classifications, not copied into detection evidence.
     summaries = defaultdict(list)
@@ -271,3 +273,43 @@ def member_ids_sql():
         JOIN LATERAL (SELECT id,cadence FROM finance.finance_recurring_detections WHERE pattern_id=g.pattern_id ORDER BY sequence_no DESC LIMIT 1) d ON true
         JOIN finance.finance_recurring_members m ON m.detection_id=d.id
         WHERE g.root_id=%s AND d.cadence IS DISTINCT FROM 'weekly'"""
+
+
+def preview_ids(rows, limit=50):
+    """Time-spread deterministic preview, including the oldest and newest booking."""
+    from bisect import bisect_left
+    if len(rows)<=limit:
+        return [str(r['id']) for r in rows]
+    days=[r['booking_date'].toordinal() for r in rows]
+    selected={0,len(rows)-1}
+    for i in range(1,limit-1):
+        target=days[0]+(days[-1]-days[0])*i/(limit-1)
+        right=min(bisect_left(days,target),len(rows)-1)
+        left=max(right-1,0)
+        selected.add(min((left,right),key=lambda index:abs(days[index]-target)))
+    # Sparse periods can share a nearest payment. Fill from chronological ranks.
+    for i in range(limit):
+        if len(selected)==limit:break
+        selected.add(round(i*(len(rows)-1)/(limit-1)))
+    for i in range(len(rows)):
+        if len(selected)==limit:break
+        selected.add(i)
+    return [str(rows[i]['id']) for i in sorted(selected)]
+
+
+def review_members(cur, pid):
+    """Current group/source/review snapshot. Contains no decrypted bank payloads."""
+    cur.execute('SELECT g.pattern_id,g.link_id,d.id AS detection_id FROM finance.v_recurring_membership g JOIN LATERAL (SELECT id FROM finance.finance_recurring_detections WHERE pattern_id=g.pattern_id ORDER BY sequence_no DESC LIMIT 1) d ON true WHERE g.root_id=%s ORDER BY g.pattern_id',(pid,))
+    components=cur.fetchall()
+    cur.execute('SELECT id FROM finance.finance_recurring_reviews WHERE pattern_id=%s ORDER BY sequence_no DESC LIMIT 1',(pid,))
+    review=cur.fetchone()
+    cur.execute('SELECT t.id,t.booking_date,t.review_id,t.confirmed,t.merchant_id,t.category_code,t.subcategory_code,t.transaction_type FROM finance.v_transactions t WHERE t.id IN ('+member_ids_sql()+') ORDER BY t.booking_date,t.id LIMIT %s',(pid,MAX_SCAN+1))
+    rows=cur.fetchall()
+    if len(rows)>MAX_SCAN:
+        from fastapi import HTTPException
+        raise HTTPException(422,'recurring_scan_limit')
+    snapshot=fingerprint('recurring-approval-snapshot-v1',[
+        [(str(c['pattern_id']),str(c['link_id']),str(c['detection_id'])) for c in components],
+        str(review['id']) if review else None,
+        [(str(r['id']),str(r['review_id'])) for r in rows]])
+    return rows,snapshot

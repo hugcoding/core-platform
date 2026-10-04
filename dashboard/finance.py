@@ -16,7 +16,7 @@ from core.finance.crypto import canonical, decrypt, encrypt, fingerprint, secret
 from core.finance.account_names import account_view, normalize_name
 from core.finance.periods import period_bounds
 from core.finance.suggestions import identity as merchant_identity, METHOD as SUGGESTION_METHOD, MAX_SCAN, recognized_merchant
-from core.finance.classification import merchant_name, merchant_id, validate_category, conflicts, insert_suggestion, predecessor, insert_manual
+from core.finance.classification import merchant_name, merchant_id, validate_category, conflicts, insert_suggestion, predecessor, insert_manual, insert_manual_batch
 from core.finance.account_groups import groups as wealth_groups, accounts as managed_accounts, group_name, RELATIONSHIPS, transfer_scope, internal_transfer_group
 from core.finance.store import connection, enqueue, event, publish_record, IMPORT_LOCK
 
@@ -255,26 +255,37 @@ def request_recurring_detection():
 
 
 @router.get('/api/v1/finance/recurring')
-def recurring_patterns(account:str='',page:int=0):
+def recurring_patterns(account:str='',page:int=0,status:str='all',focus:str=''):
     from core.finance.recurring import patterns
     if not 0<=page<=10000:raise HTTPException(422,'invalid_page')
     account=uid(account) if account else None
     with connection() as conn,conn.cursor() as cur:
-        return patterns(cur,account,page)
+        if status not in ('all','proposed','confirmed','rejected','inactive'):raise HTTPException(422,'invalid_recurring_status')
+        return patterns(cur,account,page,status,uid(focus) if focus else None)
 
 
 @router.get('/api/v1/finance/recurring/{pattern_id}/transactions')
-def recurring_transactions(pattern_id:str,page:int=0):
+def recurring_transactions(pattern_id:str,page:int=0,preview:bool=False):
     pid=uid(pattern_id)
     if not 0<=page<=10000:raise HTTPException(422,'invalid_page')
     with connection() as conn,conn.cursor() as cur:
         cur.execute('SELECT id FROM finance.finance_recurring_detections WHERE pattern_id=%s ORDER BY sequence_no DESC LIMIT 1',(pid,))
         detection=cur.fetchone()
         if not detection:raise HTTPException(404,'pattern_not_found')
-        from core.finance.recurring import member_ids_sql
-        cur.execute('SELECT t.* FROM finance.v_transactions t WHERE t.id IN ('+member_ids_sql()+') ORDER BY t.booking_date DESC,t.id LIMIT 51 OFFSET %s',(pid,page*50))
+        from core.finance.recurring import review_members,preview_ids
+        members,snapshot=review_members(cur,pid)
+        ordered=members if preview else sorted(members,key=lambda r:(-r['booking_date'].toordinal(),str(r['id'])))
+        ids=preview_ids(members) if preview else [str(r['id']) for r in ordered[page*50:(page+1)*50]]
+        cur.execute('SELECT t.* FROM finance.v_transactions t WHERE t.id=ANY(%s::uuid[]) ORDER BY t.booking_date '+('ASC' if preview else 'DESC')+',t.id',(ids,))
         rows=cur.fetchall()
-    return {'detection_id':str(detection['id']),'transactions':[transaction(r) for r in rows[:50]],'has_more':len(rows)>50,'page':page}
+        signatures={(r['category_code'],r['subcategory_code'],r['transaction_type']) for r in members}
+        common=dict(zip(('category_code','subcategory_code','transaction_type'),next(iter(signatures)))) if len(signatures)==1 else None
+    return {'detection_id':str(detection['id']),'transactions':[transaction(r) for r in rows],
+        'has_more':not preview and len(members)>(page+1)*50,'page':page,'preview':preview,
+        'total':len(members),'protected_count':sum(bool(r['confirmed']) for r in members),
+        'date_from':members[0]['booking_date'].isoformat() if members else None,
+        'date_to':members[-1]['booking_date'].isoformat() if members else None,
+        'snapshot':snapshot,'classification':common}
 
 
 @router.post('/api/v1/finance/recurring/{pattern_id}/link')
@@ -336,6 +347,65 @@ def classify_recurring_selection(pattern_id:str,payload:dict=Body(...)):
         for (tid,_),key in zip(selected,keys):
             insert_manual(cur,tid,category,subcategory,kind,rows[tid]['merchant_id'],key,digest)
     return {'status':'saved','count':len(selected)}
+
+
+@router.post('/api/v1/finance/recurring/{pattern_id}/approve')
+def approve_recurring(pattern_id:str,payload:dict=Body(...)):
+    from core.finance.recurring import review_members
+    pid=uid(pattern_id);key=uid(payload.get('key'));did=uid(payload.get('detection_id'))
+    previous=uid(payload['previous']) if payload.get('previous') else None
+    kind=payload.get('recurring_type');snapshot=payload.get('snapshot')
+    if kind not in ('subscription','fixed_cost','periodic_transfer','other_recurring') or not isinstance(snapshot,str) or len(snapshot)!=64:raise HTTPException(422,'invalid_recurring_review')
+    classification=payload.get('classification')
+    selected=[];category=subcategory=transaction_type=None;overwrite=False;scope='none'
+    if classification is not None:
+        if not isinstance(classification,dict):raise HTTPException(422,'invalid_classification')
+        scope=classification.get('scope');overwrite=classification.get('overwrite') is True
+        category=classification.get('category');subcategory=classification.get('subcategory') or None;transaction_type=classification.get('transaction_type')
+        if scope not in ('selected','all') or not isinstance(category,str) or not category or not isinstance(transaction_type,str) or (subcategory is not None and not isinstance(subcategory,str)):raise HTTPException(422,'invalid_classification')
+        if scope=='selected':
+            items=classification.get('items')
+            if not isinstance(items,list) or not 1<=len(items)<=50 or any(not isinstance(i,dict) for i in items):raise HTTPException(422,'invalid_selection')
+            selected=sorted((uid(i.get('id')),uid(i['previous']) if i.get('previous') else None) for i in items)
+            if len({t for t,_ in selected})!=len(selected):raise HTTPException(422,'invalid_selection')
+        elif classification.get('items'):raise HTTPException(422,'invalid_selection')
+    digest=fingerprint('recurring-approval-v1',[pid,did,previous,kind,snapshot,scope,category,subcategory,transaction_type,overwrite,selected])
+    with connection() as conn,conn.cursor() as cur:
+        for name in ('finance-recurring-link','finance-category-learning','finance-recurring-review'):
+            cur.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(name,))
+        cur.execute('SELECT pg_advisory_xact_lock(%s)',(IMPORT_LOCK,))
+        if replay(cur,'finance_recurring_reviews',key,digest):return {'status':'saved','replayed':True}
+        members,current_snapshot=review_members(cur,pid)
+        if current_snapshot!=snapshot:raise HTTPException(409,'recurring_snapshot_changed')
+        cur.execute('SELECT id FROM finance.finance_recurring_detections WHERE pattern_id=%s ORDER BY sequence_no DESC LIMIT 1',(pid,))
+        detection=cur.fetchone()
+        if not detection:raise HTTPException(404,'pattern_not_found')
+        if str(detection['id'])!=did:raise HTTPException(409,'review_changed')
+        cur.execute('SELECT root_id FROM finance.v_recurring_membership WHERE pattern_id=%s',(pid,))
+        if str(cur.fetchone()['root_id'])!=pid:raise HTTPException(409,'review_changed')
+        cur.execute('SELECT id FROM finance.finance_recurring_reviews WHERE pattern_id=%s ORDER BY sequence_no DESC LIMIT 1',(pid,))
+        latest=cur.fetchone()
+        if (str(latest['id']) if latest else None)!=previous:raise HTTPException(409,'review_changed')
+        rows={str(r['id']):r for r in members}
+        targets=[]
+        if scope!='none':
+            validate_category(cur,category,subcategory)
+            cur.execute('SELECT 1 FROM finance.finance_transaction_types WHERE code=%s',(transaction_type,))
+            if not cur.fetchone():raise HTTPException(422,'invalid_classification')
+            if scope=='all':
+                targets=[r for r in members if overwrite or not r['confirmed']]
+            else:
+                for tid,expected in selected:
+                    row=rows.get(tid)
+                    if row is None or (str(row['review_id']) if row['review_id'] else None)!=expected:raise HTTPException(409,'review_changed')
+                    if row['confirmed'] and not overwrite:raise HTTPException(409,'manual_review_protected')
+                    targets.append(row)
+            insert_manual_batch(cur,[(str(row['id']),category,subcategory,transaction_type,row['merchant_id'],
+                str(uuid.uuid5(uuid.UUID(key),'classification:'+str(row['id']))),digest) for row in targets])
+        cur.execute("""INSERT INTO finance.finance_recurring_reviews
+            (pattern_id,detection_id,status,recurring_type,previous,idempotency_key,payload_digest)
+            VALUES (%s,%s,'confirmed',%s,%s,%s,%s)""",(pid,did,kind,previous,key,digest))
+    return {'status':'saved','count':len(targets),'protected_count':sum(bool(r['confirmed']) for r in members) if not overwrite else 0}
 
 
 @router.post('/api/v1/finance/recurring/{pattern_id}/review')
