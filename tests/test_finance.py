@@ -185,11 +185,17 @@ class IntegrationTests(unittest.TestCase):
         with connection() as conn,conn.cursor() as cur:cur.execute('INSERT INTO finance.finance_categorization_targets(job_id,transaction_id) VALUES (%s,%s)',(jid,same_context))
         cache={}
         infer=Mock(return_value={'category':'vervoer','subcategory':None,'confidence':.9})
-        with connection(worker=True) as conn:self.assertTrue(step(conn,jid,cache,infer))
-        with connection(worker=True) as conn:self.assertTrue(step(conn,jid,cache,infer))
+        from core.finance import local_classification as local
+        with patch.object(local,'decide',wraps=local.decide) as grouped:
+            with connection(worker=True) as conn:self.assertTrue(step(conn,jid,cache,infer))
+        self.assertEqual(1,grouped.call_count)
+        self.assertIsNotNone(visible(same_context)["category_code"])
         with connection(worker=True) as conn:self.assertFalse(step(conn,jid,cache,infer))
         self.assertEqual(1,infer.call_count)
         row=visible(tid);self.assertEqual('AI',row['classification_source']);self.assertFalse(row['confirmed'])
+        jid=queue(tid);infer.reset_mock()
+        with connection(worker=True) as conn:step(conn,jid,{},infer)
+        infer.assert_not_called();self.assertEqual('vervoer',visible(tid)['category_code'])
         manual(tid);jid=queue(tid);infer.reset_mock()
         with connection(worker=True) as conn:step(conn,jid,{},infer)
         infer.assert_not_called();self.assertEqual('boodschappen',visible(tid)['category_code'])

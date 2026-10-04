@@ -1,8 +1,8 @@
 # Lokale automatische indeling
 
-De knop **Lokaal alle betalingen indelen** start een eindige achtergrondopdracht voor
-alle actieve betalingen zonder bevestigd oordeel, over alle rekeningen en perioden.
-Ook eerdere automatische indelingen mogen opnieuw worden bekeken. Nieuwe imports na
+De knop **Ongecategoriseerde betalingen indelen** start een eindige achtergrondopdracht
+voor actieve betalingen zonder categorie en zonder bevestigd oordeel, over alle
+rekeningen en perioden. Bestaande automatische categorie?n blijven behouden. Nieuwe imports na
 de start horen bij een volgende opdracht. Je handmatige oordeel, inclusief bewust
 leegmaken van een categorie, wordt nooit automatisch vervangen.
 
@@ -26,7 +26,9 @@ nieuwe automatische beoordelingen na een bevestigd oordeel. De bestaande brongeg
 bedragen, bankreferenties en handmatige reviewhistorie blijven intact.
 
 Een opdracht gebruikt de bestaande Finance-queue en worker, met dezelfde capaciteits-,
-PostgreSQL- en gecontroleerde-uitvoeringscontrole per betaling. De worker is al zichtbaar
+PostgreSQL- en gecontroleerde-uitvoeringscontrole per begrensde batch van maximaal
+200 betalingen, met maximaal ??n nieuwe LLM-aanroep en geen nieuwe LLM-aanroep
+terwijl eerdere batchresultaten een database-lock vasthouden. De worker is al zichtbaar
 in Pulse en meldt `categorizing`. De UI toont verwerkt/totaal en aantal ingedeeld.
 Stoppen bewaart afgeronde resultaten; een lopende LLM-aanroep kan nog aflopen, maar wordt
 na het stoppen niet meer gepubliceerd. Na een herstart worden afgeronde items overgeslagen.
@@ -106,3 +108,5 @@ up/down/up, runtime-rollen, automatische indeling, menselijke voorrang, bestaand
 merchant-herkenning, correctie tijdens inference, replay, stoppen, privacyredactie,
 ongeldige categorieën, onzekerheid en append-only-bescherming. De inhoudelijke kwaliteit
 en beschikbaarheid van het geïnstalleerde lokale model zijn geen onderdeel van deze tests.
+
+Zie [lokale indeling in groepen](finance-grouped-categorization.md) voor het groepscontract en uitrol.

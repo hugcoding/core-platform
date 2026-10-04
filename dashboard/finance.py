@@ -446,7 +446,7 @@ def request_categorization():
             return {'job_id':str(active['id']),'status':'pending'}
         job=enqueue(cur,'categorize')
         cur.execute('''INSERT INTO finance.finance_categorization_targets(job_id,transaction_id)
-            SELECT %s,id FROM finance.v_transactions WHERE NOT confirmed''', (job,))
+            SELECT %s,id FROM finance.v_transactions WHERE NOT confirmed AND category_code IS NULL''', (job,))
     return {'job_id':job,'status':'pending'}
 
 

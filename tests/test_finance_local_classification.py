@@ -83,3 +83,46 @@ class LocalClassificationTests(unittest.TestCase):
         opener=Mock();opener.open.side_effect=RuntimeError('synthetic private content')
         with patch.object(local,'build_opener',return_value=opener), self.assertRaisesRegex(RuntimeError,'^finance_local_llm_unavailable$'):
             local.generate(local.GenerationRequest('synthetic','system','private'))
+
+    def test_group_context_shares_known_shop_but_keeps_generic_purpose(self):
+        a=local.inference_context({'description':'NLTEST000001>AH BOUWENS>TESTSTAD 01.01.2026'},-12,'EUR')
+        b=local.inference_context({'description':'NLTEST000002>ALBERT HEIJN BOUWENS>TESTSTAD 02.02.2026'},-45,'EUR')
+        self.assertEqual(a,b)
+        self.assertNotEqual(a,local.inference_context({'description':'NLTEST000003>ALBERT HEIJN BOUWENS>TESTSTAD'},12,'EUR'))
+        recipient={'counterparty':'Synthetic person','counteraccount':'synthetic'}
+        self.assertNotEqual(local.inference_context({**recipient,'description':'Rent'},-5,'EUR'),
+                            local.inference_context({**recipient,'description':'Birthday gift'},-5,'EUR'))
+
+    def test_batch_bounds_and_single_new_inference(self):
+        infer=Mock(return_value={})
+        request=local.GenerationRequest('synthetic','system','synthetic')
+        def one(conn,job,cache,call):
+            call(request)
+            return True
+        with patch.object(local,'_step',side_effect=one) as single:
+            self.assertTrue(local.step(None,'job',{},infer))
+        self.assertEqual(2,single.call_count)
+        self.assertEqual(1,infer.call_count)
+        with patch.object(local,'_step',return_value=True) as single:
+            self.assertTrue(local.step(None,'job',{},infer))
+        self.assertEqual(local.BATCH_SIZE,single.call_count)
+
+    def test_batch_finishes_and_failure_is_not_swallowed(self):
+        with patch.object(local,'_step',side_effect=[True,True,False]):
+            self.assertTrue(local.step(None,'job',{}))
+        with patch.object(local,'_step',return_value=False):
+            self.assertFalse(local.step(None,'job',{}))
+        with patch.object(local,'_step',side_effect=RuntimeError('synthetic')):
+            with self.assertRaises(RuntimeError):local.step(None,'job',{})
+
+    def test_new_inference_never_waits_while_previous_results_hold_job_lock(self):
+        infer=Mock(return_value={})
+        n=0
+        def one(conn,job,cache,call):
+            nonlocal n
+            n+=1
+            if n>1:call(local.GenerationRequest('synthetic','system','synthetic'))
+            return True
+        with patch.object(local,'_step',side_effect=one):
+            self.assertTrue(local.step(None,'job',{},infer))
+        infer.assert_not_called()

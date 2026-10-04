@@ -15,6 +15,12 @@ from core.finance.account_groups import transfer_scope, internal_transfer_group
 from core.semantic.rag import GenerationRequest
 
 VERSION = 'finance-local-v1'
+BATCH_SIZE = 200
+
+
+class DeferInference(Exception):
+    """Commit the completed batch before starting another slow local call."""
+
 
 
 def settings():
@@ -69,6 +75,45 @@ def context_text(payload, amount):
             'direction': 'debit' if amount < 0 else 'credit'}
 
 
+def inference_context(payload, amount, currency):
+    """Share merchant decisions only for the existing deterministic merchant matcher.
+
+    Generic counterparties keep their redacted description, so rent, gifts and
+    purchases from one recipient do not collapse into a single AI decision.
+    """
+    match = identity(payload, amount, currency)
+    safe = context_text(payload, amount)
+    if match and match[0] in ('merchant_marker', 'ovpay'):
+        name = match[1] if match[0] == 'merchant_marker' else 'OVpay'
+        safe = context_text({'counterparty': name, 'description': name}, amount)
+    return safe
+
+
+def step(conn, job, cache, infer=generate):
+    """Bounded batches; at most one new LLM call between capacity checks.
+
+    Per-payment append-only events retain traceability. Reused requests share
+    one cached answer; owner revision changes still invalidate the cache.
+    """
+    used = False
+    def bounded_infer(request):
+        nonlocal used
+        if used or more:
+            raise DeferInference()
+        used = True
+        return infer(request)
+    more = False
+    for _ in range(BATCH_SIZE):
+        try:
+            done = _step(conn, job, cache, bounded_infer)
+        except DeferInference:
+            return True
+        if not done:
+            return more
+        more = True
+    return more
+
+
 def decide(target, examples, categories, scope, infer=generate):
     payload = decrypt(target['private_data'])
     match = identity(payload, target['amount'], target['currency'])
@@ -86,7 +131,7 @@ def decide(target, examples, categories, scope, infer=generate):
                 return None
         return {**{k: seed.get(k) for k in ('category_code', 'subcategory_code', 'transaction_type', 'merchant_id')},
                 'source': 'MERCHANT', 'confidence': None, 'seed': seed['review_id']}
-    safe = context_text(payload, target['amount'])
+    safe = inference_context(payload, target['amount'], target['currency'])
     if not safe['counterparty'] and not safe['description']:
         return None
     tokens = set((safe['counterparty']+' '+safe['description']).casefold().split()) - {'#', '[rekening]'}
@@ -129,7 +174,7 @@ def revision(cur):
     return tuple(cur.fetchone().values())
 
 
-def step(conn, job, cache, infer=generate):
+def _step(conn, job, cache, infer=generate):
     """One immutable result per queued transaction; replay and owner races are safe."""
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM finance.finance_ingest_jobs WHERE id=%s", (job,))
@@ -146,7 +191,7 @@ def step(conn, job, cache, infer=generate):
         tid = target['transaction_id']
         choice = None
         status = 'skipped'
-        if target['id'] and not target['confirmed']:
+        if target['id'] and not target['confirmed'] and target['category_code'] is None:
             version = revision(cur)
             cur.execute('SELECT id,code,name,parent_id,transaction_type FROM finance.finance_categories WHERE active ORDER BY code')
             categories = cur.fetchall()
@@ -158,7 +203,7 @@ def step(conn, job, cache, infer=generate):
                     safe = context_text(payload, row['amount'])
                     examples.append({**row, 'payload': payload, 'identity': identity(payload, row['amount'], row['currency']),
                                      'tokens': set((safe['counterparty']+' '+safe['description']).casefold().split())})
-                cache.update(revision=version, examples=examples, answers={})
+                cache.update(revision=version, examples=examples, answers={}, choices={})
             def cached_infer(request):
                 key=fingerprint(VERSION,[request.model,request.system_prompt,request.user_prompt])
                 answers=cache['answers']
@@ -166,14 +211,24 @@ def step(conn, job, cache, infer=generate):
                     if len(answers)>=512:answers.clear()
                     answers[key]=infer(request)
                 return answers[key]
-            choice = decide(target, cache['examples'], categories, transfer_scope(cur), cached_infer)
+            payload = decrypt(target['private_data'])
+            group_key = fingerprint(VERSION+':group', [str(target['account_id']), target['currency'],
+                identity(payload, target['amount'], target['currency']),
+                inference_context(payload, target['amount'], target['currency'])])
+            choices = cache.setdefault('choices', {})
+            if group_key not in choices:
+                result = decide(target, cache['examples'], categories, transfer_scope(cur), cached_infer)
+                if len(choices) >= 512:
+                    choices.pop(next(iter(choices)))
+                choices[group_key] = result
+            choice = choices[group_key]
             # LLM latency must never make a newer owner review lose to this result.
             cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-category-learning'))")
             if revision(cur) != version:
-                return True
-            cur.execute('SELECT confirmed FROM finance.v_transactions WHERE id=%s', (tid,))
+                raise DeferInference()
+            cur.execute('SELECT confirmed,category_code FROM finance.v_transactions WHERE id=%s', (tid,))
             current = cur.fetchone()
-            if not current or current['confirmed']:
+            if not current or current['confirmed'] or current['category_code'] is not None:
                 choice = None
             else:
                 status = 'classified' if choice else 'abstained'
