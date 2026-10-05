@@ -135,6 +135,9 @@ class IntegrationTests(unittest.TestCase):
             links_up=Path('database/migrations/20261001_add_finance_recurring_links.sql').read_text()
             links_down=Path('database/migrations/rollback/20261001_add_finance_recurring_links.sql').read_text()
             cur.execute(links_up);cur.execute(links_down);cur.execute(links_up)
+            phases_up=Path('database/migrations/20261005_add_finance_categorization_phases.sql').read_text()
+            phases_down=Path('database/migrations/rollback/20261005_add_finance_categorization_phases.sql').read_text()
+            cur.execute(phases_up);cur.execute(phases_down);cur.execute(phases_up)
         app=FastAPI();app.middleware('http')(finance_boundary);app.include_router(router)
         cls.client=TestClient(app);cls.client.headers['origin']='http://testserver'
         response=cls.client.post('/api/v1/finance/session',json={'code':'synthetic-access'})
@@ -152,7 +155,14 @@ class IntegrationTests(unittest.TestCase):
 
     def test_91_local_categorization_owner_priority_learning_and_stop(self):
         from core.finance.store import connection,enqueue
-        from core.finance.local_classification import step,VERSION
+        from core.finance.local_classification import step as phase_step,VERSION
+        def step(conn,job,cache,infer):
+            more=phase_step(conn,job,cache,infer)
+            if more and cache.get('phase')=='llm':
+                # Preserve the old assertions while exercising CORE first and a commit boundary.
+                conn.commit()
+                return phase_step(conn,job,cache,infer)
+            return more
         from tests.test_finance_bank_references import numbered,account
         from unittest.mock import Mock
         import psycopg2
@@ -188,7 +198,7 @@ class IntegrationTests(unittest.TestCase):
         from core.finance import local_classification as local
         with patch.object(local,'decide',wraps=local.decide) as grouped:
             with connection(worker=True) as conn:self.assertTrue(step(conn,jid,cache,infer))
-        self.assertEqual(1,grouped.call_count)
+        self.assertEqual(3,grouped.call_count)
         self.assertIsNotNone(visible(same_context)["category_code"])
         with connection(worker=True) as conn:self.assertFalse(step(conn,jid,cache,infer))
         self.assertEqual(1,infer.call_count)
@@ -1386,6 +1396,81 @@ class IntegrationTests(unittest.TestCase):
                 if not step(conn,job):break
         self.assertEqual([],listing('proposed'));self.assertEqual('confirmed',listing('confirmed')[0]['status'])
         self.assertEqual(422,self.client.get('/api/v1/finance/recurring?status=invalid').status_code)
+
+
+
+    def test_96_core_pass_commits_before_offline_llm_and_resumes(self):
+        from core.finance.store import connection,enqueue
+        from core.finance.local_classification import step,LocalLLMUnavailable
+        from tests.test_finance_bank_references import numbered,account
+        from unittest.mock import Mock
+        import finance_worker
+        import psycopg2
+        party='Synthetic phase merchant '+uuid.uuid4().hex
+        def create(known):
+            data=numbered(ref=str(uuid.uuid4()),message=str(uuid.uuid4()),n=99301 if known else 99302)
+            name=party if known else 'Synthetic unresolved '+uuid.uuid4().hex
+            data=data.replace(b'Synthetische winkel',name.encode()).replace(b'</RltdPties>',
+                ('<CdtrAcct><Id><IBAN>'+account(99303 if known else 99304)+'</IBAN></Id></CdtrAcct></RltdPties>').encode())
+            self.import_file(data)
+            with self.admin.cursor() as cur:
+                cur.execute('SELECT id FROM finance.finance_transactions ORDER BY created_at DESC,id LIMIT 1')
+                return str(cur.fetchone()[0])
+        seed=create(True);matched=create(True);unmatched=create(False)
+        response=self.client.post('/api/v1/finance/transactions/'+seed+'/classification',json={
+            'key':str(uuid.uuid4()),'previous':None,'category':'boodschappen','transaction_type':'EXPENSE'})
+        self.assertEqual(200,response.status_code,response.text)
+        with self.admin.cursor() as cur:cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE status IN ('pending','running')")
+        with connection() as conn,conn.cursor() as cur:
+            job=enqueue(cur,'categorize')
+            for tid in (matched,unmatched):cur.execute('INSERT INTO finance.finance_categorization_targets VALUES (%s,%s)',(job,tid))
+        offline=Mock(side_effect=LocalLLMUnavailable('finance_local_llm_unavailable'))
+        with patch('core.finance.local_classification.BATCH_SIZE',1):
+            with connection(worker=True) as conn:self.assertTrue(step(conn,job,{},offline))
+        with connection() as conn,conn.cursor() as cur:
+            cur.execute('SELECT categorization_phase,categorization_cursor FROM finance.finance_ingest_jobs WHERE id=%s',(job,))
+            checkpoint=cur.fetchone()
+            self.assertEqual('core',checkpoint['categorization_phase'])
+            self.assertIsNotNone(checkpoint['categorization_cursor'])
+        # Fresh cache simulates a restart halfway through CORE; no model call is allowed.
+        with connection(worker=True) as conn:self.assertTrue(step(conn,job,{},offline))
+        offline.assert_not_called()
+        with connection() as conn,conn.cursor() as cur:
+            cur.execute('SELECT categorization_phase FROM finance.finance_ingest_jobs WHERE id=%s',(job,))
+            self.assertEqual('llm',cur.fetchone()['categorization_phase'])
+            cur.execute('SELECT classification_source FROM finance.v_transactions WHERE id=%s',(matched,))
+            self.assertEqual('MERCHANT',cur.fetchone()['classification_source'])
+            cur.execute('SELECT count(*) AS n FROM finance.finance_categorization_results WHERE job_id=%s',(job,))
+            self.assertEqual(1,cur.fetchone()['n'])
+        # A fresh process restores the persistent LLM phase; failed inference publishes nothing.
+        with self.assertRaises(LocalLLMUnavailable):
+            with connection(worker=True) as conn:step(conn,job,{},offline)
+        with self.admin.cursor() as cur:cur.execute('UPDATE finance.finance_ingest_jobs SET attempts=10 WHERE id=%s',(job,))
+        with patch('finance_worker.gate',return_value=None),patch('core.finance.local_classification.step',side_effect=LocalLLMUnavailable('finance_local_llm_unavailable')):
+            finance_worker.scan(Mock())
+        with connection() as conn,conn.cursor() as cur:
+            cur.execute('SELECT status,waiting_reason,categorization_phase FROM finance.finance_ingest_jobs WHERE id=%s',(job,))
+            row=cur.fetchone();self.assertEqual(('pending','waiting_for_local_llm','llm'),tuple(row.values()))
+        online=Mock(return_value={'category':'vervoer','confidence':.9})
+        with patch('finance_worker.gate',return_value=None),patch('core.finance.local_classification.step',side_effect=lambda conn,jid,cache:step(conn,jid,cache,online)):
+            finance_worker.scan(Mock())
+        self.assertEqual(1,online.call_count)
+        with connection() as conn,conn.cursor() as cur:
+            cur.execute('SELECT status FROM finance.finance_ingest_jobs WHERE id=%s',(job,))
+            self.assertEqual('done',cur.fetchone()['status'])
+            cur.execute('SELECT count(*) AS n FROM finance.finance_categorization_results WHERE job_id=%s',(job,))
+            self.assertEqual(2,cur.fetchone()['n'])
+        # Rollback refuses active jobs and preserves completed audit records.
+        with self.admin.cursor() as cur:cur.execute("UPDATE finance.finance_ingest_jobs SET status='pending' WHERE id=%s",(job,))
+        with self.assertRaises(psycopg2.Error):
+            with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20261005_add_finance_categorization_phases.sql').read_text())
+        with self.admin.cursor() as cur:
+            cur.execute('ROLLBACK')
+            cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE id=%s",(job,))
+            cur.execute(Path('database/migrations/rollback/20261005_add_finance_categorization_phases.sql').read_text())
+            cur.execute(Path('database/migrations/20261005_add_finance_categorization_phases.sql').read_text())
+            cur.execute('SELECT count(*) FROM finance.finance_categorization_results WHERE job_id=%s',(job,))
+            self.assertEqual(2,cur.fetchone()[0])
 
 
 if __name__=='__main__': unittest.main()

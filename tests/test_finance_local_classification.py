@@ -100,11 +100,11 @@ class LocalClassificationTests(unittest.TestCase):
             call(request)
             return True
         with patch.object(local,'_step',side_effect=one) as single:
-            self.assertTrue(local.step(None,'job',{},infer))
+            self.assertTrue(local.step(None,'job',{'phase':'llm'},infer))
         self.assertEqual(2,single.call_count)
         self.assertEqual(1,infer.call_count)
         with patch.object(local,'_step',return_value=True) as single:
-            self.assertTrue(local.step(None,'job',{},infer))
+            self.assertTrue(local.step(None,'job',{'phase':'llm'},infer))
         self.assertEqual(local.BATCH_SIZE,single.call_count)
 
     def test_batch_finishes_and_failure_is_not_swallowed(self):
@@ -124,5 +124,12 @@ class LocalClassificationTests(unittest.TestCase):
             if n>1:call(local.GenerationRequest('synthetic','system','synthetic'))
             return True
         with patch.object(local,'_step',side_effect=one):
-            self.assertTrue(local.step(None,'job',{},infer))
+            self.assertTrue(local.step(None,'job',{'phase':'llm'},infer))
+        infer.assert_not_called()
+
+    def test_core_pass_defers_without_model_configuration_or_request(self):
+        infer=Mock()
+        with patch.object(local,'decrypt',side_effect=lambda v:v), patch.object(local,'settings',side_effect=AssertionError('No model needed')):
+            with self.assertRaises(local.NeedsLLM):
+                local.decide(self.target(),[],self.categories,({},{}),infer,allow_llm=False)
         infer.assert_not_called()
