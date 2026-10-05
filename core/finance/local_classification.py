@@ -18,6 +18,14 @@ VERSION = 'finance-local-v1'
 BATCH_SIZE = 200
 
 
+class NeedsLLM(Exception):
+    """Unmatched CORE target; leave it queued for the second phase."""
+
+
+class LocalLLMUnavailable(RuntimeError):
+    """Safe reason code; the job must wait rather than exhaust retries."""
+
+
 class DeferInference(Exception):
     """Commit the completed batch before starting another slow local call."""
 
@@ -60,7 +68,7 @@ def generate(request):
     except json.JSONDecodeError:
         return {}
     except Exception:
-        raise RuntimeError('finance_local_llm_unavailable') from None
+        raise LocalLLMUnavailable('finance_local_llm_unavailable') from None
 
 
 def context_text(payload, amount):
@@ -98,6 +106,8 @@ def step(conn, job, cache, infer=generate):
     used = False
     def bounded_infer(request):
         nonlocal used
+        if cache.get('phase','core') == 'core':
+            raise NeedsLLM()
         if used or more:
             raise DeferInference()
         used = True
@@ -111,10 +121,12 @@ def step(conn, job, cache, infer=generate):
         if not done:
             return more
         more = True
+        if cache.pop("phase_changed",False):
+            return True
     return more
 
 
-def decide(target, examples, categories, scope, infer=generate):
+def decide(target, examples, categories, scope, infer=generate, allow_llm=True):
     payload = decrypt(target['private_data'])
     match = identity(payload, target['amount'], target['currency'])
     peers = [e for e in examples if match is not None and e['identity'] == match]
@@ -134,6 +146,8 @@ def decide(target, examples, categories, scope, infer=generate):
     safe = inference_context(payload, target['amount'], target['currency'])
     if not safe['counterparty'] and not safe['description']:
         return None
+    if not allow_llm:
+        raise NeedsLLM()
     tokens = set((safe['counterparty']+' '+safe['description']).casefold().split()) - {'#', '[rekening]'}
     ranked = sorted(examples, key=lambda e: len(tokens & e['tokens']), reverse=True)
     hints = [{**context_text(e['payload'], e['amount']), 'category': e['category_code'],
@@ -177,16 +191,26 @@ def revision(cur):
 def _step(conn, job, cache, infer=generate):
     """One immutable result per queued transaction; replay and owner races are safe."""
     with conn.cursor() as cur:
-        cur.execute("SELECT status FROM finance.finance_ingest_jobs WHERE id=%s", (job,))
-        if cur.fetchone()['status'] not in ('pending', 'running'):
+        cur.execute("SELECT status,categorization_phase,categorization_cursor FROM finance.finance_ingest_jobs WHERE id=%s", (job,))
+        state = cur.fetchone()
+        cache["phase"] = state["categorization_phase"]
+        if state['status'] not in ('pending', 'running'):
             return False
         cur.execute('''SELECT q.transaction_id,t.* FROM finance.finance_categorization_targets q
             LEFT JOIN finance.v_transactions t ON t.id=q.transaction_id
             WHERE q.job_id=%s AND NOT EXISTS(SELECT 1 FROM finance.finance_categorization_results r
               WHERE r.job_id=q.job_id AND r.transaction_id=q.transaction_id)
-            ORDER BY q.transaction_id LIMIT 1''', (job,))
+            AND (%s::uuid IS NULL OR q.transaction_id>%s::uuid)
+            ORDER BY q.transaction_id LIMIT 1''', (job,
+                state["categorization_cursor"] if cache["phase"]=="core" else None,
+                state["categorization_cursor"] if cache["phase"]=="core" else None))
         target = cur.fetchone()
         if not target:
+            if cache['phase']=='core':
+                cur.execute("""UPDATE finance.finance_ingest_jobs SET categorization_phase='llm',
+                    categorization_cursor=NULL WHERE id=%s AND status IN ('pending','running')""",(job,))
+                cache.update(phase='llm',phase_changed=True)
+                return bool(cur.rowcount)
             return False
         tid = target['transaction_id']
         choice = None
@@ -217,7 +241,13 @@ def _step(conn, job, cache, infer=generate):
                 inference_context(payload, target['amount'], target['currency'])])
             choices = cache.setdefault('choices', {})
             if group_key not in choices:
-                result = decide(target, cache['examples'], categories, transfer_scope(cur), cached_infer)
+                try:
+                    result = decide(target, cache['examples'], categories, transfer_scope(cur), cached_infer,
+                        allow_llm=cache['phase']=='llm')
+                except NeedsLLM:
+                    cur.execute("""UPDATE finance.finance_ingest_jobs SET categorization_cursor=%s
+                        WHERE id=%s AND status IN ('pending','running')""",(tid,job))
+                    return bool(cur.rowcount)
                 if len(choices) >= 512:
                     choices.pop(next(iter(choices)))
                 choices[group_key] = result
@@ -251,4 +281,6 @@ def _step(conn, job, cache, infer=generate):
             review = cur.fetchone()['id']
         cur.execute('INSERT INTO finance.finance_categorization_results(job_id,transaction_id,status,review_id) VALUES (%s,%s,%s,%s)',
                     (job, tid, status, review))
+        if cache['phase']=='core':
+            cur.execute('UPDATE finance.finance_ingest_jobs SET categorization_cursor=%s WHERE id=%s',(tid,job))
         return True

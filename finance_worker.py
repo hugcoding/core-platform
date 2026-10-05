@@ -12,6 +12,7 @@ from core.finance.balances import backfill_one
 from core.finance.bank_references import backfill_one as reference_backfill, reconcile_chunk
 from workset_ai_worker import stream_lag
 from core.runtime.capacity import worker_resources as host_resources
+from core.finance.local_classification import LocalLLMUnavailable
 
 STATUS = 'starting'
 SINGLE_WORKER_LOCK = 118202611
@@ -89,7 +90,7 @@ def scan(client):
                 cache={}
                 def categorize_one(conn):
                     global STATUS
-                    STATUS='categorizing'
+                    STATUS='core_recognition' if cache.get('phase','core')=='core' else 'local_llm_classification'
                     return step(conn,jid,cache)
                 while True:
                     allowed,more=admitted(categorize_one)
@@ -139,6 +140,8 @@ def scan(client):
                     # Verify same immutable bytes before publishing the DB transaction.
                     if read_source(path)!=data: raise ImportErrorCode('source_changed')
             set_job(jid,'done');STATUS='idle'
+        except LocalLLMUnavailable:
+            set_job(jid,'pending',reason='waiting_for_local_llm');STATUS='waiting_for_local_llm'
         except ImportErrorCode as exc:
             set_job(jid,'failed',error=str(exc));STATUS='attention'
         except Exception:

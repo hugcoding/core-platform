@@ -11,3 +11,8 @@ De worker verwerkt maximaal 200 bestaande targets per capaciteitscontrole en doe
 ## Uitrol en controle
 
 Geen migratie of herimport. Na merge dashboard ?n finance_worker herbouwen en vervangen; de worker bevat de groepslogica. Volledig browser vernieuwen. Start de knop opnieuw na een eerder gestopte opdracht. Controleer dat alleen ontbrekende categorie?n worden aangevuld en jouw beoordelingen behouden blijven. Voortgang blijft in aantallen betalingen zichtbaar, inclusief overgeslagen en onthouden betalingen.
+
+
+## CORE eerst, LLM daarna
+
+De opdracht rondt eerst alle CORE-herkenning af. Alleen het restant gaat naar de lokale LLM. Zie [fasen, hervatten en migratie](finance-core-before-llm.md). Voor deze fase-uitbreiding is de nieuwe migratie van 2026-10-05 nodig.
