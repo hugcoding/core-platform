@@ -86,3 +86,32 @@ collector kan daarna worden gestopt met
 ongeldige snapshots, collector-warmup en wachtgedrag van alle vier workers.
 De Pulse-contracttests controleren dat dezelfde snapshot wordt getoond en
 ontbrekende waarden niet als nul worden weergegeven. Alleen synthetische data.
+
+## Centrale CPU-toelating
+
+De collector houdt de CPU-historie centraal bij. Workers lezen dezelfde toestand uit Redis; er komen geen lokale tellers of hostmetingen. Pulse toont per profiel dezelfde CPU-toelating.
+
+Standaard: pauze bij 5 van 6 metingen boven de grens; hervatten na 30 seconden aaneengesloten onder de lagere hervatgrens. Metingen komen ongeveer iedere 5 seconden. Meetgaten tellen niet als herstel. Een lopende batch wordt niet afgebroken.
+
+| Profiel | Pauzegrens | Hervatgrens |
+|---|---:|---:|
+| Finance | 60% | 50% |
+| Automatische AI | 70% | 60% |
+| OCR | 60% | 50% |
+| Gecontroleerde uitvoering | 80% | 70% |
+
+Lokaal instelbaar, doorgegeven aan capacity_worker:
+
+```dotenv
+CORE_CPU_WINDOW_SAMPLES=6
+CORE_CPU_HIGH_SAMPLES=5
+CORE_CPU_RESUME_SECONDS=30
+CORE_FINANCE_MAX_CPU_PERCENT=60
+CORE_FINANCE_CPU_RESUME_PERCENT=50
+```
+
+Andere profielen gebruiken dezelfde CORE_AI_, CORE_OCR_ en CORE_EXECUTION_ instellingen. Hervatgrens lager dan pauzegrens; hoge metingen niet groter dan venster. Ongeldige configuratie stopt de collector en capaciteit wordt unavailable. Lokale .env en secrets horen nooit in Git.
+
+Geheugen, PostgreSQL, prioriteiten en gecontroleerde uitvoering blijven afzonderlijke checks. Expliciete AI-taken behouden hun CPU-uitzondering; Pulse toont de algemene profieltoestand.
+
+Tijdens een gefaseerde uitrol met een oude collector blijft tijdelijk de oude momentane CPU-regel gelden. Dat is compatibiliteit, zonder lokale historie. Bouw collector en alle afnemers daarom samen. Geen migratie nodig.

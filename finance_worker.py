@@ -11,7 +11,7 @@ from core.finance.camt import ImportErrorCode
 from core.finance.balances import backfill_one
 from core.finance.bank_references import backfill_one as reference_backfill, reconcile_chunk
 from workset_ai_worker import stream_lag
-from core.runtime.capacity import worker_resources as host_resources
+from core.runtime.capacity import worker_resources as host_resources, cpu_blocked
 from core.finance.local_classification import LocalLLMUnavailable
 
 STATUS = 'starting'
@@ -23,7 +23,7 @@ def gate(conn, client):
     if not client.ping(): return 'redis_unavailable'
     resources=host_resources()
     if not resources.get("capacity_available",1): return "capacity_unavailable"
-    if resources['cpu_load_percent']>float(os.getenv('CORE_FINANCE_MAX_CPU_PERCENT','60')): return 'waiting_for_cpu'
+    if cpu_blocked(resources, 'finance', float(os.getenv('CORE_FINANCE_MAX_CPU_PERCENT','60'))): return 'waiting_for_cpu'
     if resources['available_memory_mib']<int(os.getenv('CORE_FINANCE_MIN_AVAILABLE_MIB','2048')): return 'waiting_for_memory'
     if stream_lag(client)>1000: return 'core_pipeline_priority'
     with conn.cursor() as cur:

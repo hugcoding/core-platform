@@ -11,7 +11,7 @@ from typing import Any
 import psycopg2
 import psycopg2.extras
 import redis
-from core.runtime.capacity import worker_resources as host_resources
+from core.runtime.capacity import worker_resources as host_resources, cpu_blocked
 
 from core.cleanup.duplicate_executor import move_verified as move_exact_duplicate
 from core.cleanup.duplicate_executor import resume_verified_move as resume_exact_duplicate
@@ -60,7 +60,7 @@ def stream_lag(client: redis.Redis) -> int:
 def resource_block(resources: dict[str, float], lag: int) -> str | None:
     if not resources.get("capacity_available",1): return "capacity_unavailable"
     if resources["available_memory_mib"] < MIN_AVAILABLE_MIB: return "waiting_for_memory"
-    if resources["cpu_load_percent"] > CPU_LIMIT_PERCENT: return "waiting_for_cpu"
+    if cpu_blocked(resources, 'execution', CPU_LIMIT_PERCENT): return "waiting_for_cpu"
     if lag > MAX_STREAM_LAG: return "core_pipeline_priority"
     return None
 
