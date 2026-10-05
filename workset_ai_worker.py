@@ -14,7 +14,7 @@ from uuid import NAMESPACE_URL, uuid5
 import psycopg2
 import psycopg2.extras
 import redis
-from core.runtime.capacity import worker_resources as host_resources
+from core.runtime.capacity import worker_resources as host_resources, cpu_blocked
 
 from core.semantic.rag import GenerationRequest, OpenAICompatibleLocalProvider
 from core.semantic.automatic_workset_ai import REQUESTED_BY, PAGE_SQL, eligible, enqueue_page
@@ -69,7 +69,7 @@ def resource_gate(
     if not resources.get("capacity_available",1): return "capacity_unavailable"
     # Een expliciet aangevraagde AI-job mag gewone CPU-druk passeren.
     # Zonder pending job blijft de normale CPU-beveiliging actief.
-    if (job is None or job.get("requested_by") == REQUESTED_BY) and resources["cpu_load_percent"] > CPU_LIMIT_PERCENT:
+    if (job is None or job.get("requested_by") == REQUESTED_BY) and cpu_blocked(resources, 'ai', CPU_LIMIT_PERCENT):
         return "waiting_for_cpu"
 
     # Geheugen blijft altijd een harde veiligheidsgrens.

@@ -16,7 +16,7 @@ from typing import Any
 import psycopg2
 import psycopg2.extras
 import redis
-from core.runtime.capacity import worker_resources as host_resources
+from core.runtime.capacity import worker_resources as host_resources, cpu_blocked
 
 from core.integrity.ocr_duplicate_similarity import (
     ANALYZER_VERSION, compare_ocr_artifacts, group_key, metadata_json,
@@ -257,7 +257,7 @@ def main() -> int:
             resources=host_resources()
             if reason is None and not resources.get("capacity_available",1):
                 reason="capacity_unavailable"
-            if reason is None and resources["cpu_load_percent"] > CPU_LIMIT_PERCENT:
+            if reason is None and cpu_blocked(resources, 'ocr', CPU_LIMIT_PERCENT):
                 reason = "waiting_for_cpu"
             elif reason is None and resources["available_memory_mib"] < MIN_AVAILABLE_MIB:
                 reason = "waiting_for_memory"

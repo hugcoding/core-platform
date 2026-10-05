@@ -5,7 +5,20 @@ services:
     command: [python, -m, core.runtime.capacity]
     restart: unless-stopped
     depends_on: { redis: { condition: service_healthy } }
-    environment: [REDIS_HOST=redis, HOST_PROC=/host/proc]
+    environment:
+      - REDIS_HOST=redis
+      - HOST_PROC=/host/proc
+      - CORE_CPU_WINDOW_SAMPLES=${CORE_CPU_WINDOW_SAMPLES:-6}
+      - CORE_CPU_HIGH_SAMPLES=${CORE_CPU_HIGH_SAMPLES:-5}
+      - CORE_CPU_RESUME_SECONDS=${CORE_CPU_RESUME_SECONDS:-30}
+      - CORE_FINANCE_MAX_CPU_PERCENT=${CORE_FINANCE_MAX_CPU_PERCENT:-60}
+      - CORE_AI_MAX_CPU_PERCENT=${CORE_AI_MAX_CPU_PERCENT:-70}
+      - CORE_OCR_MAX_CPU_PERCENT=${CORE_OCR_MAX_CPU_PERCENT:-60}
+      - CORE_EXECUTION_MAX_CPU_PERCENT=${CORE_EXECUTION_MAX_CPU_PERCENT:-80}
+      - CORE_FINANCE_CPU_RESUME_PERCENT=${CORE_FINANCE_CPU_RESUME_PERCENT:-50}
+      - CORE_AI_CPU_RESUME_PERCENT=${CORE_AI_CPU_RESUME_PERCENT:-60}
+      - CORE_OCR_CPU_RESUME_PERCENT=${CORE_OCR_CPU_RESUME_PERCENT:-50}
+      - CORE_EXECUTION_CPU_RESUME_PERCENT=${CORE_EXECUTION_CPU_RESUME_PERCENT:-70}
     volumes: ["/proc:/host/proc:ro"]
     read_only: true
     tmpfs: ["/tmp"]
