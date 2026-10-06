@@ -179,6 +179,8 @@ def import_bytes(conn, path, data):
                 VALUES (%s,%s,%s,%s,%s,%s) RETURNING *''',
                 (batch,entry.locator,account,match,encrypt(payload),'unresolved' if ambiguous or has_reference else 'new'))
             record = cur.fetchone()
+            from core.finance.bank_types import persist as persist_bank_type
+            persist_bank_type(cur, record, entry)
             if has_reference:
                 bank_references.persist(cur, record, entry)
                 numbered.append(record)

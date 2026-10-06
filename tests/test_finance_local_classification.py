@@ -133,3 +133,11 @@ class LocalClassificationTests(unittest.TestCase):
             with self.assertRaises(local.NeedsLLM):
                 local.decide(self.target(),[],self.categories,({},{}),infer,allow_llm=False)
         infer.assert_not_called()
+
+    def test_bank_type_prevents_incompatible_llm_category(self):
+        target={**self.target(), 'transaction_type':'EXPENSE','classification_source':'RULE'}
+        categories=[dict(id='income',code='income',parent_id=None,transaction_type='INCOME',name='Income')]
+        result,_=self.call(dict(category='income',confidence=.95),target=target,categories=categories)
+        self.assertIsNone(result)
+        result,_=self.call(dict(category='vervoer',confidence=.95),target=target)
+        self.assertEqual('EXPENSE',result['transaction_type'])

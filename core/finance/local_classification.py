@@ -137,6 +137,8 @@ def decide(target, examples, categories, scope, infer=generate, allow_llm=True):
             return None
         if any(conflicts(e, seed) for e in peers):
             return None  # Contradictory owner judgements are not resolved by AI.
+        if target.get('classification_source') == 'RULE' and seed['transaction_type'] != target['transaction_type']:
+            return None
         if seed['transaction_type'] == 'TRANSFER':
             group = internal_transfer_group(target['account_id'], payload, scope)
             if not group or group != internal_transfer_group(seed['account_id'], seed['payload'], scope):
@@ -175,6 +177,8 @@ def decide(target, examples, categories, scope, infer=generate, allow_llm=True):
         return None  # Internal ownership/transfer evidence stays deterministic.
     if target['amount'] > 0 and kind in ('EXPENSE', 'TAX'):
         kind = 'CORRECTION'
+    if target.get('classification_source') == 'RULE' and kind != target['transaction_type']:
+        return None
     return {'category_code': parent['code'], 'subcategory_code': child['code'] if child else None,
             'transaction_type': kind, 'merchant_id': None, 'source': 'AI', 'confidence': confidence, 'seed': None}
 
@@ -237,6 +241,7 @@ def _step(conn, job, cache, infer=generate):
                 return answers[key]
             payload = decrypt(target['private_data'])
             group_key = fingerprint(VERSION+':group', [str(target['account_id']), target['currency'],
+                target['transaction_type'], target['classification_source'],
                 identity(payload, target['amount'], target['currency']),
                 inference_context(payload, target['amount'], target['currency'])])
             choices = cache.setdefault('choices', {})
