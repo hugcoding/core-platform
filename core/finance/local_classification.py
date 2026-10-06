@@ -26,6 +26,10 @@ class LocalLLMUnavailable(RuntimeError):
     """Safe reason code; the job must wait rather than exhaust retries."""
 
 
+class LocalLLMPaused(RuntimeError):
+    """Keep outstanding targets available for owner-controlled resumption."""
+
+
 class DeferInference(Exception):
     """Commit the completed batch before starting another slow local call."""
 
@@ -200,6 +204,9 @@ def _step(conn, job, cache, infer=generate):
         cache["phase"] = state["categorization_phase"]
         if state['status'] not in ('pending', 'running'):
             return False
+        from core.finance.classification_settings import llm_enabled, lock
+        if cache['phase']=='llm' and not llm_enabled(cur):
+            raise LocalLLMPaused()
         cur.execute('''SELECT q.transaction_id,t.* FROM finance.finance_categorization_targets q
             LEFT JOIN finance.v_transactions t ON t.id=q.transaction_id
             WHERE q.job_id=%s AND NOT EXISTS(SELECT 1 FROM finance.finance_categorization_results r
@@ -270,6 +277,9 @@ def _step(conn, job, cache, infer=generate):
         cur.execute('SELECT status FROM finance.finance_ingest_jobs WHERE id=%s FOR UPDATE', (job,))
         if cur.fetchone()['status'] not in ('pending', 'running'):
             return False
+        if cache['phase']=='llm':
+            lock(cur)
+            if not llm_enabled(cur):raise LocalLLMPaused()
         review = None
         if choice:
             validate_category(cur, choice['category_code'], choice['subcategory_code'])
@@ -281,7 +291,7 @@ def _step(conn, job, cache, infer=generate):
                 VALUES (%s,%s,%s,%s,%s,%s,%s,false,%s,'finance-local',%s,%s,%s,%s,%s) RETURNING id''',
                 (tid, choice['category_code'], choice['subcategory_code'], choice['transaction_type'], choice['merchant_id'],
                  choice['source'], choice['confidence'], predecessor(cur, tid), str(uuid.uuid5(uuid.UUID(str(job)), str(tid))),
-                 fingerprint(VERSION, [str(job), str(tid), str(choice)]), VERSION+':'+settings()[1],
+                 fingerprint(VERSION, [str(job), str(tid), str(choice)]), VERSION+':'+(settings()[1] if choice['source']=='AI' else 'core'),
                  choice['seed'], METHOD if choice['seed'] else None))
             review = cur.fetchone()['id']
         cur.execute('INSERT INTO finance.finance_categorization_results(job_id,transaction_id,status,review_id) VALUES (%s,%s,%s,%s)',

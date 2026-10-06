@@ -141,6 +141,9 @@ class IntegrationTests(unittest.TestCase):
             bank_up=Path('database/migrations/20261006_add_finance_bank_types.sql').read_text()
             bank_down=Path('database/migrations/rollback/20261006_add_finance_bank_types.sql').read_text()
             cur.execute(bank_up);cur.execute(bank_down);cur.execute(bank_up)
+            toggle_up=Path('database/migrations/20261006_add_finance_llm_toggle.sql').read_text()
+            toggle_down=Path('database/migrations/rollback/20261006_add_finance_llm_toggle.sql').read_text()
+            cur.execute(toggle_up);cur.execute(toggle_down);cur.execute(toggle_up)
         app=FastAPI();app.middleware('http')(finance_boundary);app.include_router(router)
         cls.client=TestClient(app);cls.client.headers['origin']='http://testserver'
         response=cls.client.post('/api/v1/finance/session',json={'code':'synthetic-access'})
@@ -540,7 +543,7 @@ class IntegrationTests(unittest.TestCase):
         with self.admin.cursor() as cur:
             cur.execute('SELECT category_code,source_review_id,suggestion_method FROM finance.finance_review_events WHERE transaction_id=%s',(target['id'],))
             events=cur.fetchall();self.assertEqual(1,len(events));self.assertEqual('vervoer',events[0][0])
-            self.assertEqual(proposal['seed_review_id'],str(events[0][1]));self.assertEqual('local-merchant-v2',events[0][2])
+            self.assertEqual(proposal['seed_review_id'],str(events[0][1]));self.assertEqual('local-merchant-v3',events[0][2])
         self.assertEqual(0,self.client.get(route).json()['total'])
         inherited=self.client.get('/api/v1/finance/transactions/'+target['id']+'/suggestions')
         self.assertEqual(200,inherited.status_code)
@@ -628,7 +631,7 @@ class IntegrationTests(unittest.TestCase):
             cur.execute('SELECT transaction_id,source_review_id,suggestion_method FROM finance.finance_review_events WHERE transaction_id IN (%s,%s,%s)',tuple(t['id'] for t in targets))
             events=cur.fetchall();self.assertEqual(2,len(events))
             self.assertEqual({t['id'] for t in targets[:2]},{str(e[0]) for e in events})
-            self.assertTrue(all(str(e[1])==proposal['seed_review_id'] and e[2]=='local-merchant-v2' for e in events))
+            self.assertTrue(all(str(e[1])==proposal['seed_review_id'] and e[2]=='local-merchant-v3' for e in events))
         # A categorized target invalidates the entire new selection, including an untouched target.
         mixed={**payload,'key':str(uuid.uuid4()),'items':[payload['items'][0],{'id':targets[2]['id'],'previous':None}]}
         self.assertEqual(409,self.client.post(route,json=mixed).status_code)
@@ -1535,6 +1538,84 @@ class IntegrationTests(unittest.TestCase):
         with self.admin.cursor() as cur:
             cur.execute('SELECT transaction_type FROM finance.v_transactions WHERE id=%s',(tid,))
             self.assertEqual('EXPENSE',cur.fetchone()[0])
+
+
+    def test_zz_llm_toggle_core_without_model_pause_resume_and_inflight(self):
+        from core.finance.store import connection,enqueue
+        from core.finance.local_classification import step,LocalLLMPaused
+        from tests.test_finance_bank_references import numbered
+        def payment(description):
+            self.import_file(numbered(ref=str(uuid.uuid4()),message=str(uuid.uuid4()),n=99177,description=description))
+            with self.admin.cursor() as cur:
+                cur.execute('SELECT id FROM finance.finance_transactions ORDER BY created_at DESC,id LIMIT 1')
+                return str(cur.fetchone()[0])
+        seed=payment('LIDL FILIAAL A>TESTSTAD')
+        merchant=payment('LIDL FILIAAL B>TESTSTAD')
+        unmatched=payment('SYNTHETIC UNMATCHED FOR TOGGLE')
+        with self.admin.cursor() as cur:
+            cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE status IN ('pending','running')")
+            cur.execute("INSERT INTO finance.finance_review_events(transaction_id,category_code,transaction_type,classification_source,confirmed,actor,idempotency_key,payload_digest) VALUES (%s,'boodschappen','EXPENSE','MANUAL',true,'owner',%s,'synthetic')",(seed,str(uuid.uuid4())))
+        def toggle(value):
+            response=self.client.post('/api/v1/finance/classification-settings',json={'llm_enabled':value})
+            self.assertEqual(200,response.status_code,response.text)
+        def queue(*ids):
+            with connection() as conn,conn.cursor() as cur:
+                jid=enqueue(cur,'categorize')
+                for tid in ids:
+                    cur.execute('INSERT INTO finance.finance_categorization_targets VALUES (%s,%s)',(jid,tid))
+                return jid
+        toggle(False)
+        self.assertEqual(422,self.client.post('/api/v1/finance/classification-settings',json={'llm_enabled':'false'}).status_code)
+        with patch('core.finance.local_classification.settings',side_effect=AssertionError('CORE needs no model')):
+            response=self.client.post('/api/v1/finance/categorization',json={})
+            self.assertEqual(200,response.status_code,response.text)
+            with self.admin.cursor() as cur:
+                cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE id=%s",(response.json()['job_id'],))
+            jid=queue(merchant,unmatched)
+            for _ in range(3):
+                try:
+                    with connection(worker=True) as conn:step(conn,jid,{},lambda _:self.fail('LLM disabled'))
+                except LocalLLMPaused:break
+            else:self.fail('Expected persisted LLM pause')
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT classification_source,category_code FROM finance.v_transactions WHERE id=%s',(merchant,))
+            self.assertEqual(('MERCHANT','boodschappen'),cur.fetchone())
+            cur.execute('SELECT count(*) FROM finance.finance_categorization_results WHERE job_id=%s',(jid,))
+            self.assertEqual(1,cur.fetchone()[0])
+        from finance_worker import scan
+        with patch('finance_worker.gate',side_effect=AssertionError('Paused LLM must not start another attempt')):
+            scan(None)
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT attempts,waiting_reason FROM finance.finance_ingest_jobs WHERE id=%s',(jid,))
+            self.assertEqual((0,'llm_disabled'),cur.fetchone())
+        toggle(True)
+        with patch('core.finance.local_classification.settings',return_value=('http://192.168.1.2/v1','synthetic-model')):
+            with connection(worker=True) as conn:step(conn,jid,{},lambda _:dict(category='vervoer',confidence=.9))
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT classification_source FROM finance.v_transactions WHERE id=%s',(unmatched,))
+            self.assertEqual('AI',cur.fetchone()[0])
+            cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE id=%s",(jid,))
+        inflight=payment('SYNTHETIC INFLIGHT FOR TOGGLE')
+        jid=queue(inflight)
+        with connection(worker=True) as conn:step(conn,jid,{})  # CORE completes before LLM.
+        def disable_during_request(_):
+            toggle(False)
+            return dict(category='vervoer',confidence=.9)
+        with patch('core.finance.local_classification.settings',return_value=('http://192.168.1.2/v1','synthetic-model')):
+            with self.assertRaises(LocalLLMPaused):
+                with connection(worker=True) as conn:step(conn,jid,{},disable_during_request)
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT review_id FROM finance.v_transactions WHERE id=%s',(inflight,))
+            self.assertIsNone(cur.fetchone()[0])
+            cur.execute('SELECT count(*) FROM finance.finance_classification_settings_events');before=cur.fetchone()[0]
+        toggle(False)
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT count(*) FROM finance.finance_classification_settings_events');self.assertEqual(before,cur.fetchone()[0])
+        import psycopg2
+        with self.assertRaises(psycopg2.Error):
+            with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20261006_add_finance_llm_toggle.sql').read_text())
+        with self.admin.cursor() as cur:cur.execute('ROLLBACK')
+        toggle(True)
 
 
 if __name__=='__main__': unittest.main()

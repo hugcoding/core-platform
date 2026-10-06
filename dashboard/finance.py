@@ -232,8 +232,10 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
         from core.finance.balances import overview as balance_overview
         bank_balances=balance_overview(cur,[a for a in accounts if not account or a['id']==account],
                                        str(bounds[1]) if bounds else None,groups=groups)
+        from core.finance.classification_settings import llm_enabled
+        use_llm=llm_enabled(cur)
     return {'accounts':accounts,'all_accounts':all_accounts,'periods_by_account':periods_by_account,'groups':groups,'group':group,'categories':categories,'transaction_types':transaction_types,'months':months,'years':sorted({m[:4] for m in months},reverse=True),'totals':totals,'transactions':rows,
-        'imports':imports,'jobs':jobs,'unresolved':unresolved,'page':page,'currency':'EUR','sort':sort,'direction':direction,'bank_balances':bank_balances}
+        'imports':imports,'jobs':jobs,'unresolved':unresolved,'page':page,'currency':'EUR','sort':sort,'direction':direction,'bank_balances':bank_balances,'llm_enabled':use_llm}
 
 
 @router.post('/api/v1/finance/import')
@@ -435,9 +437,11 @@ def review_recurring(pattern_id:str,payload:dict=Body(...)):
 @router.post('/api/v1/finance/categorization')
 def request_categorization():
     from core.finance.local_classification import settings
-    try:settings()
-    except ValueError:raise HTTPException(422,'finance_local_endpoint_required') from None
     with connection() as conn,conn.cursor() as cur:
+        from core.finance.classification_settings import llm_enabled
+        if llm_enabled(cur):
+            try:settings()
+            except ValueError:raise HTTPException(422,'finance_local_endpoint_required') from None
         cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-job-enqueue'))")
         cur.execute("SELECT id,job_kind FROM finance.finance_ingest_jobs WHERE status IN ('pending','running')")
         active=cur.fetchone()
@@ -448,6 +452,22 @@ def request_categorization():
         cur.execute('''INSERT INTO finance.finance_categorization_targets(job_id,transaction_id)
             SELECT %s,id FROM finance.v_transactions WHERE NOT confirmed AND category_code IS NULL''', (job,))
     return {'job_id':job,'status':'pending'}
+
+
+@router.post('/api/v1/finance/classification-settings')
+def update_classification_settings(body:dict=Body(...)):
+    value=body.get('llm_enabled')
+    if type(value) is not bool:raise HTTPException(422,'finance_invalid_llm_setting')
+    if value:
+        from core.finance.local_classification import settings
+        try:settings()
+        except ValueError:raise HTTPException(422,'finance_local_endpoint_required') from None
+    from core.finance.classification_settings import lock,llm_enabled
+    with connection() as conn,conn.cursor() as cur:
+        lock(cur)
+        if llm_enabled(cur)!=value:
+            cur.execute('INSERT INTO finance.finance_classification_settings_events(llm_enabled) VALUES (%s)',(value,))
+    return {'llm_enabled':value}
 
 
 @router.post('/api/v1/finance/categorization/{job_id}/stop')

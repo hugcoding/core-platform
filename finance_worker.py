@@ -12,7 +12,7 @@ from core.finance.balances import backfill_one
 from core.finance.bank_references import backfill_one as reference_backfill, reconcile_chunk
 from workset_ai_worker import stream_lag
 from core.runtime.capacity import worker_resources as host_resources, cpu_blocked
-from core.finance.local_classification import LocalLLMUnavailable
+from core.finance.local_classification import LocalLLMUnavailable, LocalLLMPaused
 
 STATUS = 'starting'
 SINGLE_WORKER_LOCK = 118202611
@@ -57,11 +57,17 @@ def scan(client):
         cursor.execute('SELECT pg_try_advisory_xact_lock(%s) AS acquired',(SINGLE_WORKER_LOCK,))
         if not cursor.fetchone()['acquired']: return
         # A dead process loses its DB lock. Replay every completed file is safe.
-        cursor.execute("SELECT id,attempts,job_kind FROM finance.finance_ingest_jobs WHERE status IN ('pending','running') ORDER BY requested_at LIMIT 1")
+        cursor.execute("SELECT id,attempts,job_kind,categorization_phase FROM finance.finance_ingest_jobs WHERE status IN ('pending','running') ORDER BY requested_at LIMIT 1")
         job=cursor.fetchone()
         if not job: STATUS='idle'; return
         jid=job['id']
         try:
+            if job['job_kind']=='categorize' and job['categorization_phase']=='llm':
+                from core.finance.classification_settings import llm_enabled
+                with connection(worker=True) as conn,conn.cursor() as cur:
+                    enabled=llm_enabled(cur)
+                if not enabled:
+                    set_job(jid,'pending',reason='llm_disabled');STATUS='llm_disabled';return
             with connection(worker=True) as conn:
                 reason=gate(conn,client)
             if reason:
@@ -156,6 +162,8 @@ def scan(client):
                     # Verify same immutable bytes before publishing the DB transaction.
                     if read_source(path)!=data: raise ImportErrorCode('source_changed')
             set_job(jid,'done');STATUS='idle'
+        except LocalLLMPaused:
+            set_job(jid,'pending',reason='llm_disabled');STATUS='llm_disabled'
         except LocalLLMUnavailable:
             set_job(jid,'pending',reason='waiting_for_local_llm');STATUS='waiting_for_local_llm'
         except ImportErrorCode as exc:

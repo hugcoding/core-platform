@@ -3,7 +3,7 @@ from decimal import Decimal
 import re
 import unicodedata
 
-METHOD = 'local-merchant-v2'
+METHOD = 'local-merchant-v3'
 MAX_SCAN = 25000
 PROCESSORS = {'mollie', 'adyen', 'paypal', 'stripe', 'sumup', 'worldline', 'pay nl'}
 
@@ -149,6 +149,13 @@ def recognized_merchant(payload):
     """Explicit merchant markers only; no category or meaning is inferred."""
     if len(payload.get('details') or []) > 1:
         return None
+    # Structured card merchant fields establish these retailers, never invoice text.
+    card = card_description_merchant(payload.get('description'))
+    if card:
+        for marker,name in (('lidl','Lidl'),('jumbo','Jumbo'),('aldi','Aldi'),
+                ('dekamarkt','Dekamarkt'),('kruidvat','Kruidvat'),('etos','Etos'),
+                ('wibra','Wibra'),('hema','HEMA')):
+            if card==marker or card.startswith(marker+' '):return name
     for value in (payload.get('counterparty'), payload.get('description')):
         # ASN card descriptions can prefix the merchant with a terminal reference.
         # Strip only that anchored, delimited field, never arbitrary invoice text.
