@@ -78,6 +78,14 @@ def scan(client):
                         STATUS=reason;set_job(jid,'pending',reason);return False,None
                     STATUS='processing'
                     return True,step(conn)
+            def bank_type_one(conn):
+                global STATUS
+                from core.finance.bank_types import backfill_one as type_backfill
+                with conn.cursor() as cur:
+                    cur.execute('SELECT status FROM finance.finance_ingest_jobs WHERE id=%s',(jid,))
+                    if cur.fetchone()['status'] not in ('pending','running'):return False
+                STATUS='bank_type_recognition'
+                return type_backfill(conn)
             if job['job_kind']=='recurring':
                 from core.finance.recurring import step
                 while True:
@@ -87,6 +95,10 @@ def scan(client):
                 set_job(jid,'done');STATUS='idle';return
             if job['job_kind']=='categorize':
                 from core.finance.local_classification import step
+                while True:
+                    allowed,more=admitted(bank_type_one)
+                    if not allowed:return
+                    if not more:break
                 cache={}
                 def categorize_one(conn):
                     global STATUS
@@ -99,6 +111,10 @@ def scan(client):
                 set_job(jid,'done');STATUS='idle';return
             # Every source/chunk commits separately and rechecks runtime pressure.
             if job['job_kind'] in ('import','references'):
+                while True:
+                    allowed,more=admitted(bank_type_one)
+                    if not allowed:return
+                    if not more:break
                 while True:
                     allowed,more=admitted(reference_backfill)
                     if not allowed:return

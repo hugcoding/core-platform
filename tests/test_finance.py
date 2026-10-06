@@ -138,6 +138,9 @@ class IntegrationTests(unittest.TestCase):
             phases_up=Path('database/migrations/20261005_add_finance_categorization_phases.sql').read_text()
             phases_down=Path('database/migrations/rollback/20261005_add_finance_categorization_phases.sql').read_text()
             cur.execute(phases_up);cur.execute(phases_down);cur.execute(phases_up)
+            bank_up=Path('database/migrations/20261006_add_finance_bank_types.sql').read_text()
+            bank_down=Path('database/migrations/rollback/20261006_add_finance_bank_types.sql').read_text()
+            cur.execute(bank_up);cur.execute(bank_down);cur.execute(bank_up)
         app=FastAPI();app.middleware('http')(finance_boundary);app.include_router(router)
         cls.client=TestClient(app);cls.client.headers['origin']='http://testserver'
         response=cls.client.post('/api/v1/finance/session',json={'code':'synthetic-access'})
@@ -1471,6 +1474,67 @@ class IntegrationTests(unittest.TestCase):
             cur.execute(Path('database/migrations/20261005_add_finance_categorization_phases.sql').read_text())
             cur.execute('SELECT count(*) FROM finance.finance_categorization_results WHERE job_id=%s',(job,))
             self.assertEqual(2,cur.fetchone()[0])
+
+
+    def test_98_bank_types_import_backfill_owner_priority_and_rollback(self):
+        from core.finance.store import connection
+        from core.finance.bank_types import backfill_one
+        from tests.test_finance_bank_types import coded
+        data=coded('7903').replace(b'SYNTHETIC-001',b'BANK-TYPE-TEST')
+        # Emulate a historical import, with its original source preserved.
+        with patch('core.finance.bank_types.persist'):
+            result=self.import_file(data)
+        self.assertEqual('imported',result['status'])
+        with connection(worker=True) as conn:
+            while backfill_one(conn): pass
+        with self.admin.cursor() as cur:
+            cur.execute("SELECT v.id,v.transaction_type,v.classification_source,v.category_code,t.record_id,r.batch_id FROM finance.v_transactions v JOIN finance.finance_transactions t ON t.id=v.id JOIN finance.finance_import_records r ON r.id=t.record_id WHERE r.private_data IS NOT NULL AND EXISTS(SELECT 1 FROM finance.finance_record_bank_references k WHERE k.record_id=r.id AND k.private_data IS NOT NULL) AND v.rule_version='bank-type-v1:card_payment'")
+            row=cur.fetchone()
+            self.assertIsNotNone(row)
+            tid,kind,source,category,rid,bid=row
+            self.assertEqual(('EXPENSE','RULE',None),(kind,source,category))
+            cur.execute('SELECT count(*) FROM finance.finance_record_bank_types WHERE record_id=%s',(rid,))
+            self.assertEqual(1,cur.fetchone()[0])
+        with connection(worker=True) as conn:
+            self.assertFalse(backfill_one(conn))
+        self.assertTrue(self.import_file(data)['replay'])
+        with self.admin.cursor() as cur:
+            cur.execute("INSERT INTO finance.finance_review_events(transaction_id,transaction_type,classification_source,confirmed,actor,idempotency_key,payload_digest) VALUES (%s,'UNKNOWN','MANUAL',true,'owner',%s,'synthetic')",(tid,str(uuid.uuid4())))
+            cur.execute('SELECT transaction_type,classification_source FROM finance.v_transactions WHERE id=%s',(tid,))
+            self.assertEqual(('UNKNOWN','MANUAL'),cur.fetchone())
+        import psycopg2
+        for sql in ('DELETE FROM finance.finance_record_bank_types','TRUNCATE finance.finance_record_bank_types',
+                    Path('database/migrations/rollback/20261006_add_finance_bank_types.sql').read_text()):
+            with self.assertRaises(psycopg2.Error):
+                with self.admin.cursor() as cur: cur.execute(sql)
+            with self.admin.cursor() as cur: cur.execute('ROLLBACK')
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT count(*) FROM finance.finance_transactions');before=cur.fetchone()[0]
+            cur.execute('SELECT count(*) FROM finance.finance_transactions');self.assertEqual(before,cur.fetchone()[0])
+            cur.execute('SELECT transaction_type FROM finance.v_transactions WHERE id=%s',(tid,))
+            self.assertEqual('UNKNOWN',cur.fetchone()[0])
+
+
+    def test_99_bank_types_new_import_conflict_and_inactive_evidence(self):
+        from tests.test_finance_bank_types import coded
+        ref=str(uuid.uuid4()).encode()
+        data=coded('7903').replace(b'SYNTHETIC-001',ref)
+        self.import_file(data)
+        with self.admin.cursor() as cur:
+            cur.execute("SELECT id,transaction_type,classification_source FROM finance.v_transactions WHERE rule_version='bank-type-v1:card_payment'")
+            tid,kind,source=cur.fetchone()
+            self.assertEqual(('EXPENSE','RULE'),(kind,source))
+        # Same bank transaction and immutable money fields, contradictory bank metadata.
+        self.import_file(data.replace(b'7903',b'7225'))
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT transaction_type FROM finance.v_transactions WHERE id=%s',(tid,))
+            self.assertEqual('UNKNOWN',cur.fetchone()[0])
+            cur.execute("SELECT r.batch_id FROM finance.finance_transaction_sources s JOIN finance.finance_import_records r ON r.id=s.record_id JOIN finance.finance_record_bank_types k ON k.record_id=r.id WHERE s.transaction_id=%s AND k.transaction_type='CORRECTION'",(tid,))
+            bid=str(cur.fetchone()[0])
+        self.assertEqual(200,self.client.post('/api/v1/finance/imports/'+bid+'/rollback',json={'confirm':True}).status_code)
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT transaction_type FROM finance.v_transactions WHERE id=%s',(tid,))
+            self.assertEqual('EXPENSE',cur.fetchone()[0])
 
 
 if __name__=='__main__': unittest.main()

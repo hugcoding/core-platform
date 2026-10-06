@@ -83,6 +83,8 @@ class Entry:
     references: tuple
     details: tuple
     entry_reference: str = ''
+    bank_codes: tuple = ()
+    reversal: str = ''
 
 
 @dataclass(frozen=True)
@@ -156,7 +158,8 @@ def parse(data: bytes) -> Parsed:
             entries.append(Entry(f'stmt:{si}/entry:{ei}', account,
                 bank_date(entry, 'BookgDt/Dt'), bank_date(entry, 'ValDt/Dt', False),
                 format(amount, '.2f'), currency, *values, tuple(references), tuple(detail_values),
-                text(entry, 'NtryRef')))
+                text(entry, 'NtryRef'), tuple(bank_code(n) for n in [entry, *details]),
+                text(entry, 'RvslInd')))
         if set(balances) == {'OPBD','CLBD'}:
             if balances['OPBD'] + total != balances['CLBD']:
                 raise ImportErrorCode('balance_mismatch')
@@ -167,3 +170,11 @@ def parse(data: bytes) -> Parsed:
         elif balances:
             raise ImportErrorCode('incomplete_balances')
     return Parsed(tuple(sorted(accounts)), tuple(entries), len(statements), checked, tuple(bank_balances))
+
+
+def bank_code(node):
+    """Retain structured evidence; never infer a bank code from free text."""
+    return {key: text(node, 'BkTxCd/'+path) for key, path in {
+        'domain': 'Domn/Cd', 'family': 'Domn/Fmly/Cd',
+        'subfamily': 'Domn/Fmly/SubFmlyCd', 'proprietary': 'Prtry/Cd',
+        'issuer': 'Prtry/Issr'}.items()}
