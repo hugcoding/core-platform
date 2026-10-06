@@ -1,5 +1,5 @@
 function testCategorizationPhaseUI(source){
- const elements={categorize:{},stopCategorize:{dataset:{}},categorizationStatus:{}};
+ const elements={llmEnabled:{disabled:false},categorize:{},stopCategorize:{dataset:{}},categorizationStatus:{}};
  const state={jobs:[]},$=id=>elements[id];
  const labels={pending:'Wacht',running:'Bezig',failed:'Mislukt'};
  const reasons={waiting_for_local_llm:'Wacht op je lokale LLM',retry_wait:'nieuwe poging volgt'};
@@ -12,6 +12,10 @@ function testCategorizationPhaseUI(source){
  render();check(elements.categorizationStatus.textContent.includes('Lokale LLM'),'LLM phase visible');
  check(elements.categorizationStatus.textContent.includes('Wacht op je lokale LLM'),'offline waiting visible');
  check(elements.categorize.disabled&&!elements.stopCategorize.hidden,'waiting job remains stoppable');
+ state.llm_enabled=false;render();
+ check(!elements.llmEnabled.checked,'stored off preference is visible');
+ check(elements.categorizationStatus.textContent.includes('LLM uit'),'off does not claim active inference');
+ state.llm_enabled=true;render();check(elements.llmEnabled.checked,'stored on preference is visible');
  state.jobs[0]={...state.jobs[0],status:'failed',waiting_reason:'retry_wait'};
  render();check(!elements.categorizationStatus.textContent.includes('nieuwe poging volgt'),'failed job does not promise a retry');
  check(!elements.categorize.disabled&&elements.stopCategorize.hidden,'failed job can be restarted');

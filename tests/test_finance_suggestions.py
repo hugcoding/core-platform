@@ -124,7 +124,7 @@ class SuggestionIdentityTests(unittest.TestCase):
 
         self.assertEqual(
             identity(payload, -15, 'EUR'),
-            ('merchant_marker', 'wibra marsmanplein', 'debit', 'EUR'),
+            ('merchant_marker', 'wibra', 'debit', 'EUR'),
         )
     
     def test_merchant_trailing_reference_does_not_change_identity(self):

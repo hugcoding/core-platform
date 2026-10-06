@@ -141,3 +141,18 @@ class LocalClassificationTests(unittest.TestCase):
         self.assertIsNone(result)
         result,_=self.call(dict(category='vervoer',confidence=.95),target=target)
         self.assertEqual('EXPENSE',result['transaction_type'])
+
+    def test_retailer_branches_reuse_owner_category_without_llm(self):
+        target=self.target('LIDL FILIAAL B>TESTSTAD 02.02.2026')
+        target['private_data']['counterparty']=''
+        payload={'description':'LIDL FILIAAL A>TESTSTAD 01.01.2026','counterparty':''}
+        example=dict(identity=identity(payload,-10,'EUR'),review_id='owner-review',
+            transaction_type='EXPENSE',category_code='vervoer',subcategory_code=None,merchant_id=None)
+        result,infer=self.call({},target=target,examples=[example])
+        infer.assert_not_called()
+        self.assertEqual(('MERCHANT','vervoer'),(result['source'],result['category_code']))
+
+    def test_retailer_invoice_text_does_not_establish_card_identity(self):
+        from core.finance.suggestions import recognized_merchant
+        self.assertIsNone(recognized_merchant({'description':'Factuur Lidl voor huur'}))
+        self.assertIsNone(recognized_merchant({'description':'LIDL>TESTSTAD','details':[{},{}]}))
