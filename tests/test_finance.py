@@ -144,6 +144,9 @@ class IntegrationTests(unittest.TestCase):
             toggle_up=Path('database/migrations/20261006_add_finance_llm_toggle.sql').read_text()
             toggle_down=Path('database/migrations/rollback/20261006_add_finance_llm_toggle.sql').read_text()
             cur.execute(toggle_up);cur.execute(toggle_down);cur.execute(toggle_up)
+            rules_up=Path('database/migrations/20261007_add_finance_local_rules.sql').read_text()
+            rules_down=Path('database/migrations/rollback/20261007_add_finance_local_rules.sql').read_text()
+            cur.execute(rules_up);cur.execute(rules_down);cur.execute(rules_up)
         app=FastAPI();app.middleware('http')(finance_boundary);app.include_router(router)
         cls.client=TestClient(app);cls.client.headers['origin']='http://testserver'
         response=cls.client.post('/api/v1/finance/session',json={'code':'synthetic-access'})
@@ -543,7 +546,7 @@ class IntegrationTests(unittest.TestCase):
         with self.admin.cursor() as cur:
             cur.execute('SELECT category_code,source_review_id,suggestion_method FROM finance.finance_review_events WHERE transaction_id=%s',(target['id'],))
             events=cur.fetchall();self.assertEqual(1,len(events));self.assertEqual('vervoer',events[0][0])
-            self.assertEqual(proposal['seed_review_id'],str(events[0][1]));self.assertEqual('local-merchant-v3',events[0][2])
+            self.assertEqual(proposal['seed_review_id'],str(events[0][1]));self.assertEqual('local-merchant-v4',events[0][2])
         self.assertEqual(0,self.client.get(route).json()['total'])
         inherited=self.client.get('/api/v1/finance/transactions/'+target['id']+'/suggestions')
         self.assertEqual(200,inherited.status_code)
@@ -631,7 +634,7 @@ class IntegrationTests(unittest.TestCase):
             cur.execute('SELECT transaction_id,source_review_id,suggestion_method FROM finance.finance_review_events WHERE transaction_id IN (%s,%s,%s)',tuple(t['id'] for t in targets))
             events=cur.fetchall();self.assertEqual(2,len(events))
             self.assertEqual({t['id'] for t in targets[:2]},{str(e[0]) for e in events})
-            self.assertTrue(all(str(e[1])==proposal['seed_review_id'] and e[2]=='local-merchant-v3' for e in events))
+            self.assertTrue(all(str(e[1])==proposal['seed_review_id'] and e[2]=='local-merchant-v4' for e in events))
         # A categorized target invalidates the entire new selection, including an untouched target.
         mixed={**payload,'key':str(uuid.uuid4()),'items':[payload['items'][0],{'id':targets[2]['id'],'previous':None}]}
         self.assertEqual(409,self.client.post(route,json=mixed).status_code)
@@ -1616,6 +1619,45 @@ class IntegrationTests(unittest.TestCase):
             with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20261006_add_finance_llm_toggle.sql').read_text())
         with self.admin.cursor() as cur:cur.execute('ROLLBACK')
         toggle(True)
+
+
+    def test_zzz_broad_local_rules_review_filter_and_owner_correction(self):
+        from core.finance.store import connection,enqueue
+        from core.finance.local_classification import step
+        from tests.test_finance_bank_references import numbered
+        with self.admin.cursor() as cur:
+            cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE status IN ('pending','running')")
+        self.import_file(numbered(ref=str(uuid.uuid4()),message=str(uuid.uuid4()),n=99401,
+                                  description='SYNTHETIC REFERENCES').replace(b'Synthetische winkel',b'Fietsaccuwinkel B.V.'))
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT id FROM finance.finance_transactions ORDER BY created_at DESC,id LIMIT 1');tid=str(cur.fetchone()[0])
+        with connection() as conn,conn.cursor() as cur:
+            job=enqueue(cur,'categorize')
+            cur.execute('INSERT INTO finance.finance_categorization_targets VALUES (%s,%s)',(job,tid))
+        with patch('core.finance.local_classification.settings',side_effect=AssertionError('No model')):
+            with connection(worker=True) as conn:step(conn,job,{},lambda _:self.fail('No inference'))
+        response=self.client.get('/api/v1/finance/data?classification=local_rules')
+        self.assertEqual(200,response.status_code,response.text)
+        row=next(r for r in response.json()['transactions'] if r['id']==tid)
+        self.assertEqual(('RULE','vervoer',False,'Vervoer of fietsenwinkel'),
+                         (row['classification_source'],row['category_code'],row['confirmed'],row['local_rule']))
+        events=self.client.get('/api/v1/finance/transactions/'+tid+'/classifications').json()['events']
+        self.assertEqual('Vervoer of fietsenwinkel',events[0]['local_rule'])
+        response=self.client.post('/api/v1/finance/transactions/'+tid+'/classification',json={
+            'transaction_type':'EXPENSE','category':'vrije_tijd','subcategory':'','merchant':'',
+            'previous':row['review_id'],'key':str(uuid.uuid4())})
+        self.assertEqual(200,response.status_code,response.text)
+        data=self.client.get('/api/v1/finance/data?classification=local_rules').json()
+        self.assertNotIn(tid,[r['id'] for r in data['transactions']])
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT category_code,classification_source,confirmed FROM finance.v_transactions WHERE id=%s',(tid,))
+            self.assertEqual(('vrije_tijd','MANUAL',True),cur.fetchone())
+            cur.execute('SELECT count(*) FROM finance.finance_review_events WHERE transaction_id=%s',(tid,))
+            self.assertEqual(2,cur.fetchone()[0])
+        import psycopg2
+        with self.assertRaises(psycopg2.Error):
+            with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20261007_add_finance_local_rules.sql').read_text())
+        with self.admin.cursor() as cur:cur.execute('ROLLBACK')
 
 
 if __name__=='__main__': unittest.main()
