@@ -3,7 +3,7 @@ from decimal import Decimal
 import re
 import unicodedata
 
-METHOD = 'local-merchant-v3'
+METHOD = 'local-merchant-v4'
 MAX_SCAN = 25000
 PROCESSORS = {'mollie', 'adyen', 'paypal', 'stripe', 'sumup', 'worldline', 'pay nl'}
 
@@ -166,7 +166,8 @@ def recognized_merchant(payload):
             return 'Shell'
         if re.match(r'^(?:albert heijn\b|ah (?:[0-9]{4}\b|bouwens\b))', text):
             return 'Albert Heijn'
-    return None
+    from core.finance.local_rules import business_identity
+    return business_identity(payload)
 
 
 def identity(payload, amount, currency):

@@ -115,18 +115,27 @@ def transaction(row):
     result['merchant']=decrypt(row['merchant_data']).get('name') if row.get('merchant_data') else None
     result['confirmed']=bool(row.get('confirmed'))
     result['confidence']=float(row['confidence']) if row.get('confidence') is not None else None
+    from core.finance.local_rules import LABELS
+    version=row.get('model_version') or ''
+    result['local_rule']=LABELS.get(version.removeprefix('finance-local-v1:core-rule-v1:')) if version.startswith('finance-local-v1:core-rule-v1:') else None
     result['merchant_suggestion']=recognized_merchant(payload)
     result.update({key:payload[key] for key in ('description','counterparty','counteraccount','details')})
     return result
 
 
 @router.get('/api/v1/finance/data')
-def data(account:str='',month:str='',category:str='',page:int=0,sort:str='booking_date',direction:str='desc',year:str='',date_from:str='',date_to:str='',transaction_type:str='',subcategory:str='',group:str=''):
+def data(account:str='',month:str='',category:str='',page:int=0,sort:str='booking_date',direction:str='desc',year:str='',date_from:str='',date_to:str='',transaction_type:str='',subcategory:str='',group:str='',classification:str=''):
     columns={'booking_date':'t.booking_date','amount':'t.amount',
              'category':"lower(COALESCE(c.label,'Nog te categoriseren'))"}
     if sort not in (*columns,'counterparty','description') or direction not in ('asc','desc'):
         raise HTTPException(422,'invalid_sort')
     clauses,params=['true'],[]
+    if classification not in ('','local_rules','automatic','manual'):raise HTTPException(422,'invalid_classification_filter')
+    if classification=='local_rules':
+        clauses.append("t.classification_source='RULE' AND t.model_version LIKE %s AND NOT t.confirmed")
+        params.append('finance-local-v1:core-rule-v1:%')
+    elif classification=='automatic':clauses.append('t.category_code IS NOT NULL AND NOT t.confirmed')
+    elif classification=='manual':clauses.append('t.confirmed AND t.review_id IS NOT NULL')
     if group:
         if group=='unassigned':clauses.append('t.account_id IN (SELECT account_id FROM finance.v_account_groups WHERE group_id IS NULL)')
         else:
@@ -221,6 +230,8 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
         imports=[serial(r) for r in cur.fetchall()]
         cur.execute('''SELECT j.*,
             (SELECT count(*) FROM finance.finance_categorization_targets t WHERE t.job_id=j.id) AS target_count,
+            (SELECT count(*) FROM finance.finance_categorization_targets t WHERE t.job_id=j.id
+                AND (j.categorization_phase='llm' OR t.transaction_id<=j.categorization_cursor)) AS core_scanned,
             (SELECT count(*) FROM finance.finance_categorization_results r WHERE r.job_id=j.id) AS processed,
             (SELECT count(*) FROM finance.finance_categorization_results r WHERE r.job_id=j.id AND r.status='classified') AS classified
             FROM finance.finance_ingest_jobs j ORDER BY requested_at DESC LIMIT 5''')
@@ -704,6 +715,9 @@ def classification_history(transaction_id:str):
             item['classification_source']=r['classification_source'] or ('MERCHANT' if r['source_review_id'] else 'MANUAL')
             item['confirmed']=r['confirmed'] is not False
             item['confidence']=float(r['confidence']) if r['confidence'] is not None else None
+            from core.finance.local_rules import LABELS
+            version=r['model_version'] or ''
+            item['local_rule']=LABELS.get(version.removeprefix('finance-local-v1:core-rule-v1:')) if version.startswith('finance-local-v1:core-rule-v1:') else None
             rows.append(item)
         return {'events':rows}
 

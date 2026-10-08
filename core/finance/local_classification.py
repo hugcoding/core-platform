@@ -149,6 +149,9 @@ def decide(target, examples, categories, scope, infer=generate, allow_llm=True):
                 return None
         return {**{k: seed.get(k) for k in ('category_code', 'subcategory_code', 'transaction_type', 'merchant_id')},
                 'source': 'MERCHANT', 'confidence': None, 'seed': seed['review_id']}
+    from core.finance.local_rules import decide as local_rule
+    rule=local_rule(target,payload,categories)
+    if rule:return rule
     safe = inference_context(payload, target['amount'], target['currency'])
     if not safe['counterparty'] and not safe['description']:
         return None
@@ -249,6 +252,7 @@ def _step(conn, job, cache, infer=generate):
             payload = decrypt(target['private_data'])
             group_key = fingerprint(VERSION+':group', [str(target['account_id']), target['currency'],
                 target['transaction_type'], target['classification_source'],
+                target.get('rule_version'),
                 identity(payload, target['amount'], target['currency']),
                 inference_context(payload, target['amount'], target['currency'])])
             choices = cache.setdefault('choices', {})
@@ -291,7 +295,7 @@ def _step(conn, job, cache, infer=generate):
                 VALUES (%s,%s,%s,%s,%s,%s,%s,false,%s,'finance-local',%s,%s,%s,%s,%s) RETURNING id''',
                 (tid, choice['category_code'], choice['subcategory_code'], choice['transaction_type'], choice['merchant_id'],
                  choice['source'], choice['confidence'], predecessor(cur, tid), str(uuid.uuid5(uuid.UUID(str(job)), str(tid))),
-                 fingerprint(VERSION, [str(job), str(tid), str(choice)]), VERSION+':'+(settings()[1] if choice['source']=='AI' else 'core'),
+                 fingerprint(VERSION, [str(job), str(tid), str(choice)]), VERSION+':'+('core-rule-v1:'+choice['rule'] if choice['source']=='RULE' else settings()[1] if choice['source']=='AI' else 'core'),
                  choice['seed'], METHOD if choice['seed'] else None))
             review = cur.fetchone()['id']
         cur.execute('INSERT INTO finance.finance_categorization_results(job_id,transaction_id,status,review_id) VALUES (%s,%s,%s,%s)',
