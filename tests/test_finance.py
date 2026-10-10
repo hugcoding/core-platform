@@ -1546,7 +1546,7 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual('EXPENSE',cur.fetchone()[0])
 
 
-    def test_zz_llm_toggle_core_without_model_pause_resume_and_inflight(self):
+    def test_zz_llm_toggle_core_without_model_finish_restart_and_inflight(self):
         from core.finance.store import connection,enqueue
         from core.finance.local_classification import step,LocalLLMPaused
         from tests.test_finance_bank_references import numbered
@@ -1580,9 +1580,10 @@ class IntegrationTests(unittest.TestCase):
             jid=queue(merchant,unmatched)
             for _ in range(3):
                 try:
-                    with connection(worker=True) as conn:step(conn,jid,{},lambda _:self.fail('LLM disabled'))
-                except LocalLLMPaused:break
-            else:self.fail('Expected persisted LLM pause')
+                    with connection(worker=True) as conn:more=step(conn,jid,{},lambda _:self.fail('LLM disabled'))
+                    if not more:break
+                except LocalLLMPaused:self.fail('Disabled LLM should finish')
+            else:self.fail('Expected CORE completion')
         with self.admin.cursor() as cur:
             cur.execute('SELECT classification_source,category_code FROM finance.v_transactions WHERE id=%s',(merchant,))
             self.assertEqual(('MERCHANT','boodschappen'),cur.fetchone())
@@ -1592,10 +1593,14 @@ class IntegrationTests(unittest.TestCase):
         with patch('finance_worker.gate',side_effect=AssertionError('Paused LLM must not start another attempt')):
             scan(None)
         with self.admin.cursor() as cur:
-            cur.execute('SELECT attempts,waiting_reason FROM finance.finance_ingest_jobs WHERE id=%s',(jid,))
-            self.assertEqual((0,'llm_disabled'),cur.fetchone())
+            cur.execute('SELECT status,attempts,waiting_reason FROM finance.finance_ingest_jobs WHERE id=%s',(jid,))
+            self.assertEqual(('done',0,None),cur.fetchone())
+        old_jid=jid
         toggle(True)
+        with connection(worker=True) as conn:self.assertFalse(step(conn,old_jid,{},lambda _:self.fail('Completed job must not resume')))
+        jid=queue(unmatched)
         with patch('core.finance.local_classification.settings',return_value=('http://192.168.1.2/v1','synthetic-model')):
+            with connection(worker=True) as conn:step(conn,jid,{},lambda _:dict(category='vervoer',confidence=.9))
             with connection(worker=True) as conn:step(conn,jid,{},lambda _:dict(category='vervoer',confidence=.9))
         with self.admin.cursor() as cur:
             cur.execute('SELECT classification_source FROM finance.v_transactions WHERE id=%s',(unmatched,))
