@@ -147,6 +147,9 @@ class IntegrationTests(unittest.TestCase):
             rules_up=Path('database/migrations/20261007_add_finance_local_rules.sql').read_text()
             rules_down=Path('database/migrations/rollback/20261007_add_finance_local_rules.sql').read_text()
             cur.execute(rules_up);cur.execute(rules_down);cur.execute(rules_up)
+            transfer_up=Path('database/migrations/20261010_add_finance_own_transfers.sql').read_text()
+            transfer_down=Path('database/migrations/rollback/20261010_add_finance_own_transfers.sql').read_text()
+            cur.execute(transfer_up);cur.execute(transfer_down);cur.execute(transfer_up)
         app=FastAPI();app.middleware('http')(finance_boundary);app.include_router(router)
         cls.client=TestClient(app);cls.client.headers['origin']='http://testserver'
         response=cls.client.post('/api/v1/finance/session',json={'code':'synthetic-access'})
@@ -1620,6 +1623,49 @@ class IntegrationTests(unittest.TestCase):
         with self.admin.cursor() as cur:cur.execute('ROLLBACK')
         toggle(True)
 
+
+    def test_zz_own_transfer_classification_labels_groups_and_owner_priority(self):
+        from core.finance.store import connection,enqueue
+        from core.finance.crypto import encrypt
+        from core.finance.local_classification import step
+        from tests.test_finance_bank_references import numbered,account
+        import psycopg2
+        first,second=99451,99452
+        self.import_file(numbered(ref=str(uuid.uuid4()),message=str(uuid.uuid4()),n=second))
+        source=numbered(ref=str(uuid.uuid4()),message=str(uuid.uuid4()),n=first,amount='4500.00')
+        source=source.replace(b'</RltdPties>',('<CdtrAcct><Id><IBAN>'+account(second)+'</IBAN></Id></CdtrAcct></RltdPties>').encode())
+        self.import_file(source)
+        with self.admin.cursor() as cur:
+            cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE status IN ('pending','running')")
+        with connection() as conn,conn.cursor() as cur:
+            cur.execute('SELECT id,account_id FROM finance.v_transactions WHERE amount=-4500 ORDER BY created_at DESC LIMIT 1');r=cur.fetchone();tid=str(r['id']);aid=r['account_id']
+            cur.execute('SELECT id FROM finance.finance_accounts WHERE identity_key=%s',(__import__('core.finance.crypto',fromlist=['fingerprint']).fingerprint('account-v1',account(second)),));bid=cur.fetchone()['id']
+            cur.execute('INSERT INTO finance.finance_wealth_groups DEFAULT VALUES RETURNING id');gid=cur.fetchone()['id']
+            cur.execute("INSERT INTO finance.finance_wealth_group_events(group_id,private_data,actor,idempotency_key,payload_digest) VALUES (%s,%s,'owner',%s,'synthetic')",(gid,encrypt({'name':'Synthetic group'}),str(uuid.uuid4())))
+            for acc,label in [(aid,'Synthetic checking'),(bid,'Synthetic savings')]:
+                cur.execute("INSERT INTO finance.finance_account_name_events(account_id,private_data,actor,idempotency_key,payload_digest) VALUES (%s,%s,'owner',%s,'synthetic')",(acc,encrypt({'display_name':label}),str(uuid.uuid4())))
+                cur.execute("INSERT INTO finance.finance_account_group_events(account_id,group_id,relationship,actor,idempotency_key,payload_digest) VALUES (%s,%s,'OWN','owner',%s,'synthetic')",(acc,gid,str(uuid.uuid4())))
+            job=enqueue(cur,'categorize');cur.execute('INSERT INTO finance.finance_categorization_targets VALUES (%s,%s)',(job,tid))
+        with patch('core.finance.local_classification.settings',side_effect=AssertionError('No model')):
+            with connection(worker=True) as conn:step(conn,job,{},lambda _:self.fail('No inference'))
+        response=self.client.get('/api/v1/finance/data?own_transfer=internal')
+        self.assertEqual(200,response.status_code,response.text)
+        row=next(r for r in response.json()['transactions'] if r['id']==tid)
+        self.assertEqual(('TRANSFER','overboekingen','internal',False),(row['transaction_type'],row['category_code'],row['own_transfer_scope'],row['confirmed']))
+        self.assertTrue(row['counter_account_label'].startswith('Synthetic savings'))
+        self.assertEqual('Synthetische winkel',row['counterparty'])
+        self.assertNotIn(tid,[r['id'] for r in self.client.get('/api/v1/finance/data?own_transfer=between_groups').json()['transactions']])
+        self.assertEqual(422,self.client.get('/api/v1/finance/data?own_transfer=invalid').status_code)
+        response=self.client.post('/api/v1/finance/transactions/'+tid+'/classification',json={'transaction_type':'EXPENSE','category':'overig','previous':row['review_id'],'key':str(uuid.uuid4())})
+        self.assertEqual(200,response.status_code,response.text)
+        with connection(worker=True) as conn:step(conn,job,{},lambda _:self.fail('No inference'))
+        self.assertNotIn(tid,[r['id'] for r in self.client.get('/api/v1/finance/data?own_transfer=all').json()['transactions']])
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT transaction_type,confirmed FROM finance.v_transactions WHERE id=%s',(tid,));self.assertEqual(('EXPENSE',True),cur.fetchone())
+            cur.execute('SELECT count(*) FROM finance.finance_review_events WHERE transaction_id=%s',(tid,));self.assertEqual(2,cur.fetchone()[0])
+        with self.assertRaises(psycopg2.Error):
+            with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20261010_add_finance_own_transfers.sql').read_text())
+        with self.admin.cursor() as cur:cur.execute('ROLLBACK')
 
     def test_zzz_broad_local_rules_review_filter_and_owner_correction(self):
         from core.finance.store import connection,enqueue

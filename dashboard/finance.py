@@ -124,13 +124,14 @@ def transaction(row):
 
 
 @router.get('/api/v1/finance/data')
-def data(account:str='',month:str='',category:str='',page:int=0,sort:str='booking_date',direction:str='desc',year:str='',date_from:str='',date_to:str='',transaction_type:str='',subcategory:str='',group:str='',classification:str=''):
+def data(account:str='',month:str='',category:str='',page:int=0,sort:str='booking_date',direction:str='desc',year:str='',date_from:str='',date_to:str='',transaction_type:str='',subcategory:str='',group:str='',classification:str='',own_transfer:str=''):
     columns={'booking_date':'t.booking_date','amount':'t.amount',
              'category':"lower(COALESCE(c.label,'Nog te categoriseren'))"}
     if sort not in (*columns,'counterparty','description') or direction not in ('asc','desc'):
         raise HTTPException(422,'invalid_sort')
     clauses,params=['true'],[]
     if classification not in ('','local_rules','automatic','manual'):raise HTTPException(422,'invalid_classification_filter')
+    if own_transfer not in ('','all','internal','between_groups','unassigned'):raise HTTPException(422,'invalid_transfer_filter')
     if classification=='local_rules':
         clauses.append("t.classification_source='RULE' AND t.model_version LIKE %s AND NOT t.confirmed")
         params.append('finance-local-v1:core-rule-v1:%')
@@ -166,6 +167,12 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
         if group and group!='unassigned' and not any(g['id']==group for g in groups):raise HTTPException(404,'group_not_found')
         # Complete, authenticated metadata lets dependent filters update without another request.
         all_accounts=managed_accounts(cur)
+        scope=transfer_scope(cur)
+        from core.finance.own_transfers import display as transfer_display
+        def present(row):
+            result=transaction(row)
+            result.update(transfer_display(row,result,scope,all_accounts,groups))
+            return result
         accounts=all_accounts
         if group:
             accounts=[a for a in accounts if (a['group_id'] is None if group=='unassigned' else a['group_id']==group)]
@@ -178,6 +185,15 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
         for r in cur.fetchall():periods_by_account[str(r['account_id'])].append(r['month'])
         months=sorted({m for a in accounts if not account or a['id']==account
                        for m in periods_by_account[a['id']]},reverse=True)
+        if own_transfer:
+            # Encrypted counteraccounts are matched locally; only UUIDs enter SQL.
+            cur.execute(f'SELECT t.* FROM finance.v_transactions t WHERE {where}',params)
+            matched=[]
+            for candidate in cur.fetchall():
+                if candidate['transaction_type']!='TRANSFER':continue
+                info=transfer_display(candidate,decrypt(candidate['private_data']),scope,all_accounts,groups)
+                if info and (own_transfer=='all' or info['own_transfer_scope']==own_transfer):matched.append(str(candidate['id']))
+            where+=' AND t.id=ANY(%s::uuid[])';params.append(matched)
         cur.execute(f'''SELECT count(*) AS total,coalesce(sum(amount) FILTER(WHERE amount>0),0) AS credits,
             coalesce(sum(amount) FILTER(WHERE amount<0),0) AS debits,coalesce(sum(amount),0) AS net,
             count(*) FILTER(WHERE category_code IS NULL) AS uncategorized,
@@ -190,13 +206,13 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
         if sort in ('counterparty','description'):
             # Text remains encrypted at rest. Sort the complete filtered selection
             # locally, then paginate; never create a plaintext search/sort index.
-            cur.execute(f'SELECT t.id,t.private_data FROM finance.v_transactions t WHERE {where} ORDER BY t.id',params)
-            ranked=[(r['id'],str(decrypt(r['private_data']).get(sort) or '').casefold()) for r in cur.fetchall()]
+            cur.execute(f'SELECT t.* FROM finance.v_transactions t WHERE {where} ORDER BY t.id',params)
+            ranked=[(r['id'],str((present(r).get('counter_account_label') if sort=='counterparty' else None) or decrypt(r['private_data']).get(sort) or '').casefold()) for r in cur.fetchall()]
             ranked.sort(key=lambda item:item[1],reverse=direction=='desc')
             ids=[str(item[0]) for item in ranked[page*100:(page+1)*100]]
             if ids:
                 cur.execute('SELECT t.* FROM finance.v_transactions t WHERE t.id=ANY(%s::uuid[])',(ids,))
-                by_id={str(r['id']):transaction(r) for r in cur.fetchall()}
+                by_id={str(r['id']):present(r) for r in cur.fetchall()}
                 rows=[by_id[i] for i in ids]
             else: rows=[]
         else:
@@ -215,7 +231,7 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
             cur.execute(f'''SELECT t.* FROM finance.v_transactions t {joins}
                 LEFT JOIN finance.finance_categories c ON c.code=t.category_code WHERE {where}
                 ORDER BY {columns[sort]} {direction} NULLS LAST,{tie_break} LIMIT 100 OFFSET %s''',params+[page*100])
-            rows=[transaction(r) for r in cur.fetchall()]
+            rows=[present(r) for r in cur.fetchall()]
         # Use source links (including duplicates) and immutable transactions so rollback retains history.
         cur.execute('''SELECT b.*,e.imported_at,e.rolled_back_at,t.last_transaction_date
             FROM (SELECT * FROM finance.v_import_status ORDER BY created_at DESC,id LIMIT 100) b

@@ -149,6 +149,9 @@ def decide(target, examples, categories, scope, infer=generate, allow_llm=True):
                 return None
         return {**{k: seed.get(k) for k in ('category_code', 'subcategory_code', 'transaction_type', 'merchant_id')},
                 'source': 'MERCHANT', 'confidence': None, 'seed': seed['review_id']}
+    from core.finance.own_transfers import decide as own_transfer
+    transfer = own_transfer(target, payload, categories, scope)
+    if transfer:return transfer
     from core.finance.local_rules import decide as local_rule
     rule=local_rule(target,payload,categories)
     if rule:return rule
@@ -251,6 +254,8 @@ def _step(conn, job, cache, infer=generate):
                 return answers[key]
             payload = decrypt(target['private_data'])
             group_key = fingerprint(VERSION+':group', [str(target['account_id']), target['currency'],
+                payload.get('counteraccount'),
+                len(payload.get('details') or []), payload.get('reversal'),
                 target['transaction_type'], target['classification_source'],
                 target.get('rule_version'),
                 identity(payload, target['amount'], target['currency']),
