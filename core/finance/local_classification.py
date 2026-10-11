@@ -212,7 +212,7 @@ def _step(conn, job, cache, infer=generate):
             return False
         from core.finance.classification_settings import llm_enabled, lock
         if cache['phase']=='llm' and not llm_enabled(cur):
-            raise LocalLLMPaused()
+            return False  # CORE is complete; remaining payments stay uncategorized.
         cur.execute('''SELECT q.transaction_id,t.* FROM finance.finance_categorization_targets q
             LEFT JOIN finance.v_transactions t ON t.id=q.transaction_id
             WHERE q.job_id=%s AND NOT EXISTS(SELECT 1 FROM finance.finance_categorization_results r

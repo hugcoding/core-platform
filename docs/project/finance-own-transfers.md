@@ -67,3 +67,7 @@ om rollback te forceren. Stop bij problemen de worker.
 Tests gebruiken uitsluitend fictieve gegevens voor beide richtingen, groepsgrenzen,
 labels, filtering, bankbewijs, idempotency, eigenaarvoorrang en migratie/rollback.
 Productiegegevens en oorspronkelijke bankbestanden zijn niet uitgelezen.
+
+Met LLM uit eindigt de job na CORE als Afgerond en wordt de startknop vrijgegeven.
+Ook oude wachtende LLM-jobs worden afgerond. LLM later inschakelen hervat een
+afgeronde job niet; start daarvoor een nieuwe ronde. Opgeslagen categorieën blijven behouden.

@@ -67,7 +67,7 @@ def scan(client):
                 with connection(worker=True) as conn,conn.cursor() as cur:
                     enabled=llm_enabled(cur)
                 if not enabled:
-                    set_job(jid,'pending',reason='llm_disabled');STATUS='llm_disabled';return
+                    set_job(jid,'done');STATUS='idle';return
             with connection(worker=True) as conn:
                 reason=gate(conn,client)
             if reason:
@@ -163,7 +163,7 @@ def scan(client):
                     if read_source(path)!=data: raise ImportErrorCode('source_changed')
             set_job(jid,'done');STATUS='idle'
         except LocalLLMPaused:
-            set_job(jid,'pending',reason='llm_disabled');STATUS='llm_disabled'
+            set_job(jid,'done');STATUS='idle'
         except LocalLLMUnavailable:
             set_job(jid,'pending',reason='waiting_for_local_llm');STATUS='waiting_for_local_llm'
         except ImportErrorCode as exc:
