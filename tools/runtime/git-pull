@@ -39,17 +39,8 @@ if ! command -v "$DOCKER_BIN" >/dev/null 2>&1; then
     fi
 fi
 
-GIT_IMAGE="${CORE_GIT_IMAGE:-alpine/git:2.49.1}"
-
 git_run() {
-    "$DOCKER_BIN" run --rm \
-        --user "$(id -u):$(id -g)" \
-        -v "$PROJECT_ROOT:/repo" \
-        -w /repo \
-        "$GIT_IMAGE" \
-        -c safe.directory=/repo \
-        -c maintenance.auto=false \
-        "$@"
+    DOCKER_BIN="$DOCKER_BIN" sh ./tools/runtime/git-run "$@"
 }
 
 tracked_changes=$(git_run status --porcelain --untracked-files=no)
