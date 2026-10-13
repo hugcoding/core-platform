@@ -94,6 +94,7 @@ show_help() {
     printf '%s\n' "  core scanner full"
     printf '%s\n' "  core scanner hash-backfill --source PATH"
     printf '%s\n' "  core git pull [--rebuild-docs|--skip-docs]"
+    printf '%s\n' "  core git <command> [arguments...]"
     printf '%s\n' "  core version"
     printf '%s\n' ""
 }
@@ -454,18 +455,7 @@ case "$command_domain" in
                 ;;
             *)
                 shift
-                "$DOCKER_BIN" run --rm \
-                    --user "$(id -u):$(id -g)" \
-                    -e HOME=/tmp/corehome \
-                    -e GIT_SSH_COMMAND="ssh -F /dev/null -i /tmp/corehome/.ssh/github_ed25519 -o UserKnownHostsFile=/tmp/corehome/.ssh/known_hosts -o IdentitiesOnly=yes" \
-                    -v "$PROJECT_ROOT:/repo" \
-                    -v "$HOME/.ssh:/tmp/corehome/.ssh:ro" \
-                    -v /etc/passwd:/etc/passwd:ro \
-                    -v /etc/group:/etc/group:ro \
-                    -w /repo \
-                    alpine/git:2.49.1 \
-                    -c safe.directory=/repo \
-                    "$@"
+                DOCKER_BIN="$DOCKER_BIN" sh ./tools/runtime/git-run "$@"
                 ;;
         esac
         ;;

@@ -1,0 +1,21 @@
+#!/bin/sh
+# Shared Dockerized Git transport for pull and all other Git commands.
+set -eu
+PROJECT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+DOCKER_BIN="${DOCKER_BIN:-docker}"
+if ! command -v "$DOCKER_BIN" >/dev/null 2>&1 && [ -x /usr/local/bin/docker ]; then
+    DOCKER_BIN=/usr/local/bin/docker
+fi
+"$DOCKER_BIN" run --rm \
+    --user "$(id -u):$(id -g)" \
+    -e HOME=/tmp/corehome \
+    -e GIT_SSH_COMMAND="ssh -F /dev/null -i /tmp/corehome/.ssh/github_ed25519 -o UserKnownHostsFile=/tmp/corehome/.ssh/known_hosts -o IdentitiesOnly=yes" \
+    -v "$PROJECT_ROOT:/repo" \
+    -v "$HOME/.ssh:/tmp/corehome/.ssh:ro" \
+    -v /etc/passwd:/etc/passwd:ro \
+    -v /etc/group:/etc/group:ro \
+    -w /repo \
+    "${CORE_GIT_IMAGE:-alpine/git:2.49.1}" \
+    -c safe.directory=/repo \
+    -c maintenance.auto=false \
+    "$@"
