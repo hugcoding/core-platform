@@ -102,6 +102,12 @@ class CapacityTests(unittest.TestCase):
 
 
 class CpuAdmissionTests(unittest.TestCase):
+    def test_python_defaults_preserve_local_finance_and_ocr_thresholds(self):
+        with mock.patch.dict(capacity.os.environ,{},clear=True):
+            profiles=capacity.cpu_policies()
+        self.assertEqual({'finance':(70,60),'ai':(70,60),'ocr':(70,60),'execution':(80,70)},
+                         {name:(p.limit,p.resume) for name,p in profiles.items()})
+
     def test_short_spike_is_ignored_and_five_of_six_pauses(self):
         policy=capacity.CpuAdmission(60,50)
         for tick,value in enumerate([20,20,90,20,20,20]):

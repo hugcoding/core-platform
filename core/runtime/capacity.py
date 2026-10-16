@@ -85,7 +85,7 @@ class CpuAdmission:
 
 
 def cpu_policies():
-    profiles = {'finance':('FINANCE',60), 'ai':('AI',70), 'ocr':('OCR',60), 'execution':('EXECUTION',80)}
+    profiles = {'finance':('FINANCE',70), 'ai':('AI',70), 'ocr':('OCR',70), 'execution':('EXECUTION',80)}
     window=int(os.getenv('CORE_CPU_WINDOW_SAMPLES','6'))
     high=int(os.getenv('CORE_CPU_HIGH_SAMPLES','5'))
     seconds=float(os.getenv('CORE_CPU_RESUME_SECONDS','30'))
