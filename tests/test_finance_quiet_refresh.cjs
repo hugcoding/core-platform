@@ -31,6 +31,6 @@ async function testFinanceQuietRefresh(source){
  check(ui.overviewSignature(state)!==ui.overviewSignature(next),'completion updates busy-dependent controls');
  ui.setState(next);ui.renderActivity();
  check(!elements.import.disabled&&timers.length===1,'completed job stops automatic checks');
- check(source.includes("$('refresh').onclick=()=>refresh();"),'manual refresh is explicit, not a background event');
+ check(source.includes("$('refresh').onclick=manualRefresh;"),'manual refresh is explicit, not a background event');
  return 'quiet refresh UI OK';
 }
