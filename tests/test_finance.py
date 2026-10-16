@@ -150,6 +150,9 @@ class IntegrationTests(unittest.TestCase):
             transfer_up=Path('database/migrations/20261010_add_finance_own_transfers.sql').read_text()
             transfer_down=Path('database/migrations/rollback/20261010_add_finance_own_transfers.sql').read_text()
             cur.execute(transfer_up);cur.execute(transfer_down);cur.execute(transfer_up)
+            income_up=Path('database/migrations/20261016_add_finance_income_patterns.sql').read_text()
+            income_down=Path('database/migrations/rollback/20261016_add_finance_income_patterns.sql').read_text()
+            cur.execute(income_up);cur.execute(income_down);cur.execute(income_up)
         app=FastAPI();app.middleware('http')(finance_boundary);app.include_router(router)
         cls.client=TestClient(app);cls.client.headers['origin']='http://testserver'
         response=cls.client.post('/api/v1/finance/session',json={'code':'synthetic-access'})
@@ -1670,6 +1673,50 @@ class IntegrationTests(unittest.TestCase):
             cur.execute('SELECT count(*) FROM finance.finance_review_events WHERE transaction_id=%s',(tid,));self.assertEqual(2,cur.fetchone()[0])
         with self.assertRaises(psycopg2.Error):
             with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20261010_add_finance_own_transfers.sql').read_text())
+        with self.admin.cursor() as cur:cur.execute('ROLLBACK')
+
+    def test_zz_income_pattern_refinement_and_salary_without_llm(self):
+        from core.finance.store import connection,enqueue
+        from core.finance.local_classification import step
+        from tests.test_finance_bank_references import numbered
+        import psycopg2
+        def payment(text,party='Synthetic Employer B.V.'):
+            data=numbered(ref=str(uuid.uuid4()),message=str(uuid.uuid4()),n=99601,description=text)
+            data=data.replace(b'DBIT',b'CRDT').replace(b'<Cdtr>',b'<Dbtr>').replace(b'</Cdtr>',b'</Dbtr>').replace(b'Synthetische winkel',party.encode())
+            self.import_file(data)
+            with self.admin.cursor() as cur:
+                cur.execute('SELECT id FROM finance.finance_transactions ORDER BY created_at DESC,id LIMIT 1');return str(cur.fetchone()[0])
+        seed=payment('Rente over positief saldo tot 01-03-26','ASN Bank')
+        target=payment('Rente over positief saldo tot 01-04-26','')
+        salary=payment('Salaris Periode 7-2026 Synthetic')
+        response=self.client.post('/api/v1/finance/transactions/'+seed+'/classification',json={'category':'inkomen','subcategory':'inkomen_rente','transaction_type':'INCOME','merchant':'ASN Bank','key':str(uuid.uuid4()),'previous':None})
+        self.assertEqual(200,response.status_code,response.text)
+        with connection(worker=True) as conn,conn.cursor() as cur:
+            cur.execute("INSERT INTO finance.finance_review_events(transaction_id,category_code,transaction_type,classification_source,confirmed,actor,idempotency_key,payload_digest,model_version) VALUES (%s,'inkomen','INCOME','RULE',false,'finance-local',%s,'synthetic','finance-local-v1:core-rule-v1:bank_interest')",(target,str(uuid.uuid4())))
+        with self.admin.cursor() as cur:cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE status IN ('pending','running')")
+        self.assertEqual(200,self.client.post('/api/v1/finance/classification-settings',json={'llm_enabled':False}).status_code)
+        response=self.client.post('/api/v1/finance/categorization',json={});self.assertEqual(200,response.status_code,response.text)
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT transaction_id::text FROM finance.finance_categorization_targets WHERE job_id=%s',(response.json()['job_id'],));targets={r[0] for r in cur.fetchall()}
+            self.assertIn(target,targets);self.assertNotIn(seed,targets)
+            cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE id=%s",(response.json()['job_id'],))
+        with connection() as conn,conn.cursor() as cur:
+            job=enqueue(cur,'categorize')
+            for tid in (target,salary,seed):cur.execute('INSERT INTO finance.finance_categorization_targets VALUES (%s,%s)',(job,tid))
+        with patch('core.finance.local_classification.settings',side_effect=AssertionError('No model')):
+            for _ in range(5):
+                with connection(worker=True) as conn:more=step(conn,job,{},lambda _:self.fail('No inference'))
+                if not more:break
+            else:self.fail('Job did not finish')
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT subcategory_code,classification_source,rule_version,rule_review_id,merchant_id FROM finance.v_transactions WHERE id=%s',(target,));row=cur.fetchone()
+            self.assertEqual(('inkomen_rente','MERCHANT','income-pattern-v1'),row[:3]);self.assertIsNotNone(row[3]);self.assertIsNotNone(row[4])
+            cur.execute('SELECT count(*) FROM finance.finance_review_events WHERE transaction_id=%s',(target,));self.assertEqual(2,cur.fetchone()[0])
+            cur.execute('SELECT subcategory_code,confirmed FROM finance.v_transactions WHERE id=%s',(seed,));self.assertEqual(('inkomen_rente',True),cur.fetchone())
+            cur.execute('SELECT subcategory_code,transaction_type FROM finance.v_transactions WHERE id=%s',(salary,));self.assertEqual(('inkomen_salaris','INCOME'),cur.fetchone())
+            cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE id=%s",(job,))
+        with self.assertRaises(psycopg2.Error):
+            with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20261016_add_finance_income_patterns.sql').read_text())
         with self.admin.cursor() as cur:cur.execute('ROLLBACK')
 
     def test_zzz_broad_local_rules_review_filter_and_owner_correction(self):

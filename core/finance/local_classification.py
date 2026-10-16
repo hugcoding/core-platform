@@ -132,8 +132,11 @@ def step(conn, job, cache, infer=generate):
 
 def decide(target, examples, categories, scope, infer=generate, allow_llm=True):
     payload = decrypt(target['private_data'])
+    from core.finance import income_patterns
+    pattern=income_patterns.key(target,payload)
     match = identity(payload, target['amount'], target['currency'])
-    peers = [e for e in examples if match is not None and e['identity'] == match]
+    peers = ([e for e in examples if income_patterns.key(e,e['payload'])==pattern] if pattern else
+             [e for e in examples if match is not None and e['identity'] == match])
     if peers:
         seed = peers[0]
         parent = next((c for c in categories if c['code']==seed['category_code'] and not c['parent_id']), None)
@@ -148,10 +151,14 @@ def decide(target, examples, categories, scope, infer=generate, allow_llm=True):
             if not group or group != internal_transfer_group(seed['account_id'], seed['payload'], scope):
                 return None
         return {**{k: seed.get(k) for k in ('category_code', 'subcategory_code', 'transaction_type', 'merchant_id')},
-                'source': 'MERCHANT', 'confidence': None, 'seed': seed['review_id']}
+                'source': 'MERCHANT', 'confidence': None, 'seed': seed['review_id'],
+                **({'method':income_patterns.METHOD} if pattern else {})}
     from core.finance.own_transfers import decide as own_transfer
     transfer = own_transfer(target, payload, categories, scope)
     if transfer:return transfer
+    income=income_patterns.default(target,payload,categories)
+    if income:return income
+    if target.get('category_code') is not None:return None
     from core.finance.local_rules import decide as local_rule
     rule=local_rule(target,payload,categories)
     if rule:return rule
@@ -232,7 +239,8 @@ def _step(conn, job, cache, infer=generate):
         tid = target['transaction_id']
         choice = None
         status = 'skipped'
-        if target['id'] and not target['confirmed'] and target['category_code'] is None:
+        from core.finance.income_patterns import eligible,refines,key as income_key
+        if target['id'] and eligible(target):
             version = revision(cur)
             cur.execute('SELECT id,code,name,parent_id,transaction_type FROM finance.finance_categories WHERE active ORDER BY code')
             categories = cur.fetchall()
@@ -258,6 +266,7 @@ def _step(conn, job, cache, infer=generate):
                 len(payload.get('details') or []), payload.get('reversal'),
                 target['transaction_type'], target['classification_source'],
                 target.get('rule_version'),
+                target.get('category_code'),target.get('subcategory_code'),income_key(target,payload),
                 identity(payload, target['amount'], target['currency']),
                 inference_context(payload, target['amount'], target['currency'])])
             choices = cache.setdefault('choices', {})
@@ -273,13 +282,14 @@ def _step(conn, job, cache, infer=generate):
                     choices.pop(next(iter(choices)))
                 choices[group_key] = result
             choice = choices[group_key]
+            if not refines(target,choice):choice=None
             # LLM latency must never make a newer owner review lose to this result.
             cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-category-learning'))")
             if revision(cur) != version:
                 raise DeferInference()
-            cur.execute('SELECT confirmed,category_code FROM finance.v_transactions WHERE id=%s', (tid,))
+            cur.execute('SELECT * FROM finance.v_transactions WHERE id=%s', (tid,))
             current = cur.fetchone()
-            if not current or current['confirmed'] or current['category_code'] is not None:
+            if not current or not refines(current,choice):
                 choice = None
             else:
                 status = 'classified' if choice else 'abstained'
@@ -301,7 +311,7 @@ def _step(conn, job, cache, infer=generate):
                 (tid, choice['category_code'], choice['subcategory_code'], choice['transaction_type'], choice['merchant_id'],
                  choice['source'], choice['confidence'], predecessor(cur, tid), str(uuid.uuid5(uuid.UUID(str(job)), str(tid))),
                  fingerprint(VERSION, [str(job), str(tid), str(choice)]), VERSION+':'+('core-rule-v1:'+choice['rule'] if choice['source']=='RULE' else settings()[1] if choice['source']=='AI' else 'core'),
-                 choice['seed'], METHOD if choice['seed'] else None))
+                 choice['seed'], choice.get('method',METHOD) if choice['seed'] else None))
             review = cur.fetchone()['id']
         cur.execute('INSERT INTO finance.finance_categorization_results(job_id,transaction_id,status,review_id) VALUES (%s,%s,%s,%s)',
                     (job, tid, status, review))
