@@ -1,0 +1,35 @@
+#!/bin/sh
+# Explicit Finance deployment; never activates Finance or writes local settings.
+set -eu
+PROJECT_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+cd "$PROJECT_ROOT"
+action=${1:-}
+if [ "$#" -ne 1 ]; then
+    echo 'Use: core finance deploy | status' >&2
+    exit 2
+fi
+case "$action" in deploy|status) ;; *) echo 'Use: core finance deploy | status' >&2; exit 2 ;; esac
+DOCKER_BIN="${DOCKER_BIN:-docker}"
+if ! command -v "$DOCKER_BIN" >/dev/null 2>&1 && [ -x /usr/local/bin/docker ]; then
+    DOCKER_BIN=/usr/local/bin/docker
+fi
+export CORE_FINANCE_BUILD_CONTEXT="$PROJECT_ROOT"
+compose() {
+    "$DOCKER_BIN" compose -p nas --env-file .env \
+        -f docker-compose.yml -f tools/runtime/finance-compose.override.yml \
+        --profile finance "$@"
+}
+diagnose() {
+    DOCKER_BIN="$DOCKER_BIN" COMPOSE_PROFILES=finance python3 -m core.finance.doctor \
+        -p nas --env-file .env -f docker-compose.yml \
+        -f tools/runtime/finance-compose.override.yml --worker "$@"
+}
+if [ "$action" = deploy ]; then
+    compose build dashboard finance_worker
+    compose up -d --no-deps --force-recreate dashboard finance_worker
+    compose ps dashboard finance_worker
+    diagnose --wait 20
+else
+    compose ps dashboard finance_worker
+    diagnose
+fi

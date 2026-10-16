@@ -24,6 +24,8 @@ show_help() {
     printf '%s\n' "  core dashboard deploy"
     printf '%s\n' "  core dashboard status"
     printf '%s\n' "  core dashboard open"
+    printf '%s\n' "  core finance deploy"
+    printf '%s\n' "  core finance status"
     printf '%s\n' "  core project analyze"
     printf '%s\n' "  core project export"
     printf '%s\n' "  core jira auth"
@@ -142,6 +144,10 @@ case "$command_domain" in
                 exit 1
                 ;;
         esac
+        ;;
+    finance)
+        shift
+        DOCKER_BIN="$DOCKER_BIN" sh ./tools/runtime/finance "$@"
         ;;
     dashboard)
         case "$command_action" in
