@@ -1715,9 +1715,36 @@ class IntegrationTests(unittest.TestCase):
             cur.execute('SELECT subcategory_code,confirmed FROM finance.v_transactions WHERE id=%s',(seed,));self.assertEqual(('inkomen_rente',True),cur.fetchone())
             cur.execute('SELECT subcategory_code,transaction_type FROM finance.v_transactions WHERE id=%s',(salary,));self.assertEqual(('inkomen_salaris','INCOME'),cur.fetchone())
             cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE id=%s",(job,))
+        response=self.client.get('/api/v1/finance/categorization-results',params={'job':job,'source':'core'})
+        self.assertEqual(200,response.status_code,response.text)
+        data=response.json();self.assertEqual(2,data['total']);self.assertEqual(50,data['page_size'])
+        item=next(t for t in data['items'] if t['id']==target)
+        self.assertEqual(('Inkomen','Inkomen / Rente','refined','Jouw voorbeeld','current'),tuple(item['result'][k] for k in ['before','assigned','kind','source','state']))
+        self.assertEqual('Rente over positief saldo tot 01-04-26',item['description'])
+        self.assertTrue(item['account_label']);self.assertNotIn('private_data',item);self.assertNotIn('fingerprint',item)
+        self.assertEqual(0,self.client.get('/api/v1/finance/categorization-results',params={'job':job,'source':'llm'}).json()['total'])
+        self.assertEqual([],self.client.get('/api/v1/finance/categorization-results',params={'job':job,'page':1}).json()['items'])
+        self.assertEqual(422,self.client.get('/api/v1/finance/categorization-results?source=invalid').status_code)
+        self.assertEqual(422,self.client.get('/api/v1/finance/categorization-results?page=-1').status_code)
+        self.assertEqual(404,self.client.get('/api/v1/finance/categorization-results',params={'job':str(uuid.uuid4())}).status_code)
+        response=self.client.post('/api/v1/finance/transactions/'+target+'/classification',json={'category':'inkomen','subcategory':'inkomen_salaris','transaction_type':'INCOME','previous':item['review_id'],'key':str(uuid.uuid4())})
+        self.assertEqual(200,response.status_code,response.text)
+        data=self.client.get('/api/v1/finance/categorization-results',params={'job':job}).json()
+        corrected=next(t for t in data['items'] if t['id']==target)
+        self.assertEqual(('Inkomen / Rente','Inkomen / Salaris','reviewed'),tuple(corrected['result'][k] for k in ['assigned','current','state']))
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT r.batch_id FROM finance.finance_transactions t JOIN finance.finance_import_records r ON r.id=t.record_id WHERE t.id=%s',(target,));batch=str(cur.fetchone()[0])
+        self.assertEqual(200,self.client.post('/api/v1/finance/imports/'+batch+'/rollback',json={'confirm':True}).status_code)
+        data=self.client.get('/api/v1/finance/categorization-results',params={'job':job}).json()
+        self.assertEqual('inactive',next(t for t in data['items'] if t['id']==target)['result']['state'])
         with self.assertRaises(psycopg2.Error):
             with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20261016_add_finance_income_patterns.sql').read_text())
         with self.admin.cursor() as cur:cur.execute('ROLLBACK')
+
+    def test_zz_results_require_owner(self):
+        from fastapi.testclient import TestClient
+        with TestClient(self.client.app) as locked:
+            self.assertEqual(401,locked.get('/api/v1/finance/categorization-results').status_code)
 
     def test_zzz_broad_local_rules_review_filter_and_owner_correction(self):
         from core.finance.store import connection,enqueue

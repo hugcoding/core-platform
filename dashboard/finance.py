@@ -505,6 +505,62 @@ def stop_categorization(job_id:str):
     return {'status':'stopped'}
 
 
+@router.get('/api/v1/finance/categorization-results')
+def categorization_results(job:str='',page:int=0,source:str=''):
+    """Owner-only historical outcomes paired with current, editable transactions."""
+    if not 0<=page<=100000 or source not in ('','core','llm'):raise HTTPException(422,'invalid_result_filter')
+    job=uid(job) if job else ''
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+        cur.execute("SELECT id,requested_at,finished_at,status FROM finance.finance_ingest_jobs WHERE job_kind='categorize' ORDER BY requested_at DESC,id DESC LIMIT 50")
+        jobs=[serial(r) for r in cur.fetchall()]
+        job=job or (jobs[0]['id'] if jobs else '')
+        if not job:return {'jobs':jobs,'job':None,'items':[],'total':0,'page':page,'page_size':50}
+        cur.execute("SELECT id,requested_at,finished_at,status FROM finance.finance_ingest_jobs WHERE id=%s AND job_kind='categorize'",(job,))
+        selected=cur.fetchone()
+        if not selected:raise HTTPException(404,'categorization_not_found')
+        predicate="r.job_id=%s AND r.status='classified' AND e.actor='finance-local'"
+        if source=='core':predicate+=" AND e.classification_source IN ('RULE','MERCHANT')"
+        elif source=='llm':predicate+=" AND e.classification_source='AI'"
+        cur.execute('SELECT count(*) AS n FROM finance.finance_categorization_results r JOIN finance.finance_review_events e ON e.id=r.review_id WHERE '+predicate,(job,))
+        total=cur.fetchone()['n']
+        cur.execute('''SELECT t.*,row_to_json(v) AS current,row_to_json(e) AS outcome,
+            row_to_json(p) AS previous,r.created_at AS processed_at
+            FROM finance.finance_categorization_results r
+            JOIN finance.finance_review_events e ON e.id=r.review_id
+            JOIN finance.finance_transactions t ON t.id=r.transaction_id
+            LEFT JOIN finance.v_transactions v ON v.id=t.id
+            LEFT JOIN finance.finance_review_events p ON p.id=e.supersedes_event_id
+            WHERE '''+predicate+''' ORDER BY e.sequence_no DESC LIMIT 50 OFFSET %s''',(job,page*50))
+        rows=cur.fetchall()
+        accounts=managed_accounts(cur);groups=wealth_groups(cur);scope=transfer_scope(cur)
+        cur.execute('SELECT code,name FROM finance.finance_categories')
+        names={r['code']:r['name'] for r in cur.fetchall()}
+        def label(event):
+            return ' / '.join(names.get(event.get(k),event.get(k)) for k in ('category_code','subcategory_code') if event.get(k)) or 'Zonder categorie'
+        from core.finance.local_rules import LABELS
+        from core.finance.own_transfers import display as transfer_display
+        items=[]
+        for row in rows:
+            current=row['current'];outcome=row['outcome'];previous=row['previous'] or {}
+            live={k:v for k,v in row.items() if k not in ('current','outcome','previous','processed_at')}
+            for key in ('review_id','confirmed','category_code','subcategory_code','transaction_type','merchant_id','merchant_data','confidence','classification_source','model_version','rule_version'):
+                live[key]=current.get(key) if current else None
+            item=transaction(live)
+            item.update(transfer_display(live,item,scope,accounts,groups))
+            item['account_label']=next((a['label'] for a in accounts if a['id']==str(row['account_id'])),'Rekening')
+            kind='new' if not previous.get('category_code') else 'refined' if previous.get('category_code')==outcome['category_code'] and not previous.get('subcategory_code') and outcome.get('subcategory_code') else 'changed'
+            source_name={'RULE':'CORE-regel','MERCHANT':'Jouw voorbeeld','AI':'Lokale LLM'}.get(outcome['classification_source'],'Automatisch')
+            reason=LABELS.get((outcome.get('model_version') or '').removeprefix('finance-local-v1:core-rule-v1:'))
+            reason=reason or ('Jouw bevestigde inkomenspatroon' if outcome.get('suggestion_method')=='income-pattern-v1' else 'Jouw beoordeling van een soortgelijke betaling' if outcome['classification_source']=='MERCHANT' else 'Beoordeling door je lokale LLM' if outcome['classification_source']=='AI' else 'Lokale herkenningsregel')
+            item['result']={'before':label(previous),'assigned':label(outcome),'current':label(current or {}),
+                'kind':kind,'source':source_name,'reason':reason,'processed_at':str(row['processed_at']),
+                'review_id':outcome['id'],'source_review_id':outcome.get('source_review_id'),
+                'state':'inactive' if not current else 'current' if current['review_id']==outcome['id'] else 'reviewed' if current['confirmed'] else 'changed'}
+            items.append(item)
+        return {'jobs':jobs,'job':serial(selected),'items':items,'total':total,'page':page,'page_size':50}
+
+
 @router.post('/api/v1/finance/balances/refresh')
 def request_balance_refresh():
     with connection(worker=False) as conn, conn.cursor() as cur:
