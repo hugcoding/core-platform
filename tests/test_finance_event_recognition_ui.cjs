@@ -10,7 +10,7 @@ async function run(){
   addEventListener(k,f){this.listeners[k]=f},showModal(){this.open=true},close(){this.open=false;this.listeners.close?.()},querySelectorAll(){return []}};
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const pending=[],api=p=>new Promise((resolve,reject)=>pending.push({p,resolve,reject}));
- const ui=new Function('$','api','esc','money','detail','refresh',`let sessionEpoch=0;const reasons={};${source};return {show:showEventRecognizer,load:loadRecognizer,clear:clearEventRecognizer,card:recognizerCard,expire:()=>{sessionEpoch++;clearEventRecognizer(true)}}`)
+ const ui=new Function('$','api','esc','money','detail','refresh',`let sessionEpoch=0;const reasons={};${source};const ui=initializeFinanceRecognizer({$,api,esc,money,detail,refresh,reasons,getSessionEpoch:()=>sessionEpoch});return {...ui,expire:()=>{sessionEpoch++;ui.clear(true)}}`)
   ($,api,esc,String,()=>{},async()=>{});
  const rule={id:'asn-interest-6607',name:'ASN rente',conditions:['Issuer ASNBANK','Code 6607'],origin:'ASN',version:'v1',result:'Inkomen / Rente'};
  const item={id:'synthetic',booking_date:'2026-09-05',amount:'0.02',account_label:'Synthetic savings',bank_counterparty:'',description:'<img src=x onerror=alert(1)>',recognized_counterparty:'ASN Bank',current_category:'Inkomen',status:'manual_conflict',evidence:[{issuer:'ASNBANK',proprietary:'6607'}]};
@@ -35,6 +35,8 @@ async function run(){
  const finance=fs.readFileSync(path.join(__dirname,'../dashboard/static/finance.js'),'utf8');
  check(finance.includes('clearEventRecognizer(true)'),'Finance lock invokes recognizer cleanup');
  const html=fs.readFileSync(path.join(__dirname,'../dashboard/static/finance.html'),'utf8');
+ check(html.indexOf('assets/finance-recognizer.js')<html.indexOf('assets/finance.js'),'initializer loads before the isolated Finance closure');
+ check(finance.includes('initializeFinanceRecognizer({$,api,esc,money,detail,refresh,reasons,getSessionEpoch:()=>sessionEpoch})'),'Finance passes its private helpers and live session getter');
  check(html.includes('id="showEventRecognizer"')&&html.includes('assets/finance-recognizer.js'),'entry point and script present');
  console.log('Eventherkenner UI: loading, escaping, counts, races, close, lock and retry passed');
 }

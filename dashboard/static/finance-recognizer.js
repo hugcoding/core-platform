@@ -1,4 +1,5 @@
 /* Uses the same owner-only API and session boundary as Finance. */
+function initializeFinanceRecognizer({$,api,esc,money,detail,refresh,reasons,getSessionEpoch}){
 let recognizerEpoch=0,recognizerRules=[];
 function clearEventRecognizer(close=false){
  recognizerEpoch++;recognizerRules=[];
@@ -16,31 +17,31 @@ function recognizerCard(t){
  `<button type="button" data-recognizer-transaction="${esc(t.id)}">Bekijk transactie</button></article>`;
 }
 async function loadRecognizer(){
- const request=++recognizerEpoch,epoch=sessionEpoch,id=$('recognizerSelect').value;
+ const request=++recognizerEpoch,epoch=getSessionEpoch(),id=$('recognizerSelect').value;
  const rule=recognizerRules.find(r=>r.id===id);if(!rule)return;
  $('recognizerDefinition').innerHTML=recognizerDefinition(rule);
  $('recognizerStatus').textContent='Herkenning en voorbeelden ophalen…';$('recognizerCounts').textContent='';$('recognizerExamples').replaceChildren();$('recognizerRefresh').disabled=true;
  try{
   const data=await api('/recognizers/'+encodeURIComponent(id)+'/transactions');
-  if(request!==recognizerEpoch||epoch!==sessionEpoch||!$('eventRecognizerDialog').open)return;
+  if(request!==recognizerEpoch||epoch!==getSessionEpoch()||!$('eventRecognizerDialog').open)return;
   $('recognizerStatus').textContent=data.mode==='matching'?`${data.total} betalingen passen bij deze herkenner. Voorbeeldselectie van maximaal 50, verspreid over de periode.`:`${data.total} huidige indelingen met deze regel. Voorbeeldselectie van maximaal 50, verspreid over de periode.`;
   const c=data.counts;
   $('recognizerCounts').textContent=(data.mode==='matching'?`${c.eligible} kunnen worden ingedeeld · ${c.aligned} komen overeen · ${c.manual+c.manual_conflict} handmatig beschermd (${c.manual_conflict} afwijkend) · ${c.protected} overige indelingen beschermd. `:'')+(data.missing_evidence?`${data.missing_evidence} bijschrijvingen hebben geen bruikbare bankcodegegevens; hierover wordt niets aangenomen. `:'')+data.message;
   $('recognizerExamples').innerHTML=data.items.map(recognizerCard).join('')||'<p>Geen passende transacties beschikbaar. Bij oude imports kan de bestaande bankcode-aanvulverwerking nog nodig zijn.</p>';
   $('recognizerExamples').querySelectorAll('[data-recognizer-transaction]').forEach(b=>b.onclick=async()=>{
    const original=b.dataset.recognizerTransaction;
-   try{const t=await api('/transactions/'+encodeURIComponent(original));if(request===recognizerEpoch&&epoch===sessionEpoch&&$('eventRecognizerDialog').open)detail(t,async()=>{await refresh();if($('eventRecognizerDialog').open)await loadRecognizer()});}
-   catch(e){if(epoch===sessionEpoch&&request===recognizerEpoch)$('recognizerStatus').textContent=e.message}
+   try{const t=await api('/transactions/'+encodeURIComponent(original));if(request===recognizerEpoch&&epoch===getSessionEpoch()&&$('eventRecognizerDialog').open)detail(t,async()=>{await refresh();if($('eventRecognizerDialog').open)await loadRecognizer()});}
+   catch(e){if(epoch===getSessionEpoch()&&request===recognizerEpoch)$('recognizerStatus').textContent=e.message}
   });
- }catch(e){if(request===recognizerEpoch&&epoch===sessionEpoch)$('recognizerStatus').textContent=e.message}
- finally{if(request===recognizerEpoch&&epoch===sessionEpoch)$('recognizerRefresh').disabled=false}
+ }catch(e){if(request===recognizerEpoch&&epoch===getSessionEpoch())$('recognizerStatus').textContent=e.message}
+ finally{if(request===recognizerEpoch&&epoch===getSessionEpoch())$('recognizerRefresh').disabled=false}
 }
 async function showEventRecognizer(){
  clearEventRecognizer();$('eventRecognizerDialog').showModal();
- const request=++recognizerEpoch,epoch=sessionEpoch;$('recognizerStatus').textContent='Herkenners ophalen…';
- try{const data=await api('/recognizers');if(request!==recognizerEpoch||epoch!==sessionEpoch||!$('eventRecognizerDialog').open)return;
+ const request=++recognizerEpoch,epoch=getSessionEpoch();$('recognizerStatus').textContent='Herkenners ophalen…';
+ try{const data=await api('/recognizers');if(request!==recognizerEpoch||epoch!==getSessionEpoch()||!$('eventRecognizerDialog').open)return;
   recognizerRules=data.rules;$('recognizerSelect').innerHTML=data.rules.map(r=>`<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('');await loadRecognizer();
- }catch(e){if(request===recognizerEpoch&&epoch===sessionEpoch)$('recognizerStatus').textContent=e.message}
+ }catch(e){if(request===recognizerEpoch&&epoch===getSessionEpoch())$('recognizerStatus').textContent=e.message}
 }
 $('showEventRecognizer').onclick=showEventRecognizer;
 $('recognizerSelect').onchange=loadRecognizer;
@@ -48,3 +49,6 @@ $('recognizerRefresh').onclick=()=>recognizerRules.length?loadRecognizer():showE
 $('eventRecognizerDialog').addEventListener('close',clearEventRecognizer);
 reasons.recognizer_scan_limit='Te veel betalingen voor deze directe controle. Er is niets gewijzigd; de gewone indelingsjob blijft beschikbaar.';
 reasons.recognizer_not_found='Deze herkenner is niet beschikbaar. Open Eventherkenner opnieuw.';
+
+return {clear:clearEventRecognizer,show:showEventRecognizer,load:loadRecognizer,card:recognizerCard};
+}
