@@ -120,7 +120,98 @@ def transaction(row):
     result['local_rule']=LABELS.get(version.removeprefix('finance-local-v1:core-rule-v1:')) if version.startswith('finance-local-v1:core-rule-v1:') else None
     result['merchant_suggestion']=recognized_merchant(payload)
     result.update({key:payload[key] for key in ('description','counterparty','counteraccount','details')})
+    from core.finance.event_recognition import match
+    recognized=match(row,payload)
+    result['recognized_counterparty']=recognized['counterparty'] if recognized else None
+    result['recognizer_id']=recognized['id'] if recognized else None
     return result
+
+
+@router.get('/api/v1/finance/recognizers')
+def recognizers():
+    from core.finance.event_recognition import CATALOGUE, VERSION
+    from core.finance.local_rules import RULES
+    rules=[{**r,'version':VERSION,'origin':'Officiële ASN-bankcodes',
+            'conditions':[f"Issuer: {r['issuer']}",f"Bankcode: {r['code']}",'Bijschrijving in EUR; geen terugboeking',
+                          'Geen tegenstrijdige ISO-codes of meerdere transactiedetails'],
+            'result':'Inkomsten · Inkomen / Rente · '+r['counterparty']} for r in CATALOGUE['rules']]
+    rules.extend(dict(id='local-'+key,name=label,version='core-rule-v1',origin='Bestaande CORE-herkenning',
+                      conditions=['Afschrijving of ondersteunde terugbetaling','Herkenbare winkelnaam in tegenpartij, pinomschrijving of domein'],technical_pattern=pattern,
+                      result='Hoofdcategorie: '+category) for key,category,label,pattern in RULES)
+    rules.extend([
+        dict(id='local-salary',name='Salaris ontvangen',version='core-rule-v1',origin='Bestaande CORE-herkenning',
+             conditions=['Bijschrijving met salarisomschrijving en herkenbare tegenpartij','Menselijke inkomensvoorbeelden gaan voor'],result='Inkomen / Salaris'),
+        dict(id='local-known_account_transfer',name='Eigen overboekingen',version='core-rule-v1',origin='Ingebouwde CORE-herkenner',
+             conditions=['Bekende CORE-tegenrekening','Rekeninglabels en huidige vermogensgroep bepalen de weergave'],result='Eigen overboeking')])
+    for key,name,conditions,result in (
+        ('bank_interest','Bankrente ontvangen',['Bijschrijving met bankbewijs of herkenbare renteomschrijving','Menselijke inkomensvoorbeelden gaan voor'],'Inkomen; waar beschikbaar Inkomen / Rente'),
+        ('bank_costs','Bankkosten',['Afschrijving die de bestaande bankherkenning als bankkosten aanmerkt'],'Financieel'),
+        ('benefit','Uitkering',['Bijschrijving van een herkenbare UWV-tegenpartij'],'Inkomen')):
+        rules.append(dict(id='local-'+key,name=name,conditions=conditions,result=result,version='core-rule-v1',origin='Bestaande CORE-herkenning'))
+    return {'rules':rules,'editable':False,'message':'Eerste fase: inzicht in bestaande herkenners. Eigen regels, regelvoorstellen en conflictmeldingen volgen later.'}
+
+
+@router.get('/api/v1/finance/transactions/{transaction_id}')
+def transaction_detail(transaction_id:str):
+    from core.finance.own_transfers import display
+    from core.finance.event_recognition import hydrate,match
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute('SELECT * FROM finance.v_transactions WHERE id=%s',(uid(transaction_id),))
+        row=cur.fetchone()
+        if not row:raise HTTPException(404,'transaction_not_found')
+        item=transaction(row)
+        rule=match(row,hydrate(cur,row,decrypt(row['private_data'])))
+        if rule:item.update(recognized_counterparty=rule['counterparty'],recognizer_id=rule['id'])
+        item.update(display(row,item,transfer_scope(cur),managed_accounts(cur),wealth_groups(cur)))
+        return item
+
+
+@router.get('/api/v1/finance/recognizers/{recognizer_id}/transactions')
+def recognizer_transactions(recognizer_id:str):
+    from core.finance.event_recognition import CATALOGUE,match,hydrate_many,preview_status
+    known={r['id']:r for r in recognizers()['rules']}
+    if recognizer_id not in known:raise HTTPException(404,'recognizer_not_found')
+    rule=next((r for r in CATALOGUE['rules'] if r['id']==recognizer_id),None)
+    predicate='t.amount>0' if rule else 't.model_version=%s'
+    params=() if rule else ('finance-local-v1:core-rule-v1:'+recognizer_id.removeprefix('local-'),)
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+        cur.execute('SELECT count(*) AS n FROM finance.v_transactions t WHERE '+predicate,params)
+        if cur.fetchone()['n']>MAX_SCAN:raise HTTPException(422,'recognizer_scan_limit')
+        cur.execute('SELECT t.* FROM finance.v_transactions t WHERE '+predicate+' ORDER BY t.booking_date,t.id',params)
+        rows=cur.fetchall();matching=[];missing=0
+        payloads=hydrate_many(cur,rows) if rule else {}
+        counts={k:0 for k in ('eligible','aligned','manual','manual_conflict','protected','applied')}
+        for row in rows:
+            payload=decrypt(row['private_data'])
+            if rule:
+                payload=payloads[str(row['id'])]
+                if not any(any(c.values()) for c in payload.get('bank_codes') or []):missing+=1
+                if not match(row,payload):continue
+                status=preview_status(row,rule)
+            else:status='applied'
+            counts[status]+=1
+            matching.append((row,payload,status))
+        # Full total, at most 50 examples evenly distributed over the period.
+        total=len(matching)
+        indices=range(total) if total<=50 else [i*(total-1)//49 for i in range(50)]
+        accounts={a['id']:a['label'] for a in managed_accounts(cur)}
+        cur.execute('SELECT code,name FROM finance.finance_categories')
+        names={r['code']:r['name'] for r in cur.fetchall()}
+        items=[]
+        for i in indices:
+            row,payload,status=matching[i]
+            items.append({'id':str(row['id']),'booking_date':str(row['booking_date']),'amount':str(row['amount']),
+                          'account_label':accounts.get(str(row['account_id']),'Rekening'),
+                          'bank_counterparty':payload.get('counterparty') or 'Niet aangeleverd',
+                          'description':payload.get('description') or '',
+                          'recognized_counterparty':rule['counterparty'] if rule else None,
+                          'current_category':' / '.join(names.get(row.get(k),row.get(k)) for k in ('category_code','subcategory_code') if row.get(k)) or 'Zonder categorie',
+                          'status':status,'applied':row.get('model_version')=='finance-local-v1:core-rule-v1:'+recognizer_id.removeprefix('local-'),
+                          'evidence':[{k:c.get(k,'') for k in ('issuer','proprietary','domain','family','subfamily')} for c in payload.get('bank_codes',[])] if rule else []})
+        return {'rule':known[recognizer_id],'items':items,'total':total,'counts':counts,'missing_evidence':missing,
+                'page_size':50,'mode':'matching' if rule else 'applied',
+                'message':'Geen wijzigingen uitgevoerd. Indelen verloopt via Ongecategoriseerde betalingen indelen; jouw beoordelingen gaan voor.'}
 
 
 @router.get('/api/v1/finance/data')

@@ -153,6 +153,10 @@ class IntegrationTests(unittest.TestCase):
             income_up=Path('database/migrations/20261016_add_finance_income_patterns.sql').read_text()
             income_down=Path('database/migrations/rollback/20261016_add_finance_income_patterns.sql').read_text()
             cur.execute(income_up);cur.execute(income_down);cur.execute(income_up)
+        with cls.admin.cursor() as cur:
+            up=Path('database/migrations/20261025_add_finance_event_recognition.sql').read_text()
+            down=Path('database/migrations/rollback/20261025_add_finance_event_recognition.sql').read_text()
+            cur.execute(up);cur.execute(down);cur.execute(up)
         app=FastAPI();app.middleware('http')(finance_boundary);app.include_router(router)
         cls.client=TestClient(app);cls.client.headers['origin']='http://testserver'
         response=cls.client.post('/api/v1/finance/session',json={'code':'synthetic-access'})
@@ -1784,5 +1788,88 @@ class IntegrationTests(unittest.TestCase):
             with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20261007_add_finance_local_rules.sql').read_text())
         with self.admin.cursor() as cur:cur.execute('ROLLBACK')
 
+
+    def test_zz_event_recognition_catalogue_history_and_owner_protection(self):
+        from tests.test_finance_event_recognition import rent_xml
+        from core.finance import local_classification as local
+        from core.finance.store import connection,enqueue
+        from unittest.mock import Mock
+        from fastapi.testclient import TestClient
+        import psycopg2
+        with self.admin.cursor() as cur:cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE status IN ('pending','running')")
+        anonymous=TestClient(self.client.app)
+        for path in ('/recognizers','/recognizers/asn-interest-6607/transactions'):
+            self.assertEqual(401,anonymous.get('/api/v1/finance'+path).status_code)
+        catalogue=self.client.get('/api/v1/finance/recognizers')
+        self.assertEqual(200,catalogue.status_code,catalogue.text)
+        self.assertIn('asn-interest-6607',[r['id'] for r in catalogue.json()['rules']])
+        self.assertEqual(404,self.client.get('/api/v1/finance/recognizers/nonexistent/transactions').status_code)
+        marker='event-'+str(uuid.uuid4())
+        self.import_file(rent_xml(marker))
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT id FROM finance.finance_transactions ORDER BY created_at DESC,id LIMIT 1');tid=str(cur.fetchone()[0])
+        path='/api/v1/finance/recognizers/asn-interest-6607/transactions'
+        preview=self.client.get(path)
+        self.assertEqual(200,preview.status_code,preview.text)
+        item=next(t for t in preview.json()['items'] if t['id']==tid)
+        self.assertEqual(('ASN Bank','6607','eligible'),(item['recognized_counterparty'],item['evidence'][0]['proprietary'],item['status']))
+        single=self.client.get('/api/v1/finance/transactions/'+tid)
+        self.assertEqual(200,single.status_code,single.text)
+        self.assertNotIn('private_data',single.json())
+        self.assertEqual('ASN Bank',single.json()['recognized_counterparty'])
+        with connection() as conn,conn.cursor() as cur:
+            jid=enqueue(cur,'categorize')
+            cur.execute('INSERT INTO finance.finance_categorization_targets(job_id,transaction_id) VALUES (%s,%s)',(jid,tid))
+        infer=Mock(side_effect=AssertionError('No LLM'))
+        with connection(worker=True) as conn:local.step(conn,jid,{},infer)
+        infer.assert_not_called()
+        current=self.client.get('/api/v1/finance/transactions/'+tid).json()
+        self.assertEqual(('inkomen_rente','finance-local-v1:core-rule-v1:asn-interest-6607'),(current['subcategory_code'],current['model_version']))
+        with connection(worker=True) as conn:local.step(conn,jid,{},infer)
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT count(*) FROM finance.finance_review_events WHERE transaction_id=%s',(tid,));self.assertEqual(1,cur.fetchone()[0])
+        approved=self.client.post('/api/v1/finance/transactions/'+tid+'/classification',json=dict(key=str(uuid.uuid4()),previous=current['review_id'],category='vrije_tijd',transaction_type='EXPENSE'))
+        self.assertEqual(200,approved.status_code,approved.text)
+        preview=self.client.get(path).json()
+        self.assertEqual('manual_conflict',next(t for t in preview['items'] if t['id']==tid)['status'])
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT confirmed,category_code FROM finance.v_transactions WHERE id=%s',(tid,));self.assertEqual((True,'vrije_tijd'),cur.fetchone())
+        # An old payload can lack bank_codes while immutable backfilled evidence
+        # remains available. No source files are opened during recognition.
+        from dataclasses import asdict
+        def legacy_payload(value):
+            result=asdict(value);result.pop('bank_codes',None);return result
+        with patch('core.finance.store.asdict',side_effect=legacy_payload):
+            self.import_file(rent_xml('legacy-'+str(uuid.uuid4()),date='2022-01-05'))
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT id FROM finance.finance_transactions ORDER BY created_at DESC,id LIMIT 1');legacy=str(cur.fetchone()[0])
+        historical=self.client.get(path)
+        self.assertEqual(200,historical.status_code,historical.text)
+        self.assertTrue(any(t['id']==legacy for t in historical.json()['items']))
+        with self.admin.cursor() as cur:cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE id=%s",(jid,))
+        with connection() as conn,conn.cursor() as cur:
+            legacy_job=enqueue(cur,'categorize')
+            cur.execute('INSERT INTO finance.finance_categorization_targets(job_id,transaction_id) VALUES (%s,%s)',(legacy_job,legacy))
+        with connection(worker=True) as conn:local.step(conn,legacy_job,{},infer)
+        self.assertEqual('inkomen_rente',self.client.get('/api/v1/finance/transactions/'+legacy).json()['subcategory_code'])
+        # Full count and spread across years, not just the most recent 50.
+        import re
+        prefix='spread-'+str(uuid.uuid4())
+        entries=[]
+        for i in range(55):
+            source=rent_xml(prefix+'-'+str(i),date=f'{2010+i//12:04d}-{i%12+1:02d}-05')
+            entries.append(re.search(b'<Ntry>.*?</Ntry>',source,re.S).group())
+        base=rent_xml(prefix)
+        spread=re.sub(b'<Ntry>.*?</Ntry>',b''.join(entries),base,flags=re.S)
+        self.import_file(spread)
+        preview=self.client.get(path)
+        self.assertEqual(200,preview.status_code,preview.text)
+        self.assertGreaterEqual(preview.json()['total'],57)
+        self.assertEqual(50,len(preview.json()['items']))
+        dates=[t['booking_date'] for t in preview.json()['items']]
+        self.assertEqual('2010-01-05',min(dates));self.assertGreaterEqual(max(dates),'2026-09-05')
+        with self.assertRaises(psycopg2.Error):
+            with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20261025_add_finance_event_recognition.sql').read_text())
+        with self.admin.cursor() as cur:cur.execute('ROLLBACK')
 
 if __name__=='__main__': unittest.main()

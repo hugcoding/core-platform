@@ -15,7 +15,7 @@ FEES = {'7617','7628','7614','7626','7642','7643','7261','7262','7615','7627','7
 
 def code_type(code, amount, asn):
     number = code.get('proprietary','')
-    if asn:
+    if asn and code.get('issuer','').upper() in ('','ASNBANK'):
         if number in RETURNS: return ('CORRECTION','bank_return')
         if number in CARD_DEBITS and amount < 0: return ('EXPENSE','card_payment')
         if number in CARD_CREDITS and amount > 0: return ('CORRECTION','card_refund')

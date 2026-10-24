@@ -26,6 +26,7 @@ LABELS={key:label for key,_,label,_ in RULES}
 LABELS.update(bank_interest='Bankrente ontvangen',bank_costs='Bankkosten',benefit='Uitkering')
 LABELS['known_account_transfer']='Bekende CORE-tegenrekening'
 LABELS['salary']='Salarisomschrijving en bekende tegenpartij'
+LABELS['asn-interest-6607']='ASN Bank · ontvangen rente (code 6607)'
 
 
 def candidates(payload):
