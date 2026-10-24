@@ -85,3 +85,19 @@ ook met de echte HTML/CSS en fictieve antwoorden gecontroleerd.
 
 Regels bewerken, eigen regels toevoegen, automatisch voorstellen genereren en
 algemene conflictdetectie zijn expliciete vervolgfasen van Eventherkenner.
+
+## Herstel van de niet-reagerende knop
+
+Het herkennerscript wordt vóór het hoofdscript geladen en krijgt de private
+Finance-hulpfuncties en de actuele sessieversie expliciet via initialisatie.
+Het maakt geen financiële hulpfuncties publiek. Versies op de script-URL's
+voorkomen dat oudere browsercache de koppeling overslaat.
+
+De paginaregressie tests/test_finance_event_recognition_page.cjs laadt echte
+HTML en beide scripts in hun werkelijke volgorde met uitsluitend fictieve
+HTTP-antwoorden. Deze test vereist Playwright en Chromium; met een lokaal
+aanwezige Edge kan CORE_TEST_BROWSER_CHANNEL=msedge worden gebruikt.
+
+Voor deze knopfix is geen nieuwe migratie nodig. Als de oorspronkelijke
+Eventherkenner-migratie al uitgevoerd is, volstaan na merge core git pull
+--skip-docs, core finance deploy en de pagina opnieuw laden.
