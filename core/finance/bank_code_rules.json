@@ -1,0 +1,20 @@
+{
+  "version": "asn-codes-v1",
+  "rules": [
+    {
+      "id": "asn-interest-6607",
+      "name": "ASN Bank · ontvangen rente",
+      "issuer": "ASNBANK",
+      "code": "6607",
+      "direction": "CRDT",
+      "iso": ["ACMT", "MCOP", "INTR"],
+      "counterparty": "ASN Bank",
+      "category": "inkomen",
+      "subcategory": "inkomen_rente",
+      "transaction_type": "INCOME",
+      "source_title": "ASN Bank Transaction Codeset AIS v2.0 · 1 juli 2025",
+      "source_url": "https://openbanking.asnbank.nl/build/image/pdf/transaction_codeset_asn_bank_ais_api_documentation_v2.0.pdf",
+      "verified_on": "2026-10-25"
+    }
+  ]
+}

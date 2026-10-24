@@ -7,7 +7,7 @@ from tests.test_finance_bank_references import numbered
 
 
 def coded(number='', domain='', family='', subfamily='', credit=False, reversal='', bank='ASNB'):
-    code=f'<BkTxCd><Domn><Cd>{domain}</Cd><Fmly><Cd>{family}</Cd><SubFmlyCd>{subfamily}</SubFmlyCd></Fmly></Domn><Prtry><Cd>{number}</Cd><Issr>Bank</Issr></Prtry></BkTxCd>'
+    code=f'<BkTxCd><Domn><Cd>{domain}</Cd><Fmly><Cd>{family}</Cd><SubFmlyCd>{subfamily}</SubFmlyCd></Fmly></Domn><Prtry><Cd>{number}</Cd><Issr>ASNBANK</Issr></Prtry></BkTxCd>'
     data=numbered(bank=bank).replace(b'<Sts>',(code+f'<RvslInd>{reversal}</RvslInd><Sts>').encode())
     return data.replace(b'DBIT',b'CRDT') if credit else data
 
@@ -47,6 +47,10 @@ class BankTypeTests(unittest.TestCase):
         enriched=replace(entry,bank_codes=({'proprietary':'7903'},),reversal='YES')
         with patch('core.finance.store.fingerprint',side_effect=lambda domain,values:values):
             self.assertEqual(entry_fingerprint(entry,'account'),entry_fingerprint(enriched,'account'))
+
+    def test_proprietary_code_with_other_issuer_is_not_an_asn_code(self):
+        xml=coded('6607',credit=True).replace(b'<Issr>ASNBANK</Issr>',b'<Issr>OTHER</Issr>')
+        self.assertEqual('UNKNOWN',recognize(parse(xml).entries[0])[0])
 
 
 if __name__=='__main__': unittest.main()

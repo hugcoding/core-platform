@@ -156,6 +156,14 @@ def decide(target, examples, categories, scope, infer=generate, allow_llm=True):
     from core.finance.own_transfers import decide as own_transfer
     transfer = own_transfer(target, payload, categories, scope)
     if transfer:return transfer
+    from core.finance.event_recognition import choice as bank_choice
+    bank=bank_choice(target,payload,categories)
+    if bank:return bank
+    # Do not let a legacy coarse bank-type rule undo the stricter catalogue
+    # checks for the same proprietary code (issuer/ISO/aggregate evidence).
+    from core.finance.event_recognition import CATALOGUE
+    if any(c.get('proprietary') in {r['code'] for r in CATALOGUE['rules']} for c in payload.get('bank_codes') or []):
+        return None
     income=income_patterns.default(target,payload,categories)
     if income:return income
     if target.get('category_code') is not None:return None
@@ -261,9 +269,14 @@ def _step(conn, job, cache, infer=generate):
                     answers[key]=infer(request)
                 return answers[key]
             payload = decrypt(target['private_data'])
+            from core.finance.event_recognition import hydrate, match as bank_match
+            if target.get('rule_version') == 'bank-type-v1:interest_received' or bank_match(target,payload):
+                from core.finance.crypto import encrypt
+                payload = hydrate(cur, target, payload)
+                target = {**target, 'private_data': encrypt(payload)}
             group_key = fingerprint(VERSION+':group', [str(target['account_id']), target['currency'],
                 payload.get('counteraccount'),
-                len(payload.get('details') or []), payload.get('reversal'),
+                len(payload.get('details') or []), payload.get('reversal'), payload.get('bank_codes'),
                 target['transaction_type'], target['classification_source'],
                 target.get('rule_version'),
                 target.get('category_code'),target.get('subcategory_code'),income_key(target,payload),
