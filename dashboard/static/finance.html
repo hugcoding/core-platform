@@ -28,7 +28,7 @@
 <p>Bestaande CORE-herkenning, inzichtelijk op één plek. Jouw handmatige beoordeling gaat altijd voor.</p>
 <p class="muted">Bekijk ingebouwde herkenners of maak een eigen regel. Controleer eerst het effect en accordeer daarna je selectie. Automatische regelvoorstellen en de Werkset-koppeling volgen later.</p>
 <div class="section-title"><button id="recognizerNew" type="button">Nieuwe regel</button><button id="recognizerEdit" type="button">Als eigen regel bewerken</button></div><div id="recognizerReadOnly" class="event-recognizer-layout"><section><label for="recognizerSelect">Herkenner</label><select id="recognizerSelect"></select><button id="recognizerRefresh" type="button">Vernieuwen</button><div id="recognizerDefinition"></div></section>
-<section><p id="recognizerStatus" role="status" aria-live="polite"></p><p id="recognizerCounts"></p><div id="recognizerExamples"></div></section></div>
+<section><p id="recognizerStatus" role="status" aria-live="polite"></p><p id="recognizerCounts"></p><div id="recognizerApprovalActions" hidden><label><input id="recognizerSelectVisible" type="checkbox"> Alle te accorderen voorbeelden selecteren</label><label>Bereik<select id="recognizerApprovalScope"><option value="selected">Mijn selectie</option><option value="all">Alle te accorderen transacties</option></select></label><button id="recognizerApprove" class="primary" type="button" disabled>Selectie accorderen (0)</button><p class="muted">Je bevestigt de voorgestelde indeling. Je hoeft daarvoor geen eigen regel te maken.</p></div><div id="recognizerExamples"></div></section></div>
 <section id="recognizerEditor" hidden><fieldset id="ruleFields">
 <button id="ruleBack" type="button">Terug naar herkenners</button>
 <div class="event-recognizer-layout"><section>
@@ -103,4 +103,4 @@
 <progress id="recurringProgress" aria-label="Terugkerende betalingen laden" hidden></progress><p id="recurringStatus" role="status" aria-live="polite"></p>
 <div id="recurringBody"></div><div class="pagination"><button id="recurringPrevious">Vorige</button><button id="recurringNext">Volgende</button></div>
 </dialog>
-</main><script src="/coredashboard/assets/finance-recognizer.js?v=20261025-review-1"></script><script src="/coredashboard/assets/finance.js?v=20261025-review-1"></script></body></html>
+</main><script src="/coredashboard/assets/finance-recognizer.js?v=20261025-direct-approval-1"></script><script src="/coredashboard/assets/finance.js?v=20261025-direct-approval-1"></script></body></html>

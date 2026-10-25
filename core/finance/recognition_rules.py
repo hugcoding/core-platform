@@ -10,11 +10,33 @@ MODEL='finance-local-v1:owner-rule-v1'
 MAX_SCAN=25000
 
 
-def validate_finance(cur,rule):
+def builtin_definition(identifier):
+    import uuid
+    from core.finance.local_rules import LABELS
+    entry=next((r for r in CATALOGUE['rules'] if r['id']==identifier),None)
+    if entry:
+        when={'all':[dict(field='issuer',op='equals',value=entry['issuer']),dict(field='bank_code',op='equals',value=entry['code'])]}
+        actions=dict(counterparty=entry['counterparty'],category=entry['category'],subcategory=entry['subcategory'],transaction_type=entry['transaction_type'])
+        name=entry['name']
+    elif identifier.startswith('local-') and identifier[6:] in LABELS:
+        when={'all':[dict(field='model_version',op='equals',value='finance-local-v1:core-rule-v1:'+identifier[6:])]}
+        actions={'confirm':'classification'};name=LABELS[identifier[6:]]
+    else:raise HTTPException(404,'recognizer_not_found')
+    rid=str(uuid.uuid5(uuid.NAMESPACE_URL,'core/finance/builtin-approval/'+identifier))
+    return dict(name=name,module='finance',active=False,when=when,set=actions),rid
+
+
+def builtin_ids():
+    from core.finance.local_rules import LABELS
+    return {builtin_definition(identifier)[1] for identifier in [r['id'] for r in CATALOGUE['rules']]+['local-'+k for k in LABELS]}
+
+
+def validate_finance(cur,rule,allow_confirmation=False):
     try:validate(rule)
     except (ValueError,TypeError):raise HTTPException(422,'invalid_recognition_rule') from None
     if rule['module']!='finance':raise HTTPException(422,'invalid_recognition_module')
     actions=rule['set']
+    if 'confirm' in actions and (not allow_confirmation or actions['confirm']!='classification' or rule['active']):raise HTTPException(422,'invalid_recognition_rule')
     if 'counterparty' in actions and not merchant_name(actions['counterparty']):raise HTTPException(422,'invalid_merchant')
     if 'subcategory' in actions and 'category' not in actions:raise HTTPException(422,'invalid_category')
     if 'category' in actions:
@@ -30,12 +52,13 @@ def validate_finance(cur,rule):
 def current(cur,active=False):
     cur.execute('''SELECT * FROM (SELECT DISTINCT ON(rule_id) * FROM finance.finance_recognition_rule_events
         ORDER BY rule_id,sequence_no DESC) r '''+('WHERE active ' if active else '')+'ORDER BY sequence_no DESC')
-    return [{**r,'rule':decrypt(r['private_data'])} for r in cur.fetchall()]
+    hidden=builtin_ids()
+    return [{**r,'rule':decrypt(r['private_data'])} for r in cur.fetchall() if str(r['rule_id']) not in hidden]
 
 
 def facts(row,payload):
     codes=payload.get('bank_codes') or []
-    return dict(_id=str(row['id']),description=payload.get('description'),counterparty=payload.get('counterparty'),
+    return dict(_id=str(row['id']),model_version=row.get('model_version'),description=payload.get('description'),counterparty=payload.get('counterparty'),
                 counteraccount=payload.get('counteraccount'),account_id=str(row['account_id']),
                 issuer=[c.get('issuer') for c in codes],bank_code=[c.get('proprietary') for c in codes],
                 direction='CRDT' if Decimal(str(row['amount']))>0 else 'DBIT',currency=row['currency'])
@@ -67,19 +90,24 @@ def plan(row,payload,rule,categories,owner_confirmation=False):
     changes={k:v for k,v in desired.items() if k!='merchant_id' and v!=row.get(k)}
     if 'counterparty' in actions and merchant_name(actions['counterparty']).casefold()!=before_name.casefold():
         changes['counterparty']=merchant_name(actions['counterparty'])
-    status='eligible' if changes else 'aligned'
+    confirmation_only=owner_confirmation and not changes and not row.get('confirmed')
+    status='eligible' if changes or confirmation_only else 'aligned'
     # Filling a missing name is allowed without replacing an existing owner category.
     if row.get('confirmed') and (set(changes)-{'counterparty'} or ('counterparty' in changes and row.get('merchant_id'))):status='protected'
-    if desired['transaction_type'] in ('TRANSFER','SAVING','INVESTMENT','DEBT'):status='protected'
-    if owner_confirmation and changes and not row.get('confirmed') and not desired['category_code']:
+    if desired['transaction_type'] in ('TRANSFER','SAVING','INVESTMENT','DEBT') and not (confirmation_only and actions.get('confirm')=='classification'):status='protected'
+    if owner_confirmation and not row.get('confirmed') and not desired['category_code']:
         status='needs_category'  # Existing owner reviews confirm the whole classification.
     amount=Decimal(str(row['amount']))
     if (desired['transaction_type']=='INCOME' and amount<0) or (desired['transaction_type'] in ('EXPENSE','TAX') and amount>0):status='protected'
-    return dict(status=status,changes=changes,desired=desired)
+    return dict(status=status,changes=changes,desired=desired,confirmation_only=confirmation_only)
 
 
-def preview(cur,rule):
-    validate_finance(cur,rule)
+def preview_snapshot(rule,results):
+    return fingerprint('recognition-preview-v1',[rule,[(str(r['id']),str(r.get('review_id')),d['status'],d['changes']) for r,_,d in results]])
+
+
+def preview(cur,rule,allow_confirmation=False):
+    validate_finance(cur,rule,allow_confirmation=allow_confirmation)
     cur.execute('SELECT count(*) AS n FROM finance.v_transactions')
     if cur.fetchone()['n']>MAX_SCAN:raise HTTPException(422,'recognizer_scan_limit')
     cur.execute('SELECT * FROM finance.v_transactions ORDER BY booking_date,id')
@@ -89,12 +117,12 @@ def preview(cur,rule):
     for row in rows:
         payload=payloads[str(row['id'])];decision=plan(row,payload,rule,categories,owner_confirmation=True)
         if decision:results.append((row,payload,decision))
-    snapshot=fingerprint('recognition-preview-v1',[rule,[(str(r['id']),str(r.get('review_id')),d['status'],d['changes']) for r,_,d in results]])
-    return results,snapshot
+    return results,preview_snapshot(rule,results)
 
 
-def save_and_apply(cur,rule,rid,previous,key,snapshot,scope,selection):
-    validate_finance(cur,rule)
+def save_and_apply(cur,rule,rid,previous,key,snapshot,scope,selection,allow_builtin=False):
+    if not allow_builtin and rid in builtin_ids():raise HTTPException(422,'invalid_recognition_selection')
+    validate_finance(cur,rule,allow_confirmation=allow_builtin)
     digest=fingerprint('recognition-approve-v1',[rule,rid,previous,snapshot,scope,selection])
     cur.execute('SELECT id,payload_digest,applied_count FROM finance.finance_recognition_rule_events WHERE idempotency_key=%s',(key,))
     done=cur.fetchone()
@@ -104,7 +132,7 @@ def save_and_apply(cur,rule,rid,previous,key,snapshot,scope,selection):
     cur.execute('SELECT id FROM finance.finance_recognition_rule_events WHERE rule_id=%s ORDER BY sequence_no DESC LIMIT 1',(rid,))
     latest=cur.fetchone()
     if (str(latest['id']) if latest else None)!=previous:raise HTTPException(409,'recognition_rule_changed')
-    results,actual=preview(cur,rule) if scope!='none' else ([],None)
+    results,actual=preview(cur,rule,allow_confirmation=allow_builtin) if scope!='none' else ([],None)
     if scope!='none' and actual!=snapshot:raise HTTPException(409,'recognition_preview_changed')
     candidates={str(r['id']):(r,d) for r,_,d in results}
     if any(tid not in candidates or candidates[tid][1]['status']!='eligible' for tid in selection):raise HTTPException(409,'recognition_preview_changed')

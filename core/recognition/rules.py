@@ -2,10 +2,10 @@
 import unicodedata
 
 FIELDS = {
-    'finance': {'description','counterparty','counteraccount','account_id','issuer','bank_code','direction','currency'},
+    'finance': {'description','counterparty','counteraccount','account_id','issuer','bank_code','direction','currency','model_version'},
     'workset': {'filename','extension','source','text'},
 }
-ACTIONS = {'finance': {'counterparty','category','subcategory','transaction_type'},
+ACTIONS = {'finance': {'counterparty','category','subcategory','transaction_type','confirm'},
            'workset': {'category','label'}}
 
 

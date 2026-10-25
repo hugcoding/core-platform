@@ -1948,7 +1948,7 @@ class IntegrationTests(unittest.TestCase):
         new=payment();included=payment();owner(included);all_rule={**definition,'exclude':[new]};all_preview=preview(all_rule)
         request=dict(rule=all_rule,rule_id=body['rule_id'],previous=saved.json()['event_id'],key=str(uuid.uuid4()),snapshot=all_preview['snapshot'],scope='all',selection=[])
         response=self.client.post(base+'/apply',json=request)
-        self.assertEqual(200,response.status_code,response.text);self.assertEqual(1,response.json()['applied']);self.assertIsNone(visible(new)['merchant']);self.assertEqual('Synthetic Rule Bank',visible(included)['merchant'])
+        self.assertEqual(200,response.status_code,response.text);self.assertEqual(2,response.json()['applied']);self.assertIsNone(visible(new)['merchant']);self.assertEqual('Synthetic Rule Bank',visible(included)['merchant'])
         # Editing requires the latest rule version; disabling affects future rounds.
         disable={**request,'rule':{**definition,'active':False},'scope':'none','snapshot':None,'key':str(uuid.uuid4())}
         self.assertEqual(409,self.client.post(base+'/apply',json=disable).status_code)
@@ -1971,5 +1971,45 @@ class IntegrationTests(unittest.TestCase):
         with self.assertRaises(psycopg2.Error):
             with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20261025_add_finance_recognition_review.sql').read_text())
         with self.admin.cursor() as cur:cur.execute('ROLLBACK')
+
+    def test_zzzzz_builtin_overview_approval_without_creating_own_rule(self):
+        from tests.test_finance_event_recognition import rent_xml
+        from fastapi.testclient import TestClient
+        before=self.client.get('/api/v1/finance/recognizer-rules').json()['rules']
+        def payment():
+            self.import_file(rent_xml(str(uuid.uuid4())))
+            with self.admin.cursor() as cur:
+                cur.execute('SELECT id FROM finance.finance_transactions ORDER BY created_at DESC,id LIMIT 1');return str(cur.fetchone()[0])
+        a,b,c=payment(),payment(),payment()
+        initial=self.client.get('/api/v1/finance/transactions/'+a).json()
+        # Already correct, but only automatically classified: must still be accorderable.
+        response=self.client.post('/api/v1/finance/transactions/'+a+'/classification',json=dict(key=str(uuid.uuid4()),previous=initial['review_id'],category='inkomen',subcategory='inkomen_rente',transaction_type='INCOME',merchant='ASN Bank'))
+        self.assertEqual(200,response.status_code,response.text)
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT merchant_id FROM finance.v_transactions WHERE id=%s',(a,));merchant=cur.fetchone()[0]
+        # A separate fresh transaction has the same automatic values.
+        aligned=payment()
+        with self.admin.cursor() as cur:
+            cur.execute("INSERT INTO finance.finance_review_events(transaction_id,category_code,subcategory_code,transaction_type,merchant_id,classification_source,confirmed,actor,idempotency_key,payload_digest,model_version) VALUES (%s,'inkomen','inkomen_rente','INCOME',%s,'RULE',false,'finance-local',%s,'synthetic','finance-local-v1:core-rule-v1:bank_interest')",(aligned,merchant,str(uuid.uuid4())))
+        row=self.client.get('/api/v1/finance/transactions/'+c).json()
+        self.assertEqual(200,self.client.post('/api/v1/finance/transactions/'+c+'/classification',json=dict(key=str(uuid.uuid4()),previous=row['review_id'],category='vrije_tijd',transaction_type='EXPENSE',merchant='Other bank')).status_code)
+        url='/api/v1/finance/recognizers/asn-interest-6607'
+        preview=self.client.get(url+'/transactions');self.assertEqual(200,preview.status_code,preview.text)
+        approval=preview.json()['approval']
+        body={**approval,'key':str(uuid.uuid4()),'scope':'selected','selection':[aligned,b]}
+        anonymous=TestClient(self.client.app);anonymous.headers['origin']='http://testserver'
+        self.assertEqual(401,anonymous.post(url+'/approve',json=body).status_code)
+        self.assertEqual(409,self.client.post(url+'/approve',json={**body,'snapshot':'0'*64}).status_code)
+        self.assertEqual(409,self.client.post(url+'/approve',json={**body,'selection':[c]}).status_code)
+        saved=self.client.post(url+'/approve',json=body)
+        self.assertEqual(200,saved.status_code,saved.text);self.assertEqual(2,saved.json()['applied'])
+        self.assertEqual(saved.json(),self.client.post(url+'/approve',json=body).json())
+        self.assertEqual(before,self.client.get('/api/v1/finance/recognizer-rules').json()['rules'])
+        for tid in (aligned,b):
+            row=self.client.get('/api/v1/finance/transactions/'+tid).json()
+            self.assertEqual(('ASN Bank','inkomen_rente',True),(row['merchant'],row['subcategory_code'],row['confirmed']))
+        self.assertEqual('vrije_tijd',self.client.get('/api/v1/finance/transactions/'+c).json()['category_code'])
+        history=self.client.get('/api/v1/finance/transactions/'+aligned+'/classifications').json()['events']
+        self.assertEqual('ASN Bank · ontvangen rente',history[0]['recognition_rule_name'])
 
 if __name__=='__main__': unittest.main()

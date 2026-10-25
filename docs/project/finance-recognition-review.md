@@ -1,5 +1,20 @@
 # Eigen herkenningsregels en accorderen (SCRUM-165 / basis SCRUM-164)
 
+## Meteen accorderen in het startoverzicht
+
+Bij ingebouwde herkenners staan selectie en Selectie accorderen direct bij de
+resultaten. Je hoeft niet eerst Nieuwe regel of Als eigen regel bewerken te
+openen. Kies voorbeelden of Alle te accorderen transacties. Ook een al correcte
+automatische indeling is te bevestigen; een identieke handmatige bevestiging
+wordt niet opnieuw aangemaakt. Afwijkende handmatige beoordelingen blijven
+beschermd. De voorgestelde uitkomst staat bij CORE vult aan.
+
+De bestaande preview-, snapshot-, bulk-review- en idempotentiefuncties worden
+hergebruikt. Een inactief intern auditrecord legt de gebruikte ingebouwde
+definitie vast; het verschijnt niet als eigen regel en wordt nooit actief in de
+worker. De ingebouwde herkenner blijft ongewijzigd. Deze uitbreiding vereist
+geen extra migratie bovenop 20261025_add_finance_recognition_review.sql.
+
 Finance → Eventherkenner laat de ingebouwde herkenners intact. Kies Nieuwe regel,
 Als eigen regel bewerken bij een ingebouwde herkenner, of open een opgeslagen
 eigen regel. Bij ASN worden issuer/code als voorwaarden overgenomen; complexe
