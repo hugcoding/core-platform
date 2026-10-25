@@ -1,8 +1,8 @@
 /* Uses the same owner-only API and session boundary as Finance. */
-function initializeFinanceRecognizer({$,api,esc,money,detail,refresh,reasons,getSessionEpoch}){
+function initializeFinanceRecognizer({$,api,esc,money,detail,refresh,reasons,getSessionEpoch,key,getState}){
 let recognizerEpoch=0,recognizerRules=[];
 function clearEventRecognizer(close=false){
- recognizerEpoch++;recognizerRules=[];
+ recognizerEpoch++;recognizerRules=[];clearRuleEditor();
  for(const id of ['recognizerSelect','recognizerDefinition','recognizerStatus','recognizerCounts','recognizerExamples'])$(id).replaceChildren();
  $('recognizerRefresh').disabled=false;
  if(close===true&&$('eventRecognizerDialog').open)$('eventRecognizerDialog').close();
@@ -19,6 +19,8 @@ function recognizerCard(t){
 async function loadRecognizer(){
  const request=++recognizerEpoch,epoch=getSessionEpoch(),id=$('recognizerSelect').value;
  const rule=recognizerRules.find(r=>r.id===id);if(!rule)return;
+ if(rule.definition){openRuleEditor(rule);return;}
+ $('recognizerEdit').textContent='Als eigen regel bewerken';
  $('recognizerDefinition').innerHTML=recognizerDefinition(rule);
  $('recognizerStatus').textContent='Herkenning en voorbeelden ophalen…';$('recognizerCounts').textContent='';$('recognizerExamples').replaceChildren();$('recognizerRefresh').disabled=true;
  try{
@@ -50,5 +52,112 @@ $('eventRecognizerDialog').addEventListener('close',clearEventRecognizer);
 reasons.recognizer_scan_limit='Te veel betalingen voor deze directe controle. Er is niets gewijzigd; de gewone indelingsjob blijft beschikbaar.';
 reasons.recognizer_not_found='Deze herkenner is niet beschikbaar. Open Eventherkenner opnieuw.';
 
+let editor=null,rulePreview=null,ruleSelected=new Set(),ruleAttempt=null,ruleBusy=false;
+const ruleFields={description:'Omschrijving',counterparty:'Banktegenpartij',counteraccount:'Tegenrekening',account_id:'Rekening-ID',issuer:'Uitgever bankcode',bank_code:'Bankcode',direction:'Bij-/afschrijving (CRDT/DBIT)',currency:'Valuta'};
+function clearRuleEditor(){
+ editor=null;rulePreview=null;ruleSelected.clear();ruleAttempt=null;ruleBusy=false;
+ for(const id of ['ruleName','ruleParty','ruleCode'])$(id).value='';
+ for(const id of ['ruleConditions','ruleExamples','ruleStatus','ruleCounts','ruleExcluded','ruleCategory','ruleSubcategory'])$(id).replaceChildren();
+ $('recognizerEditor').hidden=true;$('recognizerReadOnly').hidden=false;
+}
+function changedRule(){
+ recognizerEpoch++;rulePreview=null;ruleSelected.clear();ruleAttempt=null;
+ $('ruleExamples').replaceChildren();$('ruleCounts').textContent='';$('ruleStatus').textContent='Regel gewijzigd. Controleer opnieuw vóór accorderen.';
+ updateRuleControls();
+}
+function updateRuleControls(){
+ $('ruleFields').disabled=ruleBusy;
+ const n=rulePreview?($('ruleScope').value==='all'?rulePreview.counts.eligible:ruleSelected.size):0;
+ $('ruleApprove').textContent=`Opslaan en accorderen (${n})`;$('ruleApprove').disabled=ruleBusy||!n;
+ $('ruleSave').disabled=ruleBusy;$('rulePreview').disabled=ruleBusy;
+ $('ruleParty').disabled=!$('rulePartyOn').checked||ruleBusy;
+ $('ruleCategory').disabled=!$('ruleCategoryOn').checked||ruleBusy;$('ruleSubcategory').disabled=$('ruleCategory').disabled;
+ $('ruleType').disabled=!$('ruleTypeOn').checked||ruleBusy;
+ const eligible=rulePreview?.items.filter(t=>t.status==='eligible')||[];
+ $('ruleSelectVisible').checked=!!eligible.length&&eligible.every(t=>ruleSelected.has(t.id));
+ $('ruleSelectVisible').indeterminate=eligible.some(t=>ruleSelected.has(t.id))&&!$('ruleSelectVisible').checked;
+ $('ruleSelectVisible').disabled=ruleBusy||!eligible.length;
+ $('ruleExcluded').textContent=editor?.exclude?.length?`${editor.exclude.length} transacties blijvend uitgesloten van deze regel.`:'';
+ $('ruleResetExcluded').hidden=!editor?.exclude?.length;
+}
+function ruleSubcategories(value=''){
+ const categories=getState()?.categories||[],parent=categories.find(c=>c.code===$('ruleCategory').value);
+ $('ruleSubcategory').innerHTML='<option value="">Geen subcategorie</option>'+categories.filter(c=>c.parent_id===parent?.id&&c.active!==false).map(c=>`<option value="${esc(c.code)}">${esc(c.name||c.label)}</option>`).join('');$('ruleSubcategory').value=value;
+}
+function renderRuleConditions(){
+ $('ruleConditions').innerHTML=editor.terms.map((t,i)=>`<div class="rule-condition"><select data-rule-field="${i}" aria-label="Veld">${Object.entries(ruleFields).map(([v,n])=>`<option value="${v}" ${v===t.field?'selected':''}>${esc(n)}</option>`).join('')}</select><select data-rule-op="${i}" aria-label="Vergelijking"><option value="equals" ${t.op==='equals'?'selected':''}>is gelijk aan</option><option value="contains" ${t.op==='contains'?'selected':''}>bevat</option></select><input data-rule-value="${i}" value="${esc(t.value)}" maxlength="400" aria-label="Waarde"><button data-rule-remove="${i}" type="button" aria-label="Voorwaarde verwijderen">Verwijderen</button></div>`).join('');
+ for(const [attr,field] of [['field','field'],['op','op'],['value','value']])$('ruleConditions').querySelectorAll(`[data-rule-${attr}]`).forEach(el=>el.oninput=()=>{editor.terms[Number(el.dataset['rule'+attr[0].toUpperCase()+attr.slice(1)])][field]=el.value;changedRule();});
+ $('ruleConditions').querySelectorAll('[data-rule-remove]').forEach(el=>el.onclick=()=>{if(editor.terms.length>1){editor.terms.splice(Number(el.dataset.ruleRemove),1);renderRuleConditions();changedRule();}});
+}
+function editorRule(){
+ if(!$('ruleCodePanel').hidden){const r=JSON.parse($('ruleCode').value);if(r.module!=='finance')throw Error('Deze editor is voor Finance-regels.');return r;}
+ const actions={};if($('rulePartyOn').checked)actions.counterparty=$('ruleParty').value;
+ if($('ruleCategoryOn').checked){actions.category=$('ruleCategory').value;if($('ruleSubcategory').value)actions.subcategory=$('ruleSubcategory').value;}
+ if($('ruleTypeOn').checked)actions.transaction_type=$('ruleType').value;
+ return {name:$('ruleName').value,module:'finance',active:$('ruleActive').checked,when:{[$('ruleMode').value]:editor.terms},set:actions,...(editor.exclude.length?{exclude:editor.exclude}: {})};
+}
+function fillRuleForm(rule){
+ if(!rule||rule.module!=='finance'||!rule.when||!['all','any'].includes(Object.keys(rule.when)[0])||!Array.isArray(Object.values(rule.when)[0])||!rule.set)throw Error('Controleer de regelcode: Finance, voorwaarden en acties zijn verplicht.');
+ editor.terms=JSON.parse(JSON.stringify(Object.values(rule.when)[0]));editor.exclude=[...(rule.exclude||[])];
+ $('ruleName').value=rule.name||'';$('ruleMode').value=Object.keys(rule.when)[0];$('ruleActive').checked=rule.active===true;
+ $('rulePartyOn').checked='counterparty'in rule.set;$('ruleParty').value=rule.set.counterparty||'';
+ $('ruleCategoryOn').checked='category'in rule.set;$('ruleCategory').value=rule.set.category||'';ruleSubcategories(rule.set.subcategory||'');
+ $('ruleTypeOn').checked='transaction_type'in rule.set;$('ruleType').value=rule.set.transaction_type||'INCOME';renderRuleConditions();updateRuleControls();
+}
+function openRuleEditor(source=null){
+ recognizerEpoch++;clearRuleEditor();
+ const definition=source?.definition||{name:source?.name||'Nieuwe herkenningsregel',module:'finance',active:false,
+  when:{all:source?.issuer?[{field:'issuer',op:'equals',value:source.issuer},{field:'bank_code',op:'equals',value:source.code}]:[{field:'description',op:'contains',value:''}]},
+  set:{counterparty:source?.counterparty||''}};
+ editor={rule_id:source?.rule_id||key(),previous:source?.event_id||null,terms:[],exclude:[]};
+ const categories=getState()?.categories||[];$('ruleCategory').innerHTML='<option value="">Kies categorie</option>'+categories.filter(c=>!c.parent_id&&c.active!==false).map(c=>`<option value="${esc(c.code)}">${esc(c.name||c.label)}</option>`).join('');
+ $('recognizerReadOnly').hidden=true;$('recognizerEditor').hidden=false;$('ruleForm').hidden=false;$('ruleCodePanel').hidden=true;
+ $('ruleFormTab').setAttribute('aria-pressed','true');$('ruleCodeTab').setAttribute('aria-pressed','false');
+ fillRuleForm(definition);$('ruleStatus').textContent=source?.definition?'Bewerk de opgeslagen regel. Controleer het effect voordat je accordeert.':'Nieuwe eigen regel. Ingebouwde herkenners blijven behouden.';
+}
+function ruleCategoryLabel(code){const c=getState()?.categories.find(c=>c.code===code);return c?.name||c?.label||code||'Geen categorie';}
+function renderRulePreview(){
+ const statuses={eligible:'Wijziging beschikbaar',aligned:'Komt al overeen',protected:'Handmatig oordeel of transactiesoort beschermd',invalid_category:'Categorie niet meer beschikbaar',needs_category:'Kies ook een categorie om deze nog ongecategoriseerde transactie te bevestigen'};
+ $('ruleExamples').innerHTML=rulePreview.items.map(t=>`<article class="duplicate-card"><label><input type="checkbox" data-rule-select="${esc(t.id)}" ${t.status!=='eligible'?'disabled':''} ${ruleSelected.has(t.id)?'checked':''}> ${esc(t.booking_date)} · ${money(t.amount)}</label><p>${esc(t.account_label)}</p><p>${esc(t.description||'Geen omschrijving')}</p><dl><dt>Banktegenpartij</dt><dd>${esc(t.counterparty||'Niet aangeleverd')}</dd><dt>Bevestigde / ingedeelde tegenpartij</dt><dd>${esc(t.current_merchant||'Niet vastgelegd')}</dd><dt>Huidige indeling</dt><dd>${esc(ruleCategoryLabel(t.category_code))}${t.subcategory_code?' / '+esc(ruleCategoryLabel(t.subcategory_code)):''}</dd><dt>Wijzigingen</dt><dd>${Object.entries(t.changes).map(([k,v])=>esc(({counterparty:'Tegenpartij',category_code:'Categorie',subcategory_code:'Subcategorie',transaction_type:'Soort'})[k]||k)+': '+esc(k==='category_code'||k==='subcategory_code'?ruleCategoryLabel(v):v||'Geen')).join('<br>')||'Geen wijzigingen'}</dd></dl><p>${esc(statuses[t.status])}</p><button type="button" data-rule-detail="${esc(t.id)}">Bekijk / wijzig handmatig</button><button type="button" data-rule-exclude="${esc(t.id)}">Uitsluiten van regel</button></article>`).join('')||'<p>Geen passende transacties.</p>';
+ $('ruleExamples').querySelectorAll('[data-rule-detail]').forEach(el=>el.onclick=async()=>{const request=recognizerEpoch,epoch=getSessionEpoch();try{const t=await api('/transactions/'+encodeURIComponent(el.dataset.ruleDetail));if(editor&&request===recognizerEpoch&&epoch===getSessionEpoch())detail(t,async()=>{await refresh();if(editor&&$('eventRecognizerDialog').open)await previewRule();});}catch(e){if(request===recognizerEpoch&&epoch===getSessionEpoch())$('ruleStatus').textContent=e.message;}});
+ $('ruleExamples').querySelectorAll('[data-rule-select]').forEach(el=>el.onchange=()=>{el.checked?ruleSelected.add(el.dataset.ruleSelect):ruleSelected.delete(el.dataset.ruleSelect);ruleAttempt=null;updateRuleControls();});
+ $('ruleExamples').querySelectorAll('[data-rule-exclude]').forEach(el=>el.onclick=()=>{const definition=editorRule();definition.exclude=[...new Set([...(definition.exclude||[]),el.dataset.ruleExclude])];if(!$('ruleCodePanel').hidden)$('ruleCode').value=JSON.stringify(definition,null,2);else editor.exclude=definition.exclude;changedRule();});
+}
+async function previewRule(){
+ if(!editor)return;const request=++recognizerEpoch,epoch=getSessionEpoch();ruleBusy=true;updateRuleControls();$('ruleStatus').textContent='Effect controleren…';
+ try{const rule=editorRule(),data=await api('/recognizer-rules/preview',{rule});if(epoch!==getSessionEpoch()||request!==recognizerEpoch||!editor)return;
+  rulePreview=data;ruleSelected.clear();ruleAttempt=null;renderRulePreview();$('ruleCounts').textContent=`${data.total} passend · ${data.counts.eligible} wijzigbaar · ${data.counts.aligned} al correct · ${data.counts.protected} beschermd · ${data.counts.needs_category||0} hebben eerst een categorie nodig. Maximaal 50 voorbeelden verspreid over de periode.`;$('ruleStatus').textContent='Controleer de wijzigingen en selecteer wat je wilt accorderen.';
+ }catch(e){if(epoch===getSessionEpoch()&&request===recognizerEpoch)$('ruleStatus').textContent=e.message;}
+ finally{if(epoch===getSessionEpoch()&&request===recognizerEpoch){ruleBusy=false;updateRuleControls();}}
+}
+async function applyRule(scope){
+ if(!editor||ruleBusy)return;
+ const request=++recognizerEpoch,epoch=getSessionEpoch();
+ try{
+  const rule=editorRule(),body={rule,rule_id:editor.rule_id,previous:editor.previous,scope,snapshot:scope==='none'?null:rulePreview?.snapshot,selection:scope==='selected'?[...ruleSelected].sort():[]};
+  const encoded=JSON.stringify(body);if(!ruleAttempt||ruleAttempt.encoded!==encoded)ruleAttempt={encoded,body:{...body,key:key()}};
+  ruleBusy=true;updateRuleControls();$('ruleStatus').textContent='Regel en beoordelingen opslaan…';
+  const response=await api('/recognizer-rules/apply',ruleAttempt.body);
+  if(epoch!==getSessionEpoch()||request!==recognizerEpoch||!editor)return;
+  editor.previous=response.event_id;ruleAttempt=null;rulePreview=null;ruleSelected.clear();$('ruleExamples').replaceChildren();$('ruleCounts').textContent='';
+  $('ruleStatus').textContent=`Opgeslagen. ${response.applied} transacties geaccordeerd. Jouw overige beoordelingen en bankgegevens zijn behouden.`;
+  const entry={id:editor.rule_id,rule_id:editor.rule_id,event_id:response.event_id,definition:rule,name:rule.name,origin:'Eigen regel',editable:true};
+  recognizerRules=recognizerRules.filter(r=>r.id!==entry.id).concat(entry);
+  $('recognizerSelect').innerHTML=recognizerRules.map(r=>`<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('');$('recognizerSelect').value=entry.id;
+  await refresh();
+ }catch(e){if(epoch===getSessionEpoch()&&request===recognizerEpoch)$('ruleStatus').textContent=e.message;}
+ finally{if(epoch===getSessionEpoch()&&request===recognizerEpoch){ruleBusy=false;updateRuleControls();}}
+}
+$('recognizerNew').onclick=()=>openRuleEditor();$('recognizerEdit').onclick=()=>openRuleEditor(recognizerRules.find(r=>r.id===$('recognizerSelect').value));
+$('ruleBack').onclick=()=>showEventRecognizer();
+$('ruleCodeTab').onclick=()=>{try{$('ruleCode').value=JSON.stringify(editorRule(),null,2);$('ruleForm').hidden=true;$('ruleCodePanel').hidden=false;$('ruleFormTab').setAttribute('aria-pressed','false');$('ruleCodeTab').setAttribute('aria-pressed','true');}catch(e){$('ruleStatus').textContent=e.message;}};
+$('ruleFormTab').onclick=()=>{try{fillRuleForm(editorRule());$('ruleForm').hidden=false;$('ruleCodePanel').hidden=true;$('ruleFormTab').setAttribute('aria-pressed','true');$('ruleCodeTab').setAttribute('aria-pressed','false');}catch(e){$('ruleStatus').textContent=e.message;}};
+$('ruleAddCondition').onclick=()=>{if(editor.terms.length<12){editor.terms.push({field:'description',op:'contains',value:''});renderRuleConditions();changedRule();}};
+$('ruleCategory').onchange=()=>{ruleSubcategories();changedRule();};
+for(const id of ['ruleName','ruleMode','rulePartyOn','ruleParty','ruleCategoryOn','ruleSubcategory','ruleTypeOn','ruleType','ruleActive','ruleCode'])$(id).addEventListener('input',changedRule);
+$('ruleResetExcluded').onclick=()=>{try{const rule=editorRule();delete rule.exclude;editor.exclude=[];if(!$('ruleCodePanel').hidden)$('ruleCode').value=JSON.stringify(rule,null,2);changedRule();}catch(e){$('ruleStatus').textContent=e.message;}};
+$('ruleSelectVisible').onchange=()=>{for(const t of rulePreview?.items||[])if(t.status==='eligible')$('ruleSelectVisible').checked?ruleSelected.add(t.id):ruleSelected.delete(t.id);ruleAttempt=null;updateRuleControls();};
+$('ruleScope').onchange=()=>{ruleAttempt=null;updateRuleControls();};$('rulePreview').onclick=previewRule;$('ruleSave').onclick=()=>applyRule('none');$('ruleApprove').onclick=()=>applyRule($('ruleScope').value);
+Object.assign(reasons,{invalid_recognition_rule:'Controleer de regel: naam, minimaal één geldige voorwaarde en minimaal één actie zijn verplicht.',invalid_recognition_module:'Deze editor ondersteunt alleen Finance. De Werkset-koppeling volgt later.',invalid_recognition_selection:'Selecteer wijzigbare transacties of kies alle passende transacties.',recognition_rule_changed:'De regel is gewijzigd. Open hem opnieuw voordat je opslaat.',recognition_preview_changed:'De transacties of beoordelingen zijn gewijzigd. Controleer de voorbeelden opnieuw.'});
 return {clear:clearEventRecognizer,show:showEventRecognizer,load:loadRecognizer,card:recognizerCard};
 }

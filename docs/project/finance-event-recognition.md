@@ -1,5 +1,8 @@
 # Eventherkenner - eerste fase (SCRUM-163)
 
+Dit document beschrijft de oorspronkelijke alleen-lezen fase. Voor het huidige
+eigen regelbeheer, selectie en accorderen zie [Finance-regelbeoordeling](finance-recognition-review.md).
+
 Finance heeft naast Terugkerend een knop Eventherkenner. Deze eerste fase laat
 de lokale categorieherkenners, salaris, rente, bankkosten, uitkering en eigen
 overboekingen zien. Voor deze bestaande herkenners toont de lijst huidige

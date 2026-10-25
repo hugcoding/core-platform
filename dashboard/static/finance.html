@@ -26,9 +26,33 @@
 <form method="dialog"><button class="close" aria-label="Sluiten">&#10005;</button></form>
 <p class="eyebrow">VAN BANKCODE NAAR INDELING</p><h2 id="eventRecognizerTitle">Eventherkenner</h2>
 <p>Bestaande CORE-herkenning, inzichtelijk op één plek. Jouw handmatige beoordeling gaat altijd voor.</p>
-<p class="muted">Eerste fase: regels bekijken en ASN-rente controleren. Regels bewerken, voorstellen en conflictbewaking volgen later.</p>
-<div class="event-recognizer-layout"><section><label for="recognizerSelect">Herkenner</label><select id="recognizerSelect"></select><button id="recognizerRefresh" type="button">Vernieuwen</button><div id="recognizerDefinition"></div></section>
+<p class="muted">Bekijk ingebouwde herkenners of maak een eigen regel. Controleer eerst het effect en accordeer daarna je selectie. Automatische regelvoorstellen en de Werkset-koppeling volgen later.</p>
+<div class="section-title"><button id="recognizerNew" type="button">Nieuwe regel</button><button id="recognizerEdit" type="button">Als eigen regel bewerken</button></div><div id="recognizerReadOnly" class="event-recognizer-layout"><section><label for="recognizerSelect">Herkenner</label><select id="recognizerSelect"></select><button id="recognizerRefresh" type="button">Vernieuwen</button><div id="recognizerDefinition"></div></section>
 <section><p id="recognizerStatus" role="status" aria-live="polite"></p><p id="recognizerCounts"></p><div id="recognizerExamples"></div></section></div>
+<section id="recognizerEditor" hidden><fieldset id="ruleFields">
+<button id="ruleBack" type="button">Terug naar herkenners</button>
+<div class="event-recognizer-layout"><section>
+<div class="section-title"><button id="ruleFormTab" type="button" aria-pressed="true">Formulier</button><button id="ruleCodeTab" type="button" aria-pressed="false">Regelcode</button></div>
+<div id="ruleForm"><label>Regelnaam<input id="ruleName" maxlength="120"></label><p class="muted">Toepassing: Finance · dezelfde regelbasis is voorbereid voor Werkset</p>
+<label>Voorwaarden<select id="ruleMode"><option value="all">Alle voorwaarden moeten kloppen</option><option value="any">Minimaal één voorwaarde moet kloppen</option></select></label>
+<div id="ruleConditions"></div><button id="ruleAddCondition" type="button">Voorwaarde toevoegen</button>
+<h3>CORE vult aan</h3>
+<label><input id="rulePartyOn" type="checkbox"> Tegenpartij bevestigen</label><input id="ruleParty" maxlength="120" aria-label="Tegenpartij">
+<label><input id="ruleCategoryOn" type="checkbox"> Categorie aanpassen</label><select id="ruleCategory" aria-label="Categorie"></select><select id="ruleSubcategory" aria-label="Subcategorie"></select>
+<label><input id="ruleTypeOn" type="checkbox"> Transactiesoort aanpassen</label><select id="ruleType" aria-label="Transactiesoort"><option value="INCOME">Inkomsten</option><option value="EXPENSE">Uitgaven</option><option value="CORRECTION">Correctie</option><option value="UNKNOWN">Onbekend</option></select>
+<p class="muted">Uitgevinkte velden blijven behouden. Een ontbrekende tegenpartij kun je aanvullen als de categorie al handmatig bevestigd is.</p></div>
+<div id="ruleCodePanel" hidden><label for="ruleCode">Regel als JSON</label><textarea id="ruleCode" rows="20" spellcheck="false"></textarea><p class="muted">Alleen declaratieve voorwaarden en acties; geen uitvoerbare code.</p></div>
+<label><input id="ruleActive" type="checkbox"> Actief bij volgende CORE-indelingsrondes</label>
+<p class="muted">Regels beoordelen nieuwe imports tijdens de volgende indelingsronde. Handmatige beoordelingen blijven leidend.</p>
+<p id="ruleExcluded"></p><button id="ruleResetExcluded" type="button" hidden>Uitsluitingen herstellen</button>
+<button id="rulePreview" type="button">Voorbeelden controleren</button><button id="ruleSave" type="button">Alleen regel opslaan</button>
+</section><section>
+<p id="ruleStatus" role="status" aria-live="polite"></p><p id="ruleCounts"></p>
+<label><input id="ruleSelectVisible" type="checkbox"> Alle wijzigbare voorbeelden selecteren</label>
+<label>Accorderen<select id="ruleScope"><option value="selected">Mijn selectie</option><option value="all">Alle passende wijzigbare transacties</option></select></label>
+<div id="ruleExamples"></div><button id="ruleApprove" class="primary" type="button" disabled>Opslaan en accorderen (0)</button>
+<p class="muted">Je bevestigt de getoonde indeling; alleen aangevinkte velden veranderen. Selectie geldt voor deze accordering. Met Uitsluiten onthoudt de regel dat een transactie er niet bij hoort. Oorspronkelijke bankgegevens veranderen niet.</p>
+</section></div></fieldset></section>
 </dialog>
 <dialog id="categorizationResultsDialog" aria-labelledby="categorizationResultsTitle"><form method="dialog"><button class="close" aria-label="Sluiten">&#10005;</button></form>
 <h2 id="categorizationResultsTitle">Resultaten van automatische indeling</h2>
@@ -79,4 +103,4 @@
 <progress id="recurringProgress" aria-label="Terugkerende betalingen laden" hidden></progress><p id="recurringStatus" role="status" aria-live="polite"></p>
 <div id="recurringBody"></div><div class="pagination"><button id="recurringPrevious">Vorige</button><button id="recurringNext">Volgende</button></div>
 </dialog>
-</main><script src="/coredashboard/assets/finance-recognizer.js?v=20261025-2"></script><script src="/coredashboard/assets/finance.js?v=20261025-2"></script></body></html>
+</main><script src="/coredashboard/assets/finance-recognizer.js?v=20261025-review-1"></script><script src="/coredashboard/assets/finance.js?v=20261025-review-1"></script></body></html>
