@@ -1,19 +1,19 @@
 /* Uses the same owner-only API and session boundary as Finance. */
 function initializeFinanceRecognizer({$,api,esc,money,detail,refresh,reasons,getSessionEpoch,key,getState}){
-let recognizerEpoch=0,recognizerRules=[];
+let recognizerEpoch=0,recognizerRules=[],directPreview=null,directSelected=new Set(),directAttempt=null,directBusy=false;
 function clearEventRecognizer(close=false){
- recognizerEpoch++;recognizerRules=[];clearRuleEditor();
+ recognizerEpoch++;recognizerRules=[];directPreview=null;directSelected.clear();directAttempt=null;directBusy=false;$('recognizerApprovalScope').value='selected';clearRuleEditor();$('recognizerApprovalActions').hidden=true;updateDirectControls();
  for(const id of ['recognizerSelect','recognizerDefinition','recognizerStatus','recognizerCounts','recognizerExamples'])$(id).replaceChildren();
  $('recognizerRefresh').disabled=false;
  if(close===true&&$('eventRecognizerDialog').open)$('eventRecognizerDialog').close();
 }
 function recognizerDefinition(rule){
  const conditions=rule.conditions.map(v=>`<li>${esc(v)}</li>`).join('');
- return `<h3>${esc(rule.name)}</h3><p class="muted">${esc(rule.origin)} · ${esc(rule.version)} · Alleen bekijken</p><h4>Herkennen aan</h4><ul>${conditions}</ul>${rule.technical_pattern?`<details><summary>Exact herkenningspatroon</summary><code>${esc(rule.technical_pattern)}</code></details>`:''}<h4>CORE vult aan</h4><p>${esc(rule.result)}</p>${rule.source_url?`<p><a href="${esc(rule.source_url)}" target="_blank" rel="noopener noreferrer">${esc(rule.source_title)}</a><br><small>Gecontroleerd op ${esc(rule.verified_on)}</small></p>`:''}<p class="muted">${rule.issuer?'Issuer is de uitgever van de bankcode, niet op zichzelf de tegenpartij. ':''}De originele bankgegevens blijven bewaard.</p>`;
+ return `<h3>${esc(rule.name)}</h3><p class="muted">${esc(rule.origin)} · ${esc(rule.version)} · Regeldefinitie alleen-lezen</p><h4>Herkennen aan</h4><ul>${conditions}</ul>${rule.technical_pattern?`<details><summary>Exact herkenningspatroon</summary><code>${esc(rule.technical_pattern)}</code></details>`:''}<h4>CORE vult aan</h4><p>${esc(rule.result)}</p>${rule.source_url?`<p><a href="${esc(rule.source_url)}" target="_blank" rel="noopener noreferrer">${esc(rule.source_title)}</a><br><small>Gecontroleerd op ${esc(rule.verified_on)}</small></p>`:''}<p class="muted">${rule.issuer?'Issuer is de uitgever van de bankcode, niet op zichzelf de tegenpartij. ':''}De originele bankgegevens blijven bewaard.</p>`;
 }
 function recognizerCard(t){
- const statuses={eligible:'Kan worden ingedeeld via de bestaande indelingsjob',aligned:'Huidige categorie komt overeen',manual:'Jouw bevestigde indeling blijft behouden',manual_conflict:'Afwijkend handmatig oordeel · blijft beschermd',protected:'Bestaande specifieke indeling blijft beschermd',applied:'Via deze CORE-herkenner ingedeeld'};
- return `<article class="duplicate-card"><div class="section-title"><strong>${esc(t.booking_date)} · ${money(t.amount)}</strong><span>${esc(t.account_label)}</span></div><dl><dt>Banktegenpartij</dt><dd>${esc(t.bank_counterparty)}</dd><dt>Originele bankomschrijving</dt><dd>${esc(t.description||'Niet aangeleverd')}</dd>${t.recognized_counterparty?`<dt>Door CORE herkende tegenpartij</dt><dd>${esc(t.recognized_counterparty)}</dd>`:''}<dt>Huidige categorie</dt><dd>${esc(t.current_category)}</dd>${t.evidence.length?`<dt>Herkenningsbewijs</dt><dd>${t.evidence.map(e=>esc([e.issuer,e.proprietary,[e.domain,e.family,e.subfamily].filter(Boolean).join('/')].filter(Boolean).join(' · '))).join('<br>')}</dd>`:''}</dl><p>${esc(statuses[t.status]||t.status)}${t.applied?' · Regelversie geregistreerd bij deze indeling':''}</p>`+
+ const statuses={eligible:'Te accorderen: bevestig deze voorgestelde indeling',aligned:'Huidige categorie komt overeen',manual:'Jouw bevestigde indeling blijft behouden',manual_conflict:'Afwijkend handmatig oordeel · blijft beschermd',protected:'Bestaande specifieke indeling blijft beschermd',applied:'Via deze CORE-herkenner ingedeeld'};
+ return `<article class="duplicate-card"><div class="section-title"><label><input type="checkbox" data-recognizer-select="${esc(t.id)}" ${t.status!=='eligible'?'disabled':''}> <strong>${esc(t.booking_date)} · ${money(t.amount)}</strong></label><span>${esc(t.account_label)}</span></div><dl><dt>Banktegenpartij</dt><dd>${esc(t.bank_counterparty)}</dd><dt>Originele bankomschrijving</dt><dd>${esc(t.description||'Niet aangeleverd')}</dd>${t.recognized_counterparty?`<dt>Door CORE herkende tegenpartij</dt><dd>${esc(t.recognized_counterparty)}</dd>`:''}<dt>Huidige categorie</dt><dd>${esc(t.current_category)}</dd>${t.evidence.length?`<dt>Herkenningsbewijs</dt><dd>${t.evidence.map(e=>esc([e.issuer,e.proprietary,[e.domain,e.family,e.subfamily].filter(Boolean).join('/')].filter(Boolean).join(' · '))).join('<br>')}</dd>`:''}</dl><p>${esc(statuses[t.status]||t.status)}${t.applied?' · Regelversie geregistreerd bij deze indeling':''}</p>`+
  `<button type="button" data-recognizer-transaction="${esc(t.id)}">Bekijk transactie</button></article>`;
 }
 async function loadRecognizer(){
@@ -21,6 +21,7 @@ async function loadRecognizer(){
  const rule=recognizerRules.find(r=>r.id===id);if(!rule)return;
  if(rule.definition){openRuleEditor(rule);return;}
  $('recognizerEdit').textContent='Als eigen regel bewerken';
+ directPreview=null;directSelected.clear();directAttempt=null;$('recognizerApprovalActions').hidden=true;
  $('recognizerDefinition').innerHTML=recognizerDefinition(rule);
  $('recognizerStatus').textContent='Herkenning en voorbeelden ophalen…';$('recognizerCounts').textContent='';$('recognizerExamples').replaceChildren();$('recognizerRefresh').disabled=true;
  try{
@@ -28,8 +29,10 @@ async function loadRecognizer(){
   if(request!==recognizerEpoch||epoch!==getSessionEpoch()||!$('eventRecognizerDialog').open)return;
   $('recognizerStatus').textContent=data.mode==='matching'?`${data.total} betalingen passen bij deze herkenner. Voorbeeldselectie van maximaal 50, verspreid over de periode.`:`${data.total} huidige indelingen met deze regel. Voorbeeldselectie van maximaal 50, verspreid over de periode.`;
   const c=data.counts;
-  $('recognizerCounts').textContent=(data.mode==='matching'?`${c.eligible} kunnen worden ingedeeld · ${c.aligned} komen overeen · ${c.manual+c.manual_conflict} handmatig beschermd (${c.manual_conflict} afwijkend) · ${c.protected} overige indelingen beschermd. `:'')+(data.missing_evidence?`${data.missing_evidence} bijschrijvingen hebben geen bruikbare bankcodegegevens; hierover wordt niets aangenomen. `:'')+data.message;
+  $('recognizerCounts').textContent=(data.mode==='matching'?`${c.eligible} te accorderen · ${c.aligned} komen overeen · ${c.manual+c.manual_conflict} handmatig beschermd (${c.manual_conflict} afwijkend) · ${c.protected} overige indelingen beschermd. `:'')+(data.missing_evidence?`${data.missing_evidence} bijschrijvingen hebben geen bruikbare bankcodegegevens; hierover wordt niets aangenomen. `:'')+data.message;
   $('recognizerExamples').innerHTML=data.items.map(recognizerCard).join('')||'<p>Geen passende transacties beschikbaar. Bij oude imports kan de bestaande bankcode-aanvulverwerking nog nodig zijn.</p>';
+  directPreview=data;directSelected.clear();directAttempt=null;$('recognizerApprovalActions').hidden=!data.approval;
+  $('recognizerExamples').querySelectorAll('[data-recognizer-select]').forEach(el=>el.onchange=()=>{el.checked?directSelected.add(el.dataset.recognizerSelect):directSelected.delete(el.dataset.recognizerSelect);directAttempt=null;updateDirectControls();});updateDirectControls();
   $('recognizerExamples').querySelectorAll('[data-recognizer-transaction]').forEach(b=>b.onclick=async()=>{
    const original=b.dataset.recognizerTransaction;
    try{const t=await api('/transactions/'+encodeURIComponent(original));if(request===recognizerEpoch&&epoch===getSessionEpoch()&&$('eventRecognizerDialog').open)detail(t,async()=>{await refresh();if($('eventRecognizerDialog').open)await loadRecognizer()});}
@@ -45,15 +48,40 @@ async function showEventRecognizer(){
   recognizerRules=data.rules;$('recognizerSelect').innerHTML=data.rules.map(r=>`<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('');await loadRecognizer();
  }catch(e){if(request===recognizerEpoch&&epoch===getSessionEpoch())$('recognizerStatus').textContent=e.message}
 }
+function updateDirectControls(){
+ const items=directPreview?.items.filter(t=>t.status==='eligible')||[];
+ const n=directPreview?($('recognizerApprovalScope').value==='all'?directPreview.counts.eligible:directSelected.size):0;
+ $('recognizerApprove').textContent=`Selectie accorderen (${n})`;$('recognizerApprove').disabled=directBusy||!n;
+ $('recognizerSelectVisible').checked=!!items.length&&items.every(t=>directSelected.has(t.id));
+ $('recognizerSelectVisible').indeterminate=items.some(t=>directSelected.has(t.id))&&!$('recognizerSelectVisible').checked;
+ $('recognizerSelectVisible').disabled=directBusy||!items.length;$('recognizerApprovalScope').disabled=directBusy;
+ $('recognizerRefresh').disabled=directBusy;$('recognizerSelect').disabled=directBusy;$('recognizerNew').disabled=directBusy;$('recognizerEdit').disabled=directBusy;
+ $('recognizerExamples').querySelectorAll('[data-recognizer-select]').forEach(el=>el.disabled=directBusy||!items.some(t=>t.id===el.dataset.recognizerSelect));
+}
+async function approveDirect(){
+ if(!directPreview?.approval||directBusy)return;
+ const request=++recognizerEpoch,epoch=getSessionEpoch(),id=$('recognizerSelect').value,scope=$('recognizerApprovalScope').value;
+ const body={...directPreview.approval,scope,selection:scope==='selected'?[...directSelected].sort():[]};
+ const encoded=JSON.stringify([id,body]);if(!directAttempt||directAttempt.encoded!==encoded)directAttempt={encoded,body:{...body,key:key()}};
+ directBusy=true;updateDirectControls();$('recognizerStatus').textContent='Selectie accorderen…';
+ try{const response=await api('/recognizers/'+encodeURIComponent(id)+'/approve',directAttempt.body);
+  if(request!==recognizerEpoch||epoch!==getSessionEpoch()||!$('eventRecognizerDialog').open)return;
+  directBusy=false;await refresh();if(request!==recognizerEpoch||epoch!==getSessionEpoch()||!$('eventRecognizerDialog').open)return;
+  await loadRecognizer();if(epoch===getSessionEpoch()&&$('eventRecognizerDialog').open)$('recognizerStatus').textContent=`${response.applied} transacties geaccordeerd. De ingebouwde herkenner is behouden; er is geen eigen regel aangemaakt.`;
+ }catch(e){if(request===recognizerEpoch&&epoch===getSessionEpoch())$('recognizerStatus').textContent=e.message;}
+ finally{if(epoch===getSessionEpoch()){directBusy=false;updateDirectControls();}}
+}
+$('recognizerSelectVisible').onchange=()=>{for(const t of directPreview?.items||[])if(t.status==='eligible')$('recognizerSelectVisible').checked?directSelected.add(t.id):directSelected.delete(t.id);directAttempt=null;updateDirectControls();};
+$('recognizerApprovalScope').onchange=()=>{directAttempt=null;updateDirectControls();};$('recognizerApprove').onclick=approveDirect;
 $('showEventRecognizer').onclick=showEventRecognizer;
-$('recognizerSelect').onchange=loadRecognizer;
+$('recognizerSelect').onchange=()=>{$('recognizerApprovalScope').value='selected';loadRecognizer();};
 $('recognizerRefresh').onclick=()=>recognizerRules.length?loadRecognizer():showEventRecognizer();
 $('eventRecognizerDialog').addEventListener('close',clearEventRecognizer);
 reasons.recognizer_scan_limit='Te veel betalingen voor deze directe controle. Er is niets gewijzigd; de gewone indelingsjob blijft beschikbaar.';
 reasons.recognizer_not_found='Deze herkenner is niet beschikbaar. Open Eventherkenner opnieuw.';
 
 let editor=null,rulePreview=null,ruleSelected=new Set(),ruleAttempt=null,ruleBusy=false;
-const ruleFields={description:'Omschrijving',counterparty:'Banktegenpartij',counteraccount:'Tegenrekening',account_id:'Rekening-ID',issuer:'Uitgever bankcode',bank_code:'Bankcode',direction:'Bij-/afschrijving (CRDT/DBIT)',currency:'Valuta'};
+const ruleFields={description:'Omschrijving',counterparty:'Banktegenpartij',counteraccount:'Tegenrekening',account_id:'Rekening-ID',issuer:'Uitgever bankcode',bank_code:'Bankcode',direction:'Bij-/afschrijving (CRDT/DBIT)',currency:'Valuta',model_version:'Bronherkenner (regelversie)'};
 function clearRuleEditor(){
  editor=null;rulePreview=null;ruleSelected.clear();ruleAttempt=null;ruleBusy=false;
  for(const id of ['ruleName','ruleParty','ruleCode'])$(id).value='';

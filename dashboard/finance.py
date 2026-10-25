@@ -187,11 +187,7 @@ def preview_owner_recognition_rule(body:dict=Body(...)):
         return {'snapshot':snapshot,'total':count,'counts':counts,'items':items,'preview_size':50}
 
 
-@router.post('/api/v1/finance/recognizer-rules/apply')
-def apply_owner_recognition_rule(body:dict=Body(...)):
-    from core.finance.recognition_rules import save_and_apply
-    rid=uid(body.get('rule_id'));key=uid(body.get('key'))
-    previous=uid(body['previous']) if body.get('previous') else None
+def recognition_selection(body,allow_none=True):
     scope=body.get('scope');selection=body.get('selection',[]);snapshot=body.get('snapshot')
     if scope not in ('none','selected','all') or not isinstance(selection,list) or len(selection)>50 or len(set(map(str,selection)))!=len(selection):
         raise HTTPException(422,'invalid_recognition_selection')
@@ -199,10 +195,32 @@ def apply_owner_recognition_rule(body:dict=Body(...)):
     if scope=='selected' and not selection:raise HTTPException(422,'invalid_recognition_selection')
     if scope!='selected' and selection:raise HTTPException(422,'invalid_recognition_selection')
     if scope!='none' and (not isinstance(snapshot,str) or len(snapshot)!=64):raise HTTPException(422,'invalid_recognition_selection')
+    if not allow_none and scope=='none':raise HTTPException(422,'invalid_recognition_selection')
+    return scope,selection,snapshot
+
+
+@router.post('/api/v1/finance/recognizer-rules/apply')
+def apply_owner_recognition_rule(body:dict=Body(...)):
+    from core.finance.recognition_rules import save_and_apply
+    rid=uid(body.get('rule_id'));key=uid(body.get('key'))
+    previous=uid(body['previous']) if body.get('previous') else None
+    scope,selection,snapshot=recognition_selection(body)
     with connection() as conn,conn.cursor() as cur:
         cur.execute('SELECT pg_advisory_xact_lock(%s)',(IMPORT_LOCK,))
         cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-category-learning'))")
         return save_and_apply(cur,body.get('rule'),rid,previous,key,snapshot,scope,selection)
+
+
+@router.post('/api/v1/finance/recognizers/{recognizer_id}/approve')
+def approve_builtin_recognizer(recognizer_id:str,body:dict=Body(...)):
+    from core.finance.recognition_rules import builtin_definition,save_and_apply
+    definition,rid=builtin_definition(recognizer_id)
+    key=uid(body.get('key'));previous=uid(body['previous']) if body.get('previous') else None
+    scope,selection,snapshot=recognition_selection(body,allow_none=False)
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute('SELECT pg_advisory_xact_lock(%s)',(IMPORT_LOCK,))
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-category-learning'))")
+        return save_and_apply(cur,definition,rid,previous,key,snapshot,scope,selection,allow_builtin=True)
 
 
 @router.get('/api/v1/finance/transactions/{transaction_id}')
@@ -222,10 +240,12 @@ def transaction_detail(transaction_id:str):
 
 @router.get('/api/v1/finance/recognizers/{recognizer_id}/transactions')
 def recognizer_transactions(recognizer_id:str):
-    from core.finance.event_recognition import CATALOGUE,match,hydrate_many,preview_status
+    from core.finance.event_recognition import CATALOGUE,match,hydrate_many
+    from core.finance.recognition_rules import builtin_definition,plan,preview_snapshot
     known={r['id']:r for r in recognizers()['rules']}
     if recognizer_id not in known:raise HTTPException(404,'recognizer_not_found')
     rule=next((r for r in CATALOGUE['rules'] if r['id']==recognizer_id),None)
+    definition,rid=builtin_definition(recognizer_id)
     predicate='t.amount>0' if rule else 't.model_version=%s'
     params=() if rule else ('finance-local-v1:core-rule-v1:'+recognizer_id.removeprefix('local-'),)
     with connection() as conn,conn.cursor() as cur:
@@ -233,25 +253,30 @@ def recognizer_transactions(recognizer_id:str):
         cur.execute('SELECT count(*) AS n FROM finance.v_transactions t WHERE '+predicate,params)
         if cur.fetchone()['n']>MAX_SCAN:raise HTTPException(422,'recognizer_scan_limit')
         cur.execute('SELECT t.* FROM finance.v_transactions t WHERE '+predicate+' ORDER BY t.booking_date,t.id',params)
-        rows=cur.fetchall();matching=[];missing=0
-        payloads=hydrate_many(cur,rows) if rule else {}
+        rows=cur.fetchall();matching=[];missing=0;decisions=[]
+        cur.execute('SELECT id,code,name,parent_id,transaction_type,active FROM finance.finance_categories')
+        categories=cur.fetchall();names={c['code']:c['name'] for c in categories}
+        payloads=hydrate_many(cur,rows)
         counts={k:0 for k in ('eligible','aligned','manual','manual_conflict','protected','applied')}
         for row in rows:
-            payload=decrypt(row['private_data'])
+            payload=payloads[str(row['id'])]
             if rule:
-                payload=payloads[str(row['id'])]
                 if not any(any(c.values()) for c in payload.get('bank_codes') or []):missing+=1
                 if not match(row,payload):continue
-                status=preview_status(row,rule)
-            else:status='applied'
+            decision=plan(row,payload,definition,categories,owner_confirmation=True)
+            if decision:
+                decisions.append((row,payload,decision))
+                status=decision['status']
+                if status=='aligned':status='manual' if row.get('confirmed') else 'aligned'
+                if status not in counts:status='protected'
+                if status=='protected' and row.get('confirmed'):status='manual_conflict'
+            else:status='protected'
             counts[status]+=1
             matching.append((row,payload,status))
         # Full total, at most 50 examples evenly distributed over the period.
         total=len(matching)
         indices=range(total) if total<=50 else [i*(total-1)//49 for i in range(50)]
         accounts={a['id']:a['label'] for a in managed_accounts(cur)}
-        cur.execute('SELECT code,name FROM finance.finance_categories')
-        names={r['code']:r['name'] for r in cur.fetchall()}
         items=[]
         for i in indices:
             row,payload,status=matching[i]
@@ -263,9 +288,12 @@ def recognizer_transactions(recognizer_id:str):
                           'current_category':' / '.join(names.get(row.get(k),row.get(k)) for k in ('category_code','subcategory_code') if row.get(k)) or 'Zonder categorie',
                           'status':status,'applied':row.get('model_version')=='finance-local-v1:core-rule-v1:'+recognizer_id.removeprefix('local-'),
                           'evidence':[{k:c.get(k,'') for k in ('issuer','proprietary','domain','family','subfamily')} for c in payload.get('bank_codes',[])] if rule else []})
+        cur.execute('SELECT id FROM finance.finance_recognition_rule_events WHERE rule_id=%s ORDER BY sequence_no DESC LIMIT 1',(rid,))
+        receipt=cur.fetchone()
         return {'rule':known[recognizer_id],'items':items,'total':total,'counts':counts,'missing_evidence':missing,
+                'approval':{'snapshot':preview_snapshot(definition,decisions),'previous':str(receipt['id']) if receipt else None},
                 'page_size':50,'mode':'matching' if rule else 'applied',
-                'message':'Geen wijzigingen uitgevoerd. Indelen verloopt via Ongecategoriseerde betalingen indelen; jouw beoordelingen gaan voor.'}
+                'message':'Selecteer transacties om deze herkenning direct te accorderen. Handmatige beoordelingen blijven beschermd.'}
 
 
 @router.get('/api/v1/finance/data')

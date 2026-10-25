@@ -74,4 +74,16 @@ class RecognitionRulesTests(unittest.TestCase):
         self.assertEqual('protected',plan({**row,'transaction_type':'TRANSFER'},payload,rule(),[])['status'])
 
 
+class AlignedConfirmationTests(unittest.TestCase):
+    def test_correct_automatic_classification_can_be_confirmed_without_value_change(self):
+        row=dict(id='t',account_id='a',amount='1',currency='EUR',transaction_type='INCOME',category_code='inkomen',subcategory_code='inkomen_rente',confirmed=False,merchant_id='m',merchant_data='encrypted')
+        with patch('core.finance.recognition_rules.decrypt',return_value={'name':'Synthetic Bank'}):
+            auto=plan(row,{'description':'Rentebijschrijving'},rule(),[])
+            owner=plan(row,{'description':'Rentebijschrijving'},rule(),[],owner_confirmation=True)
+            confirmed=plan({**row,'confirmed':True},{'description':'Rentebijschrijving'},rule(),[],owner_confirmation=True)
+        self.assertEqual('aligned',auto['status'])
+        self.assertEqual(('eligible',{},True),(owner['status'],owner['changes'],owner['confirmation_only']))
+        self.assertEqual('aligned',confirmed['status'])
+
+
 if __name__=='__main__':unittest.main()
