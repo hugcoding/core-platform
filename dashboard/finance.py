@@ -54,7 +54,8 @@ async def finance_boundary(request, call_next):
             # Require a browser same-origin JSON request (also protects login CSRF).
             if request.headers.get('origin') != str(request.base_url).rstrip('/'):
                 raise HTTPException(403,'same_origin_required')
-            if int(request.headers.get('content-length','0')) > 8192:
+            limit=65536 if request.url.path.startswith('/api/v1/finance/recognizer-rules/') else 8192
+            if int(request.headers.get('content-length','0')) > limit:
                 raise HTTPException(413,'request_too_large')
         if request.url.path != '/api/v1/finance/session':
             owner(request)
@@ -118,6 +119,7 @@ def transaction(row):
     from core.finance.local_rules import LABELS
     version=row.get('model_version') or ''
     result['local_rule']=LABELS.get(version.removeprefix('finance-local-v1:core-rule-v1:')) if version.startswith('finance-local-v1:core-rule-v1:') else None
+    if version=='finance-local-v1:owner-rule-v1':result['local_rule']='Eigen herkenningsregel'
     result['merchant_suggestion']=recognized_merchant(payload)
     result.update({key:payload[key] for key in ('description','counterparty','counteraccount','details')})
     from core.finance.event_recognition import match
@@ -148,7 +150,59 @@ def recognizers():
         ('bank_costs','Bankkosten',['Afschrijving die de bestaande bankherkenning als bankkosten aanmerkt'],'Financieel'),
         ('benefit','Uitkering',['Bijschrijving van een herkenbare UWV-tegenpartij'],'Inkomen')):
         rules.append(dict(id='local-'+key,name=name,conditions=conditions,result=result,version='core-rule-v1',origin='Bestaande CORE-herkenning'))
-    return {'rules':rules,'editable':False,'message':'Eerste fase: inzicht in bestaande herkenners. Eigen regels, regelvoorstellen en conflictmeldingen volgen later.'}
+    from core.finance.recognition_rules import current
+    with connection() as conn,conn.cursor() as cur:
+        for r in current(cur):
+            rules.append(dict(id=str(r['rule_id']),rule_id=str(r['rule_id']),event_id=str(r['id']),definition=r['rule'],
+                              name=r['rule']['name'],origin='Eigen regel',version=str(r['sequence_no']),editable=True))
+    return {'rules':rules,'editable':True,'message':'Maak een eigen regel of bewerk een opgeslagen regel. Ingebouwde herkenners blijven behouden.'}
+
+
+@router.get('/api/v1/finance/recognizer-rules')
+def owner_recognition_rules():
+    from core.finance.recognition_rules import current
+    with connection() as conn,conn.cursor() as cur:
+        rules=[{'rule_id':str(r['rule_id']),'event_id':str(r['id']),'rule':r['rule']} for r in current(cur)]
+        cur.execute('SELECT id,code,name,parent_id,transaction_type FROM finance.finance_categories WHERE active ORDER BY code')
+        return {'rules':rules,'categories':[serial(c) for c in cur.fetchall()],'accounts':managed_accounts(cur)}
+
+
+@router.post('/api/v1/finance/recognizer-rules/preview')
+def preview_owner_recognition_rule(body:dict=Body(...)):
+    from core.finance.recognition_rules import preview
+    rule=body.get('rule')
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+        results,snapshot=preview(cur,rule)
+        accounts={a['id']:a['label'] for a in managed_accounts(cur)}
+        count=len(results);indices=range(count) if count<=50 else [i*(count-1)//49 for i in range(50)]
+        items=[]
+        for i in indices:
+            row,payload,decision=results[i]
+            item=transaction(row)
+            item.update(account_label=accounts.get(str(row['account_id']),'Rekening'),changes=decision['changes'],status=decision['status'],
+                        current_merchant=decrypt(row['merchant_data']).get('name') if row.get('merchant_data') else None)
+            items.append(item)
+        counts={s:sum(d['status']==s for _,_,d in results) for s in ('eligible','aligned','protected','invalid_category','needs_category')}
+        return {'snapshot':snapshot,'total':count,'counts':counts,'items':items,'preview_size':50}
+
+
+@router.post('/api/v1/finance/recognizer-rules/apply')
+def apply_owner_recognition_rule(body:dict=Body(...)):
+    from core.finance.recognition_rules import save_and_apply
+    rid=uid(body.get('rule_id'));key=uid(body.get('key'))
+    previous=uid(body['previous']) if body.get('previous') else None
+    scope=body.get('scope');selection=body.get('selection',[]);snapshot=body.get('snapshot')
+    if scope not in ('none','selected','all') or not isinstance(selection,list) or len(selection)>50 or len(set(map(str,selection)))!=len(selection):
+        raise HTTPException(422,'invalid_recognition_selection')
+    selection=sorted(uid(v) for v in selection)
+    if scope=='selected' and not selection:raise HTTPException(422,'invalid_recognition_selection')
+    if scope!='selected' and selection:raise HTTPException(422,'invalid_recognition_selection')
+    if scope!='none' and (not isinstance(snapshot,str) or len(snapshot)!=64):raise HTTPException(422,'invalid_recognition_selection')
+    with connection() as conn,conn.cursor() as cur:
+        cur.execute('SELECT pg_advisory_xact_lock(%s)',(IMPORT_LOCK,))
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-category-learning'))")
+        return save_and_apply(cur,body.get('rule'),rid,previous,key,snapshot,scope,selection)
 
 
 @router.get('/api/v1/finance/transactions/{transaction_id}')
@@ -225,7 +279,7 @@ def data(account:str='',month:str='',category:str='',page:int=0,sort:str='bookin
     if own_transfer not in ('','all','internal','between_groups','unassigned'):raise HTTPException(422,'invalid_transfer_filter')
     if classification=='local_rules':
         clauses.append("t.classification_source='RULE' AND t.model_version LIKE %s AND NOT t.confirmed")
-        params.append('finance-local-v1:core-rule-v1:%')
+        params.append('finance-local-v1:%')
     elif classification=='automatic':clauses.append('t.category_code IS NOT NULL AND NOT t.confirmed')
     elif classification=='manual':clauses.append('t.confirmed AND t.review_id IS NOT NULL')
     if group:
@@ -569,7 +623,8 @@ def request_categorization():
         job=enqueue(cur,'categorize')
         cur.execute('''INSERT INTO finance.finance_categorization_targets(job_id,transaction_id)
             SELECT %s,id FROM finance.v_transactions WHERE NOT confirmed AND
-            (category_code IS NULL OR (subcategory_code IS NULL AND classification_source IN ('RULE','MERCHANT','AI')))''', (job,))
+            (category_code IS NULL OR (subcategory_code IS NULL AND classification_source IN ('RULE','MERCHANT','AI'))
+             OR EXISTS(SELECT 1 FROM (SELECT DISTINCT ON(rule_id) active FROM finance.finance_recognition_rule_events ORDER BY rule_id,sequence_no DESC) r WHERE active))''', (job,))
     return {'job_id':job,'status':'pending'}
 
 
@@ -868,12 +923,15 @@ def classify(transaction_id:str,payload:dict=Body(...)):
 @router.get('/api/v1/finance/transactions/{transaction_id}/classifications')
 def classification_history(transaction_id:str):
     with connection() as conn,conn.cursor() as cur:
-        cur.execute("""SELECT r.*,m.private_data AS merchant_data FROM finance.finance_review_events r
+        cur.execute("""SELECT r.*,m.private_data AS merchant_data,
+            rule.private_data AS recognition_rule_data,rule.sequence_no AS recognition_version FROM finance.finance_review_events r
             LEFT JOIN finance.finance_counterparties m ON m.id=r.merchant_id
+            LEFT JOIN finance.finance_recognition_rule_events rule ON rule.id=r.recognition_rule_event_id
             WHERE r.transaction_id=%s ORDER BY r.sequence_no DESC LIMIT 100""",(uid(transaction_id),))
         rows=[]
         for r in cur.fetchall():
-            item={k:v for k,v in serial(r).items() if k not in ('merchant_data','payload_digest','idempotency_key')}
+            item={k:v for k,v in serial(r).items() if k not in ('merchant_data','recognition_rule_data','payload_digest','idempotency_key')}
+            item['recognition_rule_name']=decrypt(r['recognition_rule_data'])['name'] if r.get('recognition_rule_data') else None
             item['merchant']=decrypt(r['merchant_data']).get('name') if r['merchant_data'] else None
             item['transaction_type']=r['transaction_type'] or 'UNKNOWN'
             item['classification_source']=r['classification_source'] or ('MERCHANT' if r['source_review_id'] else 'MANUAL')

@@ -80,15 +80,15 @@ def insert_manual(cur, tid, category, subcategory, kind, merchant, key, digest):
     insert_manual_batch(cur, [(tid,category,subcategory,kind,merchant,key,digest)])
 
 
-def insert_manual_batch(cur, items):
+def insert_manual_batch(cur, items, recognition_rule_event_id=None):
     """Same review chain, bounded SQL batches; never one new classifier per flow."""
     from psycopg2.extras import execute_values
     if not items:return
     cur.execute('SELECT DISTINCT ON(transaction_id) transaction_id,id FROM finance.finance_review_events WHERE transaction_id=ANY(%s::uuid[]) ORDER BY transaction_id,sequence_no DESC',([str(item[0]) for item in items],))
     previous={str(r['transaction_id']):r['id'] for r in cur.fetchall()}
-    values=[(tid,category,sub,kind,merchant,'MANUAL',None,True,previous.get(str(tid)),'owner',key,digest)
+    values=[(tid,category,sub,kind,merchant,'MANUAL',None,True,previous.get(str(tid)),'owner',key,digest,recognition_rule_event_id)
             for tid,category,sub,kind,merchant,key,digest in items]
     execute_values(cur,"""INSERT INTO finance.finance_review_events
         (transaction_id,category_code,subcategory_code,transaction_type,merchant_id,
-         classification_source,confidence,confirmed,supersedes_event_id,actor,idempotency_key,payload_digest)
+         classification_source,confidence,confirmed,supersedes_event_id,actor,idempotency_key,payload_digest,recognition_rule_event_id)
         VALUES %s""",values,page_size=500)

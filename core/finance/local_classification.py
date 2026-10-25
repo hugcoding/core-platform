@@ -213,7 +213,8 @@ def revision(cur):
         (SELECT coalesce(max(sequence_no),0) FROM finance.finance_review_events WHERE coalesce(confirmed,true)) AS reviews,
         (SELECT coalesce(max(id),0) FROM finance.finance_import_events) AS imports,
         (SELECT coalesce(max(id),0) FROM finance.finance_category_events) AS categories,
-        (SELECT coalesce(max(sequence_no),0) FROM finance.finance_account_group_events) AS groups''')
+        (SELECT coalesce(max(sequence_no),0) FROM finance.finance_account_group_events) AS groups,
+        (SELECT coalesce(max(sequence_no),0) FROM finance.finance_recognition_rule_events) AS recognition_rules''')
     return tuple(cur.fetchone().values())
 
 
@@ -247,11 +248,24 @@ def _step(conn, job, cache, infer=generate):
         tid = target['transaction_id']
         choice = None
         status = 'skipped'
+        from core.finance.recognition_rules import automatic as owner_rule
+        version=revision(cur)
+        if cache.get('owner_revision')!=version:
+            from core.finance.recognition_rules import current as owner_rules
+            cur.execute('SELECT id,code,name,parent_id,transaction_type,active FROM finance.finance_categories WHERE active ORDER BY code')
+            cache.update(owner_revision=version,owner_categories=cur.fetchall(),owner_rules=owner_rules(cur,active=True))
+        custom=owner_rule(cur,target,cache['owner_rules'],cache['owner_categories']) if target['id'] else None
+        if custom:
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext('finance-category-learning'))")
+            cur.execute('SELECT * FROM finance.v_transactions WHERE id=%s',(tid,))
+            current=cur.fetchone()
+            custom=owner_rule(cur,current) if current else None
+            if custom and not custom.get('blocked'):
+                choice=custom;status='classified'
+            else:status='abstained'
         from core.finance.income_patterns import eligible,refines,key as income_key
-        if target['id'] and eligible(target):
-            version = revision(cur)
-            cur.execute('SELECT id,code,name,parent_id,transaction_type FROM finance.finance_categories WHERE active ORDER BY code')
-            categories = cur.fetchall()
+        if target['id'] and eligible(target) and not custom and status!='abstained':
+            categories = cache['owner_categories']
             if cache.get('revision') != version:
                 cur.execute("SELECT * FROM finance.v_transactions WHERE confirmed AND category_code IS NOT NULL AND classification_source='MANUAL' ORDER BY classified_at DESC,id")
                 examples = []
@@ -319,12 +333,12 @@ def _step(conn, job, cache, infer=generate):
             cur.execute('''INSERT INTO finance.finance_review_events
                 (transaction_id,category_code,subcategory_code,transaction_type,merchant_id,classification_source,
                  confidence,confirmed,supersedes_event_id,actor,idempotency_key,payload_digest,model_version,
-                 source_review_id,suggestion_method)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,false,%s,'finance-local',%s,%s,%s,%s,%s) RETURNING id''',
+                 source_review_id,suggestion_method,recognition_rule_event_id)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,false,%s,'finance-local',%s,%s,%s,%s,%s,%s) RETURNING id''',
                 (tid, choice['category_code'], choice['subcategory_code'], choice['transaction_type'], choice['merchant_id'],
                  choice['source'], choice['confidence'], predecessor(cur, tid), str(uuid.uuid5(uuid.UUID(str(job)), str(tid))),
-                 fingerprint(VERSION, [str(job), str(tid), str(choice)]), VERSION+':'+('core-rule-v1:'+choice['rule'] if choice['source']=='RULE' else settings()[1] if choice['source']=='AI' else 'core'),
-                 choice['seed'], choice.get('method',METHOD) if choice['seed'] else None))
+                 fingerprint(VERSION, [str(job), str(tid), str(choice)]), choice.get('model_version') or VERSION+':'+('core-rule-v1:'+choice['rule'] if choice['source']=='RULE' else settings()[1] if choice['source']=='AI' else 'core'),
+                 choice['seed'], choice.get('method',METHOD) if choice['seed'] else None,choice.get('recognition_rule_event_id')))
             review = cur.fetchone()['id']
         cur.execute('INSERT INTO finance.finance_categorization_results(job_id,transaction_id,status,review_id) VALUES (%s,%s,%s,%s)',
                     (job, tid, status, review))

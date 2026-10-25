@@ -157,6 +157,10 @@ class IntegrationTests(unittest.TestCase):
             up=Path('database/migrations/20261025_add_finance_event_recognition.sql').read_text()
             down=Path('database/migrations/rollback/20261025_add_finance_event_recognition.sql').read_text()
             cur.execute(up);cur.execute(down);cur.execute(up)
+        with cls.admin.cursor() as cur:
+            up=Path('database/migrations/20261025_add_finance_recognition_review.sql').read_text()
+            down=Path('database/migrations/rollback/20261025_add_finance_recognition_review.sql').read_text()
+            cur.execute(up);cur.execute(down);cur.execute(up)
         app=FastAPI();app.middleware('http')(finance_boundary);app.include_router(router)
         cls.client=TestClient(app);cls.client.headers['origin']='http://testserver'
         response=cls.client.post('/api/v1/finance/session',json={'code':'synthetic-access'})
@@ -1870,6 +1874,102 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual('2010-01-05',min(dates));self.assertGreaterEqual(max(dates),'2026-09-05')
         with self.assertRaises(psycopg2.Error):
             with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20261025_add_finance_event_recognition.sql').read_text())
+        with self.admin.cursor() as cur:cur.execute('ROLLBACK')
+
+    def test_zzzz_owner_recognition_rules_party_selection_replay_and_future(self):
+        from tests.test_finance_event_recognition import rent_xml
+        from core.finance.store import connection,enqueue
+        from core.finance import local_classification as local
+        from core.finance.recognition_rules import automatic,MODEL
+        from unittest.mock import Mock
+        from fastapi.testclient import TestClient
+        import psycopg2
+        with self.admin.cursor() as cur:cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE status IN ('pending','running')")
+        marker='OWNER-RULE-'+str(uuid.uuid4())
+        def payment():
+            source=rent_xml(str(uuid.uuid4())).replace(b'</Ntry>',('<AddtlNtryInf>'+marker+'</AddtlNtryInf></Ntry>').encode())
+            self.import_file(source)
+            with self.admin.cursor() as cur:
+                cur.execute('SELECT id FROM finance.finance_transactions ORDER BY created_at DESC,id LIMIT 1');return str(cur.fetchone()[0])
+        def visible(tid):
+            response=self.client.get('/api/v1/finance/transactions/'+tid)
+            self.assertEqual(200,response.status_code,response.text);return response.json()
+        def owner(tid,name=''):
+            before=visible(tid)
+            response=self.client.post('/api/v1/finance/transactions/'+tid+'/classification',json=dict(key=str(uuid.uuid4()),previous=before['review_id'],category='inkomen',subcategory='inkomen_rente',transaction_type='INCOME',merchant=name))
+            self.assertEqual(200,response.status_code,response.text)
+        a,b,c=payment(),payment(),payment();owner(a);owner(c,'My confirmed bank')
+        with self.admin.cursor() as cur:
+            cur.execute("INSERT INTO finance.finance_review_events(transaction_id,category_code,subcategory_code,transaction_type,classification_source,confirmed,actor,idempotency_key,payload_digest,model_version) VALUES (%s,'inkomen','inkomen_rente','INCOME','RULE',false,'finance-local',%s,'synthetic','finance-local-v1:core-rule-v1:bank_interest')",(b,str(uuid.uuid4())))
+        definition=dict(name='Synthetic bank name',module='finance',active=True,when={'all':[dict(field='description',op='contains',value=marker)]},set={'counterparty':'Synthetic Rule Bank'})
+        base='/api/v1/finance/recognizer-rules'
+        anonymous=TestClient(self.client.app);anonymous.headers['origin']='http://testserver'
+        self.assertEqual(401,anonymous.get(base).status_code)
+        self.assertEqual(401,anonymous.post(base+'/preview',json={'rule':definition}).status_code)
+        self.assertEqual(422,self.client.post(base+'/preview',json={'rule':{**definition,'module':'workset'}}).status_code)
+        def preview(rule=definition):
+            response=self.client.post(base+'/preview',json={'rule':rule})
+            self.assertEqual(200,response.status_code,response.text);return response.json()
+        first=preview();self.assertEqual((3,2,1),(first['total'],first['counts']['eligible'],first['counts']['protected']))
+        self.assertEqual({'counterparty':'Synthetic Rule Bank'},next(t for t in first['items'] if t['id']==a)['changes'])
+        body=dict(rule=definition,rule_id=str(uuid.uuid4()),previous=None,key=str(uuid.uuid4()),snapshot=first['snapshot'],scope='selected',selection=[a])
+        # Same fields, newer review: preview must be checked again before writing.
+        owner(a)
+        stale=self.client.post(base+'/apply',json=body)
+        self.assertEqual(409,stale.status_code,stale.text)
+        body['snapshot']=preview()['snapshot']
+        saved=self.client.post(base+'/apply',json=body)
+        self.assertEqual(200,saved.status_code,saved.text);self.assertEqual(1,saved.json()['applied'])
+        self.assertEqual(saved.json(),self.client.post(base+'/apply',json=body).json())
+        self.assertEqual(409,self.client.post(base+'/apply',json={**body,'selection':[b]}).status_code)
+        row=visible(a);self.assertEqual(('Synthetic Rule Bank','inkomen_rente',True),(row['merchant'],row['subcategory_code'],row['confirmed']))
+        self.assertIsNone(visible(b)['merchant']);self.assertEqual('My confirmed bank',visible(c)['merchant'])
+        own=self.client.get(base).json()['rules'];self.assertTrue(any(r['rule_id']==body['rule_id'] for r in own))
+        self.assertIn(body['rule_id'],[r['id'] for r in self.client.get('/api/v1/finance/recognizers').json()['rules']])
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT private_data FROM finance.finance_recognition_rule_events WHERE id=%s',(saved.json()['event_id'],));self.assertNotIn(marker,cur.fetchone()[0])
+        # A specific automatic category must not prevent applying a missing party.
+        queued=self.client.post('/api/v1/finance/categorization',json={})
+        self.assertEqual(200,queued.status_code,queued.text)
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT 1 FROM finance.finance_categorization_targets WHERE job_id=%s AND transaction_id=%s',(queued.json()['job_id'],b));self.assertIsNotNone(cur.fetchone())
+            cur.execute("UPDATE finance.finance_ingest_jobs SET status='done' WHERE id=%s",(queued.json()['job_id'],))
+        future=payment()
+        with connection() as conn,conn.cursor() as cur:
+            jid=enqueue(cur,'categorize')
+            for tid in (b,c,future):cur.execute('INSERT INTO finance.finance_categorization_targets(job_id,transaction_id) VALUES (%s,%s)',(jid,tid))
+        infer=Mock(side_effect=AssertionError('No LLM'))
+        with connection(worker=True) as conn:local.step(conn,jid,{},infer)
+        infer.assert_not_called()
+        self.assertEqual(('Synthetic Rule Bank','inkomen_rente'),(visible(b)['merchant'],visible(b)['subcategory_code']))
+        self.assertEqual(('Synthetic Rule Bank',None,MODEL),(visible(future)['merchant'],visible(future)['category_code'],visible(future)['model_version']))
+        self.assertEqual('My confirmed bank',visible(c)['merchant'])
+        # All means all eligible matches, never the protected manual name.
+        new=payment();included=payment();owner(included);all_rule={**definition,'exclude':[new]};all_preview=preview(all_rule)
+        request=dict(rule=all_rule,rule_id=body['rule_id'],previous=saved.json()['event_id'],key=str(uuid.uuid4()),snapshot=all_preview['snapshot'],scope='all',selection=[])
+        response=self.client.post(base+'/apply',json=request)
+        self.assertEqual(200,response.status_code,response.text);self.assertEqual(1,response.json()['applied']);self.assertIsNone(visible(new)['merchant']);self.assertEqual('Synthetic Rule Bank',visible(included)['merchant'])
+        # Editing requires the latest rule version; disabling affects future rounds.
+        disable={**request,'rule':{**definition,'active':False},'scope':'none','snapshot':None,'key':str(uuid.uuid4())}
+        self.assertEqual(409,self.client.post(base+'/apply',json=disable).status_code)
+        disable['previous']=response.json()['event_id'];disabled=self.client.post(base+'/apply',json=disable)
+        self.assertEqual(200,disabled.status_code,disabled.text)
+        with connection(worker=True) as conn,conn.cursor() as cur:
+            cur.execute('SELECT * FROM finance.v_transactions WHERE id=%s',(new,));self.assertIsNone(automatic(cur,cur.fetchone()))
+        with self.admin.cursor() as cur:
+            cur.execute('SELECT count(*) FROM finance.finance_review_events WHERE transaction_id=%s AND recognition_rule_event_id=%s',(a,saved.json()['event_id']));self.assertEqual(1,cur.fetchone()[0])
+        with self.assertRaises(psycopg2.Error):
+            with connection(worker=True) as conn,conn.cursor() as cur:
+                cur.execute('INSERT INTO finance.finance_recognition_rule_events(rule_id,private_data,active,idempotency_key,payload_digest) VALUES (%s,%s,true,%s,%s)',(str(uuid.uuid4()),'synthetic encrypted rule',str(uuid.uuid4()),'synthetic'))
+        with self.assertRaises(psycopg2.Error):
+            with connection(worker=True) as conn,conn.cursor() as cur:
+                cur.execute('SELECT merchant_id FROM finance.finance_recognition_rule_events WHERE id=%s',(saved.json()['event_id'],));merchant=cur.fetchone()['merchant_id']
+                cur.execute("INSERT INTO finance.finance_review_events(transaction_id,transaction_type,merchant_id,classification_source,confirmed,actor,idempotency_key,payload_digest,model_version,recognition_rule_event_id) VALUES (%s,'INCOME',%s,'RULE',false,'finance-local',%s,'synthetic',%s,%s)",(new,merchant,str(uuid.uuid4()),MODEL,saved.json()['event_id']))
+        with self.assertRaises(psycopg2.Error):
+            with self.admin.cursor() as cur:cur.execute('DELETE FROM finance.finance_recognition_rule_events')
+        with self.admin.cursor() as cur:cur.execute('ROLLBACK')
+        with self.assertRaises(psycopg2.Error):
+            with self.admin.cursor() as cur:cur.execute(Path('database/migrations/rollback/20261025_add_finance_recognition_review.sql').read_text())
         with self.admin.cursor() as cur:cur.execute('ROLLBACK')
 
 if __name__=='__main__': unittest.main()

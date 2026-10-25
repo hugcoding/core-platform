@@ -25,3 +25,10 @@
 #recognizerDefinition{margin-top:20px;overflow-wrap:anywhere}
 #recognizerExamples dd{overflow-wrap:anywhere}
 @media(max-width:760px){.event-recognizer-layout{grid-template-columns:1fr}}
+#ruleFields{border:0;padding:0;margin:0;min-width:0}
+#recognizerEditor{margin-top:20px}#recognizerEditor label{display:block;margin:12px 0 6px}
+#recognizerEditor input:not([type=checkbox]),#recognizerEditor select,#ruleCode{display:block;width:100%;box-sizing:border-box;max-width:100%}
+#ruleCode{font-family:monospace;min-height:320px;resize:vertical}
+.rule-condition{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;margin:12px 0;padding-bottom:12px;border-bottom:1px solid var(--line)}
+#ruleExamples input[type=checkbox]{accent-color:var(--cyan);width:18px;height:18px;vertical-align:middle}
+#ruleStatus{white-space:pre-wrap;overflow-wrap:anywhere}
